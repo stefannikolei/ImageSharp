@@ -193,6 +193,25 @@ internal static class UpFilter
 
             sum += Numerics.EvenReduceSum(sumAccumulator);
         }
+        else if (AdvSimd.IsSupported)
+        {
+            Vector128<byte> zero = Vector128<byte>.Zero;
+            Vector128<int> sumAccumulator = Vector128<int>.Zero;
+
+            for (; x <= (uint)(scanline.Length - Vector128<byte>.Count);)
+            {
+                Vector128<byte> scan = Unsafe.As<byte, Vector128<byte>>(ref Unsafe.Add(ref scanBaseRef, x));
+                Vector128<byte> above = Unsafe.As<byte, Vector128<byte>>(ref Unsafe.Add(ref prevBaseRef, x));
+
+                Vector128<byte> res = AdvSimd.Subtract(scan, above);
+                Unsafe.As<byte, Vector128<byte>>(ref Unsafe.Add(ref resultBaseRef, x + 1)) = res; // +1 to skip filter type
+                x += (uint)Vector128<byte>.Count;
+
+                sumAccumulator = AdvSimd.Add(sumAccumulator, AdvSimd.AbsoluteDifference(AdvSimd.Abs(res.AsSByte()), zero).AsInt32());
+            }
+
+            sum += Numerics.EvenReduceSum(sumAccumulator);
+        }
         else if (Vector.IsHardwareAccelerated)
         {
             Vector<uint> sumAccumulator = Vector<uint>.Zero;
