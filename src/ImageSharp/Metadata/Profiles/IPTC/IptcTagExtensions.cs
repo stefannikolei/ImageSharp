@@ -62,6 +62,9 @@ public static class IptcTagExtensions
         IptcTag.CaptionWriter => 32,
         IptcTag.ImageType => 2,
         IptcTag.ImageOrientation => 1,
+        IptcTag.LanguageIdentifier => 3,
+        IptcTag.AudioType => 2,
+        IptcTag.AudioSamplingRate => 6,
         IptcTag.AltText => 250,
         IptcTag.DataMining => 64,
         _ => 256
@@ -110,6 +113,9 @@ public static class IptcTagExtensions
             case IptcTag.Caption:
             case IptcTag.ImageType:
             case IptcTag.ImageOrientation:
+            case IptcTag.LanguageIdentifier:
+            case IptcTag.AudioType:
+            case IptcTag.AudioSamplingRate:
             case IptcTag.AltText:
             case IptcTag.DataMining:
                 return false;

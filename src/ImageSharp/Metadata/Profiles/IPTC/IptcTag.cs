@@ -295,6 +295,22 @@ public enum IptcTag
     ImageOrientation = 131,
 
     /// <summary>
+    /// Language identifier, not repeatable. Max length is 3.
+    /// ISO 639-1 or ISO 639-2 language code.
+    /// </summary>
+    LanguageIdentifier = 132,
+
+    /// <summary>
+    /// Audio Type, not repeatable. Max length is 2.
+    /// </summary>
+    AudioType = 133,
+
+    /// <summary>
+    /// Audio Sampling Rate, not repeatable. Max length is 6.
+    /// </summary>
+    AudioSamplingRate = 134,
+
+    /// <summary>
     /// Alt text for accessibility, not repeatable. Max length is 250.
     /// Added in IPTC PhotoMetadata specification 2021.
     /// </summary>

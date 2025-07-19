@@ -417,6 +417,63 @@ public class IptcProfileTests
         Assert.Equal(64, dataMiningValue.Value.Length); // Should be truncated to max length
     }
 
+    [Fact]
+    public void IptcProfile_AdditionalMissingTags_SetAndGetValues_Works()
+    {
+        // arrange
+        IptcProfile profile = new();
+        const string expectedLanguage = "en";
+        const string expectedAudioType = "44";
+        const string expectedSamplingRate = "44100";
+
+        // act
+        profile.SetValue(IptcTag.LanguageIdentifier, expectedLanguage);
+        profile.SetValue(IptcTag.AudioType, expectedAudioType);
+        profile.SetValue(IptcTag.AudioSamplingRate, expectedSamplingRate);
+
+        // assert
+        List<IptcValue> values = profile.Values.ToList();
+        ContainsIptcValue(values, IptcTag.LanguageIdentifier, expectedLanguage);
+        ContainsIptcValue(values, IptcTag.AudioType, expectedAudioType);
+        ContainsIptcValue(values, IptcTag.AudioSamplingRate, expectedSamplingRate);
+    }
+
+    [Fact]
+    public void IptcProfile_AdditionalMissingTags_MaxLength_Works()
+    {
+        // arrange
+        IptcProfile profile = new();
+        string longLanguage = new('A', 10); // Longer than max length of 3
+        string longAudioType = new('B', 10); // Longer than max length of 2
+        string longSamplingRate = new('C', 20); // Longer than max length of 6
+
+        // act
+        profile.SetValue(IptcTag.LanguageIdentifier, longLanguage);
+        profile.SetValue(IptcTag.AudioType, longAudioType);
+        profile.SetValue(IptcTag.AudioSamplingRate, longSamplingRate);
+
+        // assert
+        IptcValue languageValue = profile.GetValues(IptcTag.LanguageIdentifier).First();
+        IptcValue audioTypeValue = profile.GetValues(IptcTag.AudioType).First();
+        IptcValue samplingRateValue = profile.GetValues(IptcTag.AudioSamplingRate).First();
+        
+        Assert.Equal(3, languageValue.Value.Length); // Should be truncated to max length
+        Assert.Equal(2, audioTypeValue.Value.Length); // Should be truncated to max length
+        Assert.Equal(6, samplingRateValue.Value.Length); // Should be truncated to max length
+    }
+
+    [Theory]
+    [InlineData(IptcTag.LanguageIdentifier)]
+    [InlineData(IptcTag.AudioType)]
+    [InlineData(IptcTag.AudioSamplingRate)]
+    [InlineData(IptcTag.AltText)]
+    [InlineData(IptcTag.DataMining)]
+    public void IptcProfile_NewlyAddedTags_AreNotRepeatable(IptcTag tag)
+    {
+        // assert
+        Assert.False(tag.IsRepeatable(), $"Tag {tag} should not be repeatable according to IPTC specification");
+    }
+
     private static void ContainsIptcValue(List<IptcValue> values, IptcTag tag, string value)
     {
         Assert.True(values.Any(val => val.Tag == tag), $"Missing iptc tag {tag}");
