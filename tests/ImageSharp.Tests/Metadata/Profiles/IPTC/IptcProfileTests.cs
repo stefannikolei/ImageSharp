@@ -312,6 +312,8 @@ public class IptcProfileTests
     [InlineData(IptcTag.Caption)]
     [InlineData(IptcTag.ImageType)]
     [InlineData(IptcTag.ImageOrientation)]
+    [InlineData(IptcTag.AltText)]
+    [InlineData(IptcTag.DataMining)]
     public void IptcProfile_AddNoneRepeatable_DoesOverrideOldValue(IptcTag tag)
     {
         // arrange
@@ -375,6 +377,44 @@ public class IptcProfileTests
         // assert
         Assert.NotNull(result);
         Assert.Equal(2, result.Count);
+    }
+
+    [Fact]
+    public void IptcProfile_NewTags_SetAndGetValues_Works()
+    {
+        // arrange
+        IptcProfile profile = new();
+        const string expectedAltText = "Alternative text for accessibility";
+        const string expectedDataMining = "prohibited";
+
+        // act
+        profile.SetValue(IptcTag.AltText, expectedAltText);
+        profile.SetValue(IptcTag.DataMining, expectedDataMining);
+
+        // assert
+        List<IptcValue> values = profile.Values.ToList();
+        ContainsIptcValue(values, IptcTag.AltText, expectedAltText);
+        ContainsIptcValue(values, IptcTag.DataMining, expectedDataMining);
+    }
+
+    [Fact] 
+    public void IptcProfile_NewTags_MaxLength_Works()
+    {
+        // arrange
+        IptcProfile profile = new();
+        string longAltText = new('A', 300); // Longer than max length of 250
+        string longDataMining = new('B', 100); // Longer than max length of 64
+
+        // act
+        profile.SetValue(IptcTag.AltText, longAltText);
+        profile.SetValue(IptcTag.DataMining, longDataMining);
+
+        // assert
+        IptcValue altTextValue = profile.GetValues(IptcTag.AltText).First();
+        IptcValue dataMiningValue = profile.GetValues(IptcTag.DataMining).First();
+        
+        Assert.Equal(250, altTextValue.Value.Length); // Should be truncated to max length
+        Assert.Equal(64, dataMiningValue.Value.Length); // Should be truncated to max length
     }
 
     private static void ContainsIptcValue(List<IptcValue> values, IptcTag tag, string value)

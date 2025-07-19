@@ -295,6 +295,18 @@ public enum IptcTag
     ImageOrientation = 131,
 
     /// <summary>
+    /// Alt text for accessibility, not repeatable. Max length is 250.
+    /// Added in IPTC PhotoMetadata specification 2021.
+    /// </summary>
+    AltText = 135,
+
+    /// <summary>
+    /// Data mining flag to control AI training permission, not repeatable. Max length is 64.
+    /// Added in IPTC PhotoMetadata specification 2023.
+    /// </summary>
+    DataMining = 136,
+
+    /// <summary>
     /// Custom field 1
     /// </summary>
     CustomField1 = 200,
