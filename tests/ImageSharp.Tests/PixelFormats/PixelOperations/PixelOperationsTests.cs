@@ -10,7 +10,6 @@ using SixLabors.ImageSharp.Memory;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Tests.Common;
 using SixLabors.ImageSharp.Tests.TestUtilities;
-using Xunit.Abstractions;
 
 namespace SixLabors.ImageSharp.Tests.PixelFormats.PixelOperations;
 

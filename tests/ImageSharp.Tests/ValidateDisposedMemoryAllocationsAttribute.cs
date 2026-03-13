@@ -3,6 +3,7 @@
 
 using System.Reflection;
 using Xunit.Sdk;
+using Xunit.v3;
 
 namespace SixLabors.ImageSharp.Tests;
 
@@ -19,10 +20,10 @@ public class ValidateDisposedMemoryAllocationsAttribute : BeforeAfterTestAttribu
     public ValidateDisposedMemoryAllocationsAttribute(int expected)
         => this.expected = expected;
 
-    public override void Before(MethodInfo methodUnderTest)
+    public override void Before(MethodInfo methodUnderTest, IXunitTest test)
         => MemoryAllocatorValidator.MonitorAllocations();
 
-    public override void After(MethodInfo methodUnderTest)
+    public override void After(MethodInfo methodUnderTest, IXunitTest test)
     {
         MemoryAllocatorValidator.ValidateAllocations(this.expected);
         MemoryAllocatorValidator.StopMonitoringAllocations();

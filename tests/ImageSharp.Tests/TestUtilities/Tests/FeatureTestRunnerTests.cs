@@ -4,7 +4,6 @@
 using System.Numerics;
 using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
-using Xunit.Abstractions;
 using Aes = System.Runtime.Intrinsics.X86.Aes;
 
 namespace SixLabors.ImageSharp.Tests.TestUtilities.Tests;

@@ -8,7 +8,6 @@ using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
-using Xunit.Abstractions;
 
 namespace SixLabors.ImageSharp.Tests;
 

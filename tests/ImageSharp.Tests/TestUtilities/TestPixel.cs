@@ -3,7 +3,6 @@
 
 using System.Numerics;
 using SixLabors.ImageSharp.PixelFormats;
-using Xunit.Abstractions;
 
 namespace SixLabors.ImageSharp.Tests.TestUtilities;
 

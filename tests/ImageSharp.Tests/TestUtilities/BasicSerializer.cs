@@ -2,7 +2,6 @@
 // Licensed under the Six Labors Split License.
 
 using System.ComponentModel;
-using Xunit.Abstractions;
 
 namespace SixLabors.ImageSharp.Tests.TestUtilities;
 

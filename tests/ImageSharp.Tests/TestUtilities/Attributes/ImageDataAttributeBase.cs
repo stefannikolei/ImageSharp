@@ -3,6 +3,7 @@
 
 using System.Reflection;
 using Xunit.Sdk;
+using Xunit.v3;
 
 namespace SixLabors.ImageSharp.Tests;
 
@@ -44,9 +45,10 @@ public abstract class ImageDataAttributeBase : DataAttribute
 
     /// <summary>Returns the data to be used to test the theory.</summary>
     /// <param name="testMethod">The method that is being tested</param>
+    /// <param name="disposalTracker">The disposal tracker</param>
     /// <returns>One or more sets of theory data. Each invocation of the test method
     /// is represented by a single object array.</returns>
-    public override IEnumerable<object[]> GetData(MethodInfo testMethod)
+    public override ValueTask<IReadOnlyCollection<ITheoryDataRow>> GetData(MethodInfo testMethod, DisposalTracker disposalTracker)
     {
         IEnumerable<object[]> addedRows = Enumerable.Empty<object[]>().ToArray();
         if (!string.IsNullOrWhiteSpace(this.MemberName))
@@ -74,12 +76,18 @@ public abstract class ImageDataAttributeBase : DataAttribute
         }
 
         bool firstIsProvider = this.FirstIsProvider(testMethod);
+        IEnumerable<object[]> rows;
         if (firstIsProvider)
         {
-            return this.InnerGetData(testMethod, addedRows);
+            rows = this.InnerGetData(testMethod, addedRows);
+        }
+        else
+        {
+            rows = addedRows.Select(x => x.Concat(this.AdditionalParameters).ToArray());
         }
 
-        return addedRows.Select(x => x.Concat(this.AdditionalParameters).ToArray());
+        IReadOnlyCollection<ITheoryDataRow> result = rows.Select(r => (ITheoryDataRow)new TheoryDataRow(r)).ToList();
+        return new ValueTask<IReadOnlyCollection<ITheoryDataRow>>(result);
     }
 
     /// <summary>
