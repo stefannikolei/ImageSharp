@@ -129,9 +129,14 @@ Phases 0–2 implemented and unit-tested:
   as generated). The 64-point transform maps the 32 coded coefficients onto 64 outputs (indices
   32..63 are always zero per spec). Validated by transform-matrix orthogonality, DC-response and,
   for size 32, the mathematical DCT-III reference.
+- **Phase 3d:** transform infrastructure — `Av1TransformSize` (all 19 square/rectangular sizes with
+  width/height/log2 helpers), `Av1TransformType` (16 types) with mapping to vertical/horizontal
+  `Av1Transform1dType`, and a 1D dispatcher (`Av1InverseTransform1d.Apply`) selecting the correct
+  butterfly by kind and length. Validated against the specification dimension/mapping tables and by
+  checking the dispatcher matches direct 1D calls.
 - `Decode<TPixel>` deliberately throws `NotSupportedException` until the pixel pipeline
   (Phases 3–5) lands.
 
-Next (Phase 3d): the 2D inverse-transform driver (tx-type/size mapping, row/column passes,
-intermediate shifts, rectangular scaling) and coefficient dequantisation. Then Phase 4 (intra
-prediction → first decoded keyframe).
+Next: the 2D inverse-transform driver (row/column passes, intermediate shifts, rectangular
+scaling) plus coefficient dequantisation — landed together with Phase 4 (intra prediction →
+first decoded keyframe), where they can be validated end-to-end against reference vectors.
