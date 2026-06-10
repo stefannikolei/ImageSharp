@@ -124,9 +124,14 @@ Phases 0–2 implemented and unit-tested:
   ADST validated by transform-matrix orthogonality (a transcription error breaks orthogonality far
   beyond rounding noise) and the FLIPADST = reversed-ADST property; quant tables validated against
   known specification anchors plus monotonicity and bit-depth ordering.
+- **Phase 3c:** inverse DCT 32 and 64 (`Av1InverseTransform1d.Dct32`), completing the 1D DCT
+  family. These large butterfly networks were mechanically ported from the AV1 reference (marked
+  as generated). The 64-point transform maps the 32 coded coefficients onto 64 outputs (indices
+  32..63 are always zero per spec). Validated by transform-matrix orthogonality, DC-response and,
+  for size 32, the mathematical DCT-III reference.
 - `Decode<TPixel>` deliberately throws `NotSupportedException` until the pixel pipeline
   (Phases 3–5) lands.
 
-Next (Phase 3c): inverse DCT 32/64; the 2D inverse-transform driver (tx-type/size mapping,
-row/column passes, intermediate shifts, rectangular scaling) and coefficient dequantisation.
-Then Phase 4 (intra prediction → first decoded keyframe).
+Next (Phase 3d): the 2D inverse-transform driver (tx-type/size mapping, row/column passes,
+intermediate shifts, rectangular scaling) and coefficient dequantisation. Then Phase 4 (intra
+prediction → first decoded keyframe).
