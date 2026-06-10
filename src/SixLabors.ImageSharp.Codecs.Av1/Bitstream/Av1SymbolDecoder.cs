@@ -82,6 +82,28 @@ internal sealed class Av1SymbolDecoder
         return value;
     }
 
+    /// <summary>
+    /// Reads an Exp-Golomb coded value, as used by the coefficient base-range syntax
+    /// (specification <c>read_golomb</c>).
+    /// </summary>
+    /// <returns>The decoded value.</returns>
+    public uint ReadGolomb()
+    {
+        int leadingZeros = 0;
+        while (this.ReadBool() == 0)
+        {
+            leadingZeros++;
+        }
+
+        uint value = 1;
+        for (int i = 0; i < leadingZeros; i++)
+        {
+            value = (value << 1) | (uint)this.ReadBool();
+        }
+
+        return value - 1;
+    }
+
     private int DecodeCdf(ReadOnlySpan<ushort> icdf, int nsymbs)
     {
         uint r = this.range;

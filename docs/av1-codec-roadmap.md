@@ -148,6 +148,12 @@ Phases 0–2 implemented and unit-tested:
   shift (0/1/2 by the square-up size) and clamping to the bit-depth coefficient range. Validated by
   hand-computed values, per-size shift selection, range clamping and sign handling.
 
-Next: the coefficient/symbol reader — importing the default CDF tables and context derivation to
-read transform coefficients, then partition/block decode and intra prediction wired through
-dequantisation and the 2D transform into block reconstruction (Phase 4 → first decoded keyframe).
+- **Phase 3g:** bitstream descriptor primitives used by the header and coefficient reading —
+  `Av1SymbolDecoder.ReadGolomb` (Exp-Golomb for the coefficient base-range syntax) and, on the raw
+  bit reader, `su(n)` (signed), `ns(n)` (non-symmetric) and `le(n)` (little-endian bytes). Validated
+  by Golomb round-trips against the test encoder and by hand-constructed bit vectors.
+
+Next: the bulk default CDF table import (a large generated artifact mirroring the AV1 reference's
+`CDF{n}` data) plus context derivation, then the coefficient/token reader, partition/block decode
+and intra prediction wired through dequantisation and the 2D transform into block reconstruction
+(Phase 4 → first decoded keyframe).

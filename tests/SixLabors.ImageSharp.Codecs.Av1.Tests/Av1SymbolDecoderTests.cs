@@ -114,6 +114,27 @@ public class Av1SymbolDecoderTests
     }
 
     [Fact]
+    public void Golomb_RoundTrip()
+    {
+        Random random = new(4242);
+        uint[] values = new uint[400];
+        Av1SymbolEncoder encoder = new();
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = (uint)random.Next(0, 100000);
+            encoder.WriteGolomb(values[i]);
+        }
+
+        byte[] data = encoder.Finish();
+
+        Av1SymbolDecoder decoder = new(data);
+        for (int i = 0; i < values.Length; i++)
+        {
+            Assert.Equal(values[i], decoder.ReadGolomb());
+        }
+    }
+
+    [Fact]
     public void MixedStream_RoundTrip()
     {
         Random random = new(2024);

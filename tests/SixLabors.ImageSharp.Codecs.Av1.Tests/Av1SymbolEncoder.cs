@@ -57,6 +57,22 @@ internal sealed class Av1SymbolEncoder
         }
     }
 
+    public void WriteGolomb(uint value)
+    {
+        uint valuePlusOne = value + 1;
+        int numBits = 31 - System.Numerics.BitOperations.LeadingZeroCount(valuePlusOne);
+        for (int i = 0; i < numBits; i++)
+        {
+            this.WriteBool(0);
+        }
+
+        this.WriteBool(1);
+        for (int i = numBits - 1; i >= 0; i--)
+        {
+            this.WriteBool((int)((valuePlusOne >> i) & 1));
+        }
+    }
+
     public byte[] Finish()
     {
         uint l = this.low;

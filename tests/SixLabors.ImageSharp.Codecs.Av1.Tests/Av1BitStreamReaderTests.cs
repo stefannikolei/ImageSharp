@@ -75,4 +75,44 @@ public class Av1BitStreamReaderTests
             // Expected.
         }
     }
+
+    [Theory]
+    [InlineData(0b1000_0000, -8)]
+    [InlineData(0b0111_0000, 7)]
+    [InlineData(0b1111_0000, -1)]
+    [InlineData(0b0000_0000, 0)]
+    public void ReadSignedLiteral_DecodesTwosComplement(int firstByte, int expected)
+    {
+        Av1BitStreamReader reader = new([(byte)firstByte]);
+        Assert.Equal(expected, reader.ReadSignedLiteral(4));
+    }
+
+    [Theory]
+    [InlineData(0b0000_0000, 0u)] // "00"  -> 0
+    [InlineData(0b1000_0000, 2u)] // "10"  -> 2
+    [InlineData(0b1100_0000, 3u)] // "110" -> 3
+    [InlineData(0b1110_0000, 4u)] // "111" -> 4
+    public void ReadNonSymmetric_DecodesRange(int firstByte, uint expected)
+    {
+        Av1BitStreamReader reader = new([(byte)firstByte]);
+        Assert.Equal(expected, reader.ReadNonSymmetric(5));
+    }
+
+    [Fact]
+    public void ReadNonSymmetric_One_AlwaysZero()
+    {
+        Av1BitStreamReader reader = new([0xFF]);
+        Assert.Equal(0u, reader.ReadNonSymmetric(1));
+        Assert.Equal(0, reader.BitPosition);
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0xAB }, 1, 0xABu)]
+    [InlineData(new byte[] { 0x34, 0x12 }, 2, 0x1234u)]
+    [InlineData(new byte[] { 0x78, 0x56, 0x34, 0x12 }, 4, 0x12345678u)]
+    public void ReadLittleEndian_DecodesBytes(byte[] data, int n, uint expected)
+    {
+        Av1BitStreamReader reader = new(data);
+        Assert.Equal(expected, reader.ReadLittleEndian(n));
+    }
 }
