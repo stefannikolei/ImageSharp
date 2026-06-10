@@ -148,6 +148,31 @@ internal static class Av1QuantizationLookup
     public static int GetAcQuant(int qindex, int bitDepth)
         => AcQuantTable[BitDepthIndex(bitDepth)][ClampQIndex(qindex)];
 
+    /// <summary>
+    /// Dequantizes a single coefficient level (specification section 7.12.3), without quantizer
+    /// matrix weighting.
+    /// </summary>
+    /// <param name="level">The signed quantized coefficient level.</param>
+    /// <param name="isDc">Whether the coefficient is the DC coefficient (scan position 0).</param>
+    /// <param name="qindex">The plane/segment quantizer index.</param>
+    /// <param name="bitDepth">The bit depth (8, 10 or 12).</param>
+    /// <param name="transformSize">The transform size, which determines the dequant shift.</param>
+    /// <returns>The dequantized coefficient, clamped to the coefficient range.</returns>
+    public static int Dequantize(int level, bool isDc, int qindex, int bitDepth, Av1TransformSize transformSize)
+    {
+        int quant = isDc ? GetDcQuant(qindex, bitDepth) : GetAcQuant(qindex, bitDepth);
+        int maxDimension = Math.Max(transformSize.GetWidth(), transformSize.GetHeight());
+        int dqShift = maxDimension == 64 ? 2 : (maxDimension == 32 ? 1 : 0);
+        int coefficientMax = (1 << (7 + bitDepth)) - 1;
+
+        int sign = level < 0 ? 1 : 0;
+        uint token = (uint)Math.Abs(level) & 0xFFFFF;
+        uint dq = (((uint)quant * token) & 0xFFFFFF) >> dqShift;
+        int saturated = (int)Math.Min(dq, (uint)(coefficientMax + sign));
+
+        return sign == 1 ? -saturated : saturated;
+    }
+
     private static int ClampQIndex(int qindex) => Math.Clamp(qindex, 0, QIndexRange - 1);
 
     private static int BitDepthIndex(int bitDepth) => bitDepth switch

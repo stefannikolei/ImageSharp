@@ -56,4 +56,45 @@ public class Av1QuantizationLookupTests
     [Fact]
     public void GetQuant_InvalidBitDepth_Throws()
         => Assert.Throws<ArgumentOutOfRangeException>(() => Av1QuantizationLookup.GetDcQuant(0, 9));
+
+    [Fact]
+    public void Dequantize_Dc_NoShift_MultipliesByDcQuant()
+    {
+        // qindex 0 => dc_q = 4, 16x16 => no shift.
+        Assert.Equal(4, Av1QuantizationLookup.Dequantize(1, true, 0, 8, Av1TransformSize.Size16x16));
+        Assert.Equal(40, Av1QuantizationLookup.Dequantize(10, true, 0, 8, Av1TransformSize.Size16x16));
+    }
+
+    [Fact]
+    public void Dequantize_Ac_PreservesSign()
+    {
+        // qindex 255 => ac_q = 1828, 16x16 => no shift.
+        Assert.Equal(5484, Av1QuantizationLookup.Dequantize(3, false, 255, 8, Av1TransformSize.Size16x16));
+        Assert.Equal(-5484, Av1QuantizationLookup.Dequantize(-3, false, 255, 8, Av1TransformSize.Size16x16));
+    }
+
+    [Theory]
+    [InlineData((int)Av1TransformSize.Size16x16, 800)] // max dim 16 => shift 0
+    [InlineData((int)Av1TransformSize.Size32x32, 400)] // max dim 32 => shift 1
+    [InlineData((int)Av1TransformSize.Size64x64, 200)] // max dim 64 => shift 2
+    [InlineData((int)Av1TransformSize.Size16x32, 400)] // max dim 32 => shift 1
+    [InlineData((int)Av1TransformSize.Size16x64, 200)] // max dim 64 => shift 2
+    public void Dequantize_AppliesTransformSizeShift(int sizeValue, int expected)
+    {
+        // qindex 1 => dc_q = 8, level 100 => 800 before the size shift.
+        Av1TransformSize size = (Av1TransformSize)sizeValue;
+        Assert.Equal(expected, Av1QuantizationLookup.Dequantize(100, true, 1, 8, size));
+    }
+
+    [Fact]
+    public void Dequantize_ClampsToCoefficientRange()
+    {
+        // ac_q(255) * 1000 greatly exceeds the 8-bit coefficient range (+/- 32768).
+        Assert.Equal(32767, Av1QuantizationLookup.Dequantize(1000, false, 255, 8, Av1TransformSize.Size16x16));
+        Assert.Equal(-32768, Av1QuantizationLookup.Dequantize(-1000, false, 255, 8, Av1TransformSize.Size16x16));
+    }
+
+    [Fact]
+    public void Dequantize_Zero_ReturnsZero()
+        => Assert.Equal(0, Av1QuantizationLookup.Dequantize(0, false, 128, 8, Av1TransformSize.Size8x8));
 }

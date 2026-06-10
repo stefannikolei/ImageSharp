@@ -143,6 +143,11 @@ Phases 0–2 implemented and unit-tested:
   clamping. Validated by hand-computed DC responses (which pin the per-size shift), an independent
   separable float DCT-III reference (square, rectangular and 64-sample), and separable structural
   references across transform types/sizes.
+- **Phase 3f:** coefficient dequantisation — `Av1QuantizationLookup.Dequantize` (spec §7.12.3,
+  without quantizer-matrix weighting): level × quantizer, 24-bit masking, per-transform-size dequant
+  shift (0/1/2 by the square-up size) and clamping to the bit-depth coefficient range. Validated by
+  hand-computed values, per-size shift selection, range clamping and sign handling.
 
-Next: coefficient reading + dequantisation and intra prediction, wired through the 2D transform
-into block reconstruction — the path to the first decoded keyframe (Phase 4).
+Next: the coefficient/symbol reader — importing the default CDF tables and context derivation to
+read transform coefficients, then partition/block decode and intra prediction wired through
+dequantisation and the 2D transform into block reconstruction (Phase 4 → first decoded keyframe).
