@@ -106,9 +106,17 @@ keeps no video dependency.
 
 ## Current status (this branch)
 
-Phase 0 + Phase 1 foundation implemented and unit-tested:
-- `Av1BitStreamReader` (MSB-first `f(n)`, `uvlc`), `leb128`, OBU framing, IVF demuxer,
-  sequence-header dimension parsing.
-- Format registration + detector; `Identify` returns image dimensions for AV1/IVF input.
+Phases 0–2 implemented and unit-tested:
+- **Phase 0–1:** `Av1BitStreamReader` (MSB-first `f(n)`, `uvlc`), `leb128`, OBU framing, IVF
+  demuxer, sequence-header dimension parsing. Format registration + detector; `Identify` returns
+  image dimensions for AV1/IVF input.
+- **Phase 2:** `Av1SymbolDecoder` — the multi-symbol arithmetic (range) decoder (spec §8.2), a
+  faithful port of the AV1 reference Daala entropy decoder, with `Av1Cdf` CDF adaptation (§8.3.2),
+  plus equiprobable bool/literal reads. Validated by round-trip tests against a matching
+  test-only `Av1SymbolEncoder` (symbols with/without adaptation across 2–16 values, bools,
+  literals, and mixed streams).
 - `Decode<TPixel>` deliberately throws `NotSupportedException` until the pixel pipeline
-  (Phases 2–5) lands.
+  (Phases 3–5) lands.
+
+Next: Phase 3 (inverse transforms + dequantisation), then Phase 4 (intra prediction → first
+decoded keyframe).
