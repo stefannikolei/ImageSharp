@@ -119,9 +119,14 @@ Phases 0–2 implemented and unit-tested:
   identity 4/8/16/32) ported faithfully from the AV1 reference, with strided/in-place butterflies
   and clamping (spec §7.13.2). Validated against independent mathematical references (DCT-III with
   1/√2 DC scaling; exact identity scalings) plus DC-response and stride/offset tests.
+- **Phase 3b:** inverse ADST/FLIPADST 4/8/16 (FLIPADST = ADST with reversed output) and the
+  quantiser lookup tables + accessors for 8/10/12-bit (`Av1QuantizationLookup`, spec §7.12.2).
+  ADST validated by transform-matrix orthogonality (a transcription error breaks orthogonality far
+  beyond rounding noise) and the FLIPADST = reversed-ADST property; quant tables validated against
+  known specification anchors plus monotonicity and bit-depth ordering.
 - `Decode<TPixel>` deliberately throws `NotSupportedException` until the pixel pipeline
   (Phases 3–5) lands.
 
-Next (Phase 3b): inverse ADST/FLIPADST and DCT 32/64; the quantizer lookup tables and
-dequantisation; the 2D inverse-transform driver (tx-type/size mapping, row/column passes,
-intermediate shifts). Then Phase 4 (intra prediction → first decoded keyframe).
+Next (Phase 3c): inverse DCT 32/64; the 2D inverse-transform driver (tx-type/size mapping,
+row/column passes, intermediate shifts, rectangular scaling) and coefficient dequantisation.
+Then Phase 4 (intra prediction → first decoded keyframe).

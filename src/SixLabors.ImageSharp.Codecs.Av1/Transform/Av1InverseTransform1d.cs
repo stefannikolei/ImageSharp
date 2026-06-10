@@ -14,7 +14,7 @@ namespace SixLabors.ImageSharp.Formats.Av1.Transform;
 /// 4096 (with the common <c>(x - 4096)</c> rewrite used to keep intermediate products within the
 /// 31-bit + sign range mandated by the specification).
 /// </remarks>
-internal static class Av1InverseTransform1d
+internal static partial class Av1InverseTransform1d
 {
     private static int Clip(int value, int min, int max) => Math.Clamp(value, min, max);
 
