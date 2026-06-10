@@ -668,6 +668,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Icon", "Icon", "{95E45DDE-A
 		tests\Images\Input\Icon\flutter.ico = tests\Images\Input\Icon\flutter.ico
 	EndProjectSection
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SixLabors.ImageSharp.Codecs.Av1", "src\SixLabors.ImageSharp.Codecs.Av1\SixLabors.ImageSharp.Codecs.Av1.csproj", "{9AB6629D-D404-4F65-82F7-BEBF5F22D36C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SixLabors.ImageSharp.Codecs.Av1.Tests", "tests\SixLabors.ImageSharp.Codecs.Av1.Tests\SixLabors.ImageSharp.Codecs.Av1.Tests.csproj", "{CC9B8A60-3C20-44FB-975A-7012488B79D9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -690,6 +694,14 @@ Global
 		{FC527290-2F22-432C-B77B-6E815726B02C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FC527290-2F22-432C-B77B-6E815726B02C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FC527290-2F22-432C-B77B-6E815726B02C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9AB6629D-D404-4F65-82F7-BEBF5F22D36C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9AB6629D-D404-4F65-82F7-BEBF5F22D36C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9AB6629D-D404-4F65-82F7-BEBF5F22D36C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9AB6629D-D404-4F65-82F7-BEBF5F22D36C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CC9B8A60-3C20-44FB-975A-7012488B79D9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CC9B8A60-3C20-44FB-975A-7012488B79D9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CC9B8A60-3C20-44FB-975A-7012488B79D9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CC9B8A60-3C20-44FB-975A-7012488B79D9}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -722,6 +734,8 @@ Global
 		{5DFC394F-136F-4B76-9BCA-3BA786515EFC} = {9DA226A1-8656-49A8-A58A-A8B5C081AD66}
 		{E801B508-4935-41CD-BA85-CF11BFF55A45} = {9DA226A1-8656-49A8-A58A-A8B5C081AD66}
 		{95E45DDE-A67D-48AD-BBA8-5FAA151B860D} = {9DA226A1-8656-49A8-A58A-A8B5C081AD66}
+		{9AB6629D-D404-4F65-82F7-BEBF5F22D36C} = {815C0625-CD3D-440F-9F80-2D83856AB7AE}
+		{CC9B8A60-3C20-44FB-975A-7012488B79D9} = {56801022-D71A-4FBE-BC5B-CBA08E2284EC}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {5F8B9D1F-CD8B-4CC5-8216-D531E25BD795}

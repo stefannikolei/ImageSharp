@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>SixLabors.ImageSharp.Codecs.Av1</AssemblyName>
+    <AssemblyTitle>SixLabors.ImageSharp.Codecs.Av1</AssemblyTitle>
+    <RootNamespace>SixLabors.ImageSharp.Formats.Av1</RootNamespace>
+    <PackageId>SixLabors.ImageSharp.Codecs.Av1</PackageId>
+    <Description>Experimental, fully managed AV1 (AOMedia Video 1) codec for SixLabors.ImageSharp.</Description>
+    <PackageTags>ImageSharp AV1 AOMedia Video Codec Decoder NetCore</PackageTags>
+    <Configurations>Debug;Release</Configurations>
+  </PropertyGroup>
+
+  <!--  Enable nullable analysis and treat all nullable warnings as errors, matching the core library. -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <WarningsAsErrors>Nullable</WarningsAsErrors>
+  </PropertyGroup>
+
+  <Choose>
+    <When Condition="$(SIXLABORS_TESTING_PREVIEW) == true">
+      <PropertyGroup>
+        <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+      </PropertyGroup>
+    </When>
+    <Otherwise>
+      <PropertyGroup>
+        <TargetFrameworks>net8.0</TargetFrameworks>
+      </PropertyGroup>
+    </Otherwise>
+  </Choose>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SixLabors.ImageSharp.Codecs.Av1.Tests" Key="$(SixLaborsPublicKey)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ImageSharp\ImageSharp.csproj" />
+  </ItemGroup>
+
+  <Import Project="..\..\shared-infrastructure\src\SharedInfrastructure\SharedInfrastructure.projitems" Label="Shared" />
+
+</Project>
