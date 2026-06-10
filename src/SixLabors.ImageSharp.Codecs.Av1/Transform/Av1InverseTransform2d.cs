@@ -10,8 +10,8 @@ namespace SixLabors.ImageSharp.Formats.Av1.Transform;
 /// rounding shift of 4.
 /// </summary>
 /// <remarks>
-/// Transform sizes with a 64-sample dimension are not yet supported (they require the
-/// 32-coefficient zeroing path) and will be added alongside the coefficient reader.
+/// For transforms with a 64-sample dimension only the lowest 32 coefficients along that dimension
+/// are coded; the higher coefficients are treated as zero, matching the AV1 specification.
 /// </remarks>
 internal static class Av1InverseTransform2d
 {
@@ -27,13 +27,13 @@ internal static class Av1InverseTransform2d
     /// <param name="transformType">The 2D transform type.</param>
     /// <param name="transformSize">The transform size.</param>
     /// <param name="coefficients">
-    /// The dequantized coefficients in row-major order (index <c>y * width + x</c>).
+    /// The dequantized coefficients in row-major order with a stride equal to the transform width
+    /// (index <c>y * width + x</c>). Coefficients outside the coded 32x32 region must be zero.
     /// </param>
     /// <param name="residual">
     /// The destination residual buffer in row-major order; must be at least <c>width * height</c>.
     /// </param>
     /// <param name="bitDepth">The stream bit depth (8, 10 or 12).</param>
-    /// <exception cref="NotSupportedException">A 64-sample transform dimension was requested.</exception>
     public static void Reconstruct(
         Av1TransformType transformType,
         Av1TransformSize transformSize,
@@ -43,10 +43,8 @@ internal static class Av1InverseTransform2d
     {
         int w = transformSize.GetWidth();
         int h = transformSize.GetHeight();
-        if (w == 64 || h == 64)
-        {
-            throw new NotSupportedException("64-sample transform dimensions are not yet supported.");
-        }
+        int sw = Math.Min(w, 32);
+        int sh = Math.Min(h, 32);
 
         int shift = RowShift[(int)transformSize];
         int round = (1 << shift) >> 1;
@@ -57,13 +55,14 @@ internal static class Av1InverseTransform2d
         Av1Transform1dType rowType = transformType.GetHorizontal();
         Av1Transform1dType columnType = transformType.GetVertical();
 
-        Span<int> tmp = w * h <= 1024 ? stackalloc int[w * h] : new int[w * h];
+        int[] buffer = new int[w * h];
+        Span<int> tmp = buffer;
 
-        // Row (horizontal) pass.
-        for (int y = 0; y < h; y++)
+        // Row (horizontal) pass over the coded rows; rows beyond sh remain zero.
+        for (int y = 0; y < sh; y++)
         {
             int rowOffset = y * w;
-            for (int x = 0; x < w; x++)
+            for (int x = 0; x < sw; x++)
             {
                 int coefficient = coefficients[rowOffset + x];
                 tmp[rowOffset + x] = isRect2 ? (((coefficient * 181) + 128) >> 8) : coefficient;

@@ -96,17 +96,75 @@ public class Av1InverseTransform2dTests
         Assert.Equal(reference, residual);
     }
 
+    [Fact]
+    public void DctDct64x64_DcOnly_ProducesExpectedFlatResidual()
+    {
+        Av1TransformSize size = Av1TransformSize.Size64x64;
+        int[] coeff = new int[64 * 64];
+        coeff[0] = 4096;
+        int[] residual = new int[64 * 64];
+
+        Av1InverseTransform2d.Reconstruct(Av1TransformType.DctDct, size, coeff, residual, 8);
+
+        foreach (int value in residual)
+        {
+            Assert.Equal(32, value);
+        }
+    }
+
+    [Theory]
+    [InlineData((int)Av1TransformSize.Size64x64)]
+    [InlineData((int)Av1TransformSize.Size32x64)]
+    [InlineData((int)Av1TransformSize.Size64x32)]
+    [InlineData((int)Av1TransformSize.Size16x64)]
+    public void DctDct_LargeSizes_MatchSeparableMathReference(int sizeValue)
+    {
+        Av1TransformSize size = (Av1TransformSize)sizeValue;
+        int w = size.GetWidth();
+        int h = size.GetHeight();
+        int sw = Math.Min(w, 32);
+        int sh = Math.Min(h, 32);
+        int shift = RowShift[sizeValue];
+
+        Random random = new(sizeValue + 99);
+        for (int trial = 0; trial < 20; trial++)
+        {
+            // Only the coded 32x32 region carries coefficients; the rest is zero.
+            int[] coeff = new int[w * h];
+            for (int y = 0; y < sh; y++)
+            {
+                for (int x = 0; x < sw; x++)
+                {
+                    coeff[(y * w) + x] = random.Next(-200, 201);
+                }
+            }
+
+            int[] residual = new int[w * h];
+            Av1InverseTransform2d.Reconstruct(Av1TransformType.DctDct, size, coeff, residual, 8);
+
+            double[] reference = SeparableMathDct(coeff, w, h, shift);
+            for (int i = 0; i < residual.Length; i++)
+            {
+                Assert.True(Math.Abs(residual[i] - reference[i]) <= 5, $"size={size} i={i} actual={residual[i]} ref={reference[i]:F2}");
+            }
+        }
+    }
+
     // Independent float reference: separable inverse DCT-III applied along rows then columns, with
     // the row shift and final /16, matching the AV1 net scaling but using exact arithmetic.
     private static double[] SeparableMathDct(int[] coeff, int w, int h, int shift)
     {
+        // Match the driver's rectangular 1/sqrt(2) input scaling for 1:2 aspect ratios.
+        bool isRect2 = (w * 2 == h) || (h * 2 == w);
+        double rectScale = isRect2 ? 181.0 / 256.0 : 1.0;
+
         double[,] m = new double[h, w];
         for (int y = 0; y < h; y++)
         {
             double[] row = new double[w];
             for (int x = 0; x < w; x++)
             {
-                row[x] = coeff[(y * w) + x];
+                row[x] = coeff[(y * w) + x] * rectScale;
             }
 
             double[] r = MathIdct(row);
