@@ -136,7 +136,12 @@ Phases 0–2 implemented and unit-tested:
   checking the dispatcher matches direct 1D calls.
 - `Decode<TPixel>` deliberately throws `NotSupportedException` until the pixel pipeline
   (Phases 3–5) lands.
+- **Phase 3e:** `Av1InverseTransform2d.Reconstruct` — the separable 2D inverse transform (spec
+  §7.13.3) for sizes up to 32: row (horizontal) pass → intermediate rounding shift (per-size table)
+  → column (vertical) pass → final shift of 4, with rectangular ×1/√2 scaling and bit-depth
+  dependent clamping. Validated by hand-computed DC responses (which pin the per-size shift),
+  an independent separable float DCT-III reference, and separable structural references across
+  transform types/sizes. (64-sample dimensions and coefficient dequantisation are still pending.)
 
-Next: the 2D inverse-transform driver (row/column passes, intermediate shifts, rectangular
-scaling) plus coefficient dequantisation — landed together with Phase 4 (intra prediction →
-first decoded keyframe), where they can be validated end-to-end against reference vectors.
+Next: coefficient reading + dequantisation and intra prediction, wired through the 2D transform
+into block reconstruction — the path to the first decoded keyframe (Phase 4).
