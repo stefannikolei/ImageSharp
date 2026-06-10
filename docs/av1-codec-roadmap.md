@@ -115,8 +115,13 @@ Phases 0–2 implemented and unit-tested:
   plus equiprobable bool/literal reads. Validated by round-trip tests against a matching
   test-only `Av1SymbolEncoder` (symbols with/without adaptation across 2–16 values, bools,
   literals, and mixed streams).
+- **Phase 3a:** `Av1InverseTransform1d` — fixed-point 1D inverse transforms (DCT 4/8/16 and
+  identity 4/8/16/32) ported faithfully from the AV1 reference, with strided/in-place butterflies
+  and clamping (spec §7.13.2). Validated against independent mathematical references (DCT-III with
+  1/√2 DC scaling; exact identity scalings) plus DC-response and stride/offset tests.
 - `Decode<TPixel>` deliberately throws `NotSupportedException` until the pixel pipeline
   (Phases 3–5) lands.
 
-Next: Phase 3 (inverse transforms + dequantisation), then Phase 4 (intra prediction → first
-decoded keyframe).
+Next (Phase 3b): inverse ADST/FLIPADST and DCT 32/64; the quantizer lookup tables and
+dequantisation; the 2D inverse-transform driver (tx-type/size mapping, row/column passes,
+intermediate shifts). Then Phase 4 (intra prediction → first decoded keyframe).
