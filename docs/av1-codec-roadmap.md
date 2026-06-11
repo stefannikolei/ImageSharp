@@ -154,13 +154,15 @@ Phases 0–2 implemented and unit-tested:
   by Golomb round-trips against the test encoder and by hand-constructed bit vectors.
 
 - **Phase 4a (start):** default CDF table import — `Av1DefaultCoefficientCdf` brings in the
-  `dc_sign` and `txb_skip` coefficient CDFs (generated from the AV1 reference; each `CDF{k}` macro
-  yields a `(k+1)`-symbol distribution, stored as the inverse-CDF boundaries). This establishes the
-  verified import pipeline: validated by a known reference anchor, by two-symbol well-formedness,
-  and — crucially — by round-tripping the default CDFs through the adaptive symbol coder, which
-  confirms the boundary/terminal/count layout is correct.
+  `dc_sign` and `txb_skip` two-symbol CDFs plus the multi-symbol `base_tok` (coeff_base),
+  `base_range` (coeff_base_range) and `eob_base_tok` CDFs across the four quantizer contexts
+  (generated from the AV1 reference; each `CDF{k}` macro yields a `(k+1)`-symbol distribution,
+  stored as inverse-CDF boundaries followed by the terminal 0 and adaptation counter). Validated by
+  known reference anchors, by well-formedness (strictly decreasing boundaries, zero terminal and
+  counter) and — crucially — by round-tripping the default CDFs through the adaptive symbol coder,
+  which confirms the boundary/terminal/count layout for both two-symbol and multi-symbol groups.
 
-Next: import the remaining coefficient CDF groups (eob, base_tok, br_tok, …) plus the scan-order
-tables and context derivation, then assemble the coefficient/token reader (txb_skip → eob →
-coeff_base → base_range → dc_sign) feeding dequantisation and the 2D transform, followed by
-partition/block decode and intra prediction (Phase 4 → first decoded keyframe).
+Next: import the remaining coefficient CDF groups (eob bins/hi-bit) plus the scan-order tables and
+context derivation, then assemble the coefficient/token reader (txb_skip → eob → coeff_base →
+base_range → dc_sign) feeding dequantisation and the 2D transform, followed by partition/block
+decode and intra prediction (Phase 4 → first decoded keyframe).
