@@ -153,7 +153,14 @@ Phases 0–2 implemented and unit-tested:
   bit reader, `su(n)` (signed), `ns(n)` (non-symmetric) and `le(n)` (little-endian bytes). Validated
   by Golomb round-trips against the test encoder and by hand-constructed bit vectors.
 
-Next: the bulk default CDF table import (a large generated artifact mirroring the AV1 reference's
-`CDF{n}` data) plus context derivation, then the coefficient/token reader, partition/block decode
-and intra prediction wired through dequantisation and the 2D transform into block reconstruction
-(Phase 4 → first decoded keyframe).
+- **Phase 4a (start):** default CDF table import — `Av1DefaultCoefficientCdf` brings in the
+  `dc_sign` and `txb_skip` coefficient CDFs (generated from the AV1 reference; each `CDF{k}` macro
+  yields a `(k+1)`-symbol distribution, stored as the inverse-CDF boundaries). This establishes the
+  verified import pipeline: validated by a known reference anchor, by two-symbol well-formedness,
+  and — crucially — by round-tripping the default CDFs through the adaptive symbol coder, which
+  confirms the boundary/terminal/count layout is correct.
+
+Next: import the remaining coefficient CDF groups (eob, base_tok, br_tok, …) plus the scan-order
+tables and context derivation, then assemble the coefficient/token reader (txb_skip → eob →
+coeff_base → base_range → dc_sign) feeding dequantisation and the 2D transform, followed by
+partition/block decode and intra prediction (Phase 4 → first decoded keyframe).
