@@ -178,10 +178,14 @@ Phases 0–2 implemented and unit-tested:
   CDFs, initialized from the default tables for the tile's quantizer context, with a deep `Clone`.
   Validated by default-value copies, quantizer-context and clone independence, the EOB group shape,
   and a round-trip through a container CDF.
+- **Phase 4e:** intra prediction — `Av1IntraPrediction` implements the non-directional modes for
+  8-bit samples (DC and its top/left/128 variants, vertical, horizontal, Paeth, and SMOOTH /
+  SMOOTH_V / SMOOTH_H with the generated `Av1SmoothWeights`). Validated against mathematical
+  references (the DC average, including the rectangular fixed-point divide matching true integer
+  division; the Paeth nearest-predictor rule; uniform-neighbour SMOOTH collapse) and stride handling.
 
-Next: the coefficient/token reader proper — EOB position decode (eob_pt/eob_extra/eob_hi_bit) and
-the coefficient-level loop (coeff_base → base_range → dc_sign) with neighbour-context derivation.
-Bit-exact verification of this stage needs AV1 reference vectors (the spec is network-blocked here),
-so it will be implemented with a matching round-trip encoder and confirmed against vectors when
-available, then wired through dequantisation and the 2D transform into block reconstruction
-(Phase 4 → first decoded keyframe).
+Next (coefficient reader, gated on verification): the EOB position decode and the coefficient-level
+loop with neighbour-context derivation. Bit-exact verification needs AV1 reference vectors (the spec
+and libaom are network-blocked here); meanwhile the remaining independently-verifiable pieces
+(directional intra prediction, the reconstruction wiring) are progressed. The reader is then wired
+through dequantisation and the 2D transform into block reconstruction (Phase 4 → first keyframe).
