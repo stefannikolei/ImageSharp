@@ -161,8 +161,11 @@ Phases 0–2 implemented and unit-tested:
   known reference anchors, by well-formedness (strictly decreasing boundaries, zero terminal and
   counter) and — crucially — by round-tripping the default CDFs through the adaptive symbol coder,
   which confirms the boundary/terminal/count layout for both two-symbol and multi-symbol groups.
+- **Phase 4a (cont.):** the EOB CDF groups complete the coefficient CDF set — `eob_bin_16..1024`
+  (multi-symbol, 5–11 symbols) and `eob_hi_bit` (two-symbol), generated and validated the same way
+  (anchors, any-rank well-formedness and adaptive round-trips).
 
-Next: import the remaining coefficient CDF groups (eob bins/hi-bit) plus the scan-order tables and
-context derivation, then assemble the coefficient/token reader (txb_skip → eob → coeff_base →
-base_range → dc_sign) feeding dequantisation and the 2D transform, followed by partition/block
-decode and intra prediction (Phase 4 → first decoded keyframe).
+Next: import the coefficient scan-order tables and context derivation, then assemble the
+coefficient/token reader (txb_skip → eob → coeff_base → base_range → dc_sign) feeding
+dequantisation and the 2D transform, followed by partition/block decode and intra prediction
+(Phase 4 → first decoded keyframe).

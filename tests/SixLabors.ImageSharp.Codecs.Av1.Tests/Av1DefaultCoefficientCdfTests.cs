@@ -165,4 +165,78 @@ public class Av1DefaultCoefficientCdfTests
 
         Assert.Equal(encoderCdf, decoderCdf);
     }
+
+    [Fact]
+    public void EobBins_AreWellFormed()
+    {
+        AssertVectorsWellFormed(Av1DefaultCoefficientCdf.EobBin16, 6);
+        AssertVectorsWellFormed(Av1DefaultCoefficientCdf.EobBin32, 7);
+        AssertVectorsWellFormed(Av1DefaultCoefficientCdf.EobBin64, 8);
+        AssertVectorsWellFormed(Av1DefaultCoefficientCdf.EobBin128, 9);
+        AssertVectorsWellFormed(Av1DefaultCoefficientCdf.EobBin256, 10);
+        AssertVectorsWellFormed(Av1DefaultCoefficientCdf.EobBin512, 11);
+        AssertVectorsWellFormed(Av1DefaultCoefficientCdf.EobBin1024, 12);
+    }
+
+    [Fact]
+    public void EobHighBit_BoundariesAreValid()
+    {
+        foreach (ushort boundary in Av1DefaultCoefficientCdf.EobHighBit)
+        {
+            Assert.InRange(boundary, 1, 32767);
+        }
+    }
+
+    [Fact]
+    public void EobBin16_DefaultCdf_RoundTrips()
+        => AssertMultiSymbolRoundTrip(Av1DefaultCoefficientCdf.GetEobBin16(0, 0, 0), seed: 11);
+
+    [Fact]
+    public void EobBin1024_DefaultCdf_RoundTrips()
+        => AssertMultiSymbolRoundTrip(Av1DefaultCoefficientCdf.GetEobBin1024(3, 1), seed: 13);
+
+    [Fact]
+    public void EobHighBit_DefaultCdf_RoundTrips()
+        => AssertRoundTrip(Av1DefaultCoefficientCdf.EobHighBit[2, 3, 1, 4], seed: 17);
+
+    // Generic well-formedness check for any-rank table whose last dimension is a full CDF
+    // (strictly decreasing boundaries, then a terminal 0 and an adaptation counter 0).
+    private static void AssertVectorsWellFormed(Array table, int innerLength)
+    {
+        int rank = table.Rank;
+        int boundaries = innerLength - 2;
+        int[] dims = new int[rank];
+        long outerCount = 1;
+        for (int r = 0; r < rank - 1; r++)
+        {
+            dims[r] = table.GetLength(r);
+            outerCount *= dims[r];
+        }
+
+        int[] index = new int[rank];
+        for (long n = 0; n < outerCount; n++)
+        {
+            long rem = n;
+            for (int r = rank - 2; r >= 0; r--)
+            {
+                index[r] = (int)(rem % dims[r]);
+                rem /= dims[r];
+            }
+
+            int previous = 32768;
+            for (int i = 0; i < boundaries; i++)
+            {
+                index[rank - 1] = i;
+                ushort value = (ushort)table.GetValue(index);
+                Assert.InRange(value, 1, previous - 1);
+                previous = value;
+            }
+
+            for (int i = boundaries; i < innerLength; i++)
+            {
+                index[rank - 1] = i;
+                Assert.Equal(0, (ushort)table.GetValue(index));
+            }
+        }
+    }
 }
