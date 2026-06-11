@@ -23,13 +23,14 @@ internal static class Av1CoefficientLevels
     public const int MaxBaseRangeLevel = NumBaseLevels + 1 + CoefficientBaseRange; // 15
 
     /// <summary>
-    /// Reads the full coefficient level magnitude, starting from the saturated base level
-    /// <c>1 + NUM_BASE_LEVELS</c>.
+    /// Reads the coeff_base_range "high" token only (the value 3..15), without the trailing
+    /// Exp-Golomb residual. This matches dav1d's <c>decode_hi_tok</c>; in the full coefficient
+    /// reader the Golomb residual is decoded later, during the sign/residual pass.
     /// </summary>
     /// <param name="decoder">The symbol decoder.</param>
     /// <param name="baseRangeCdf">The adaptive coeff_base_range CDF (4 symbols).</param>
-    /// <returns>The decoded level (at least <c>1 + NUM_BASE_LEVELS</c>).</returns>
-    public static int ReadBaseRange(Av1SymbolDecoder decoder, Span<ushort> baseRangeCdf)
+    /// <returns>The decoded high token in the range [3, 15].</returns>
+    public static int ReadHighToken(Av1SymbolDecoder decoder, Span<ushort> baseRangeCdf)
     {
         int level = 1 + NumBaseLevels;
         for (int index = 0; index < CoefficientBaseRange; index += BaseRangeCdfSize - 1)
@@ -42,6 +43,19 @@ internal static class Av1CoefficientLevels
             }
         }
 
+        return level;
+    }
+
+    /// <summary>
+    /// Reads the full coefficient level magnitude, starting from the saturated base level
+    /// <c>1 + NUM_BASE_LEVELS</c>.
+    /// </summary>
+    /// <param name="decoder">The symbol decoder.</param>
+    /// <param name="baseRangeCdf">The adaptive coeff_base_range CDF (4 symbols).</param>
+    /// <returns>The decoded level (at least <c>1 + NUM_BASE_LEVELS</c>).</returns>
+    public static int ReadBaseRange(Av1SymbolDecoder decoder, Span<ushort> baseRangeCdf)
+    {
+        int level = ReadHighToken(decoder, baseRangeCdf);
         if (level >= MaxBaseRangeLevel)
         {
             level += (int)decoder.ReadGolomb();
