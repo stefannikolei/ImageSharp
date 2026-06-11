@@ -164,8 +164,12 @@ Phases 0–2 implemented and unit-tested:
 - **Phase 4a (cont.):** the EOB CDF groups complete the coefficient CDF set — `eob_bin_16..1024`
   (multi-symbol, 5–11 symbols) and `eob_hi_bit` (two-symbol), generated and validated the same way
   (anchors, any-rank well-formedness and adaptive round-trips).
+- **Phase 4b:** coefficient scan-order tables — `Av1ScanOrder.GetScan` provides the default
+  per-transform-size scan (generated from the AV1 reference); each value is the column-major
+  position (`row + col * height`) in the coded region, with 64-sample sizes reusing the coded 32×32
+  scan. Validated by permutation/coverage of the coded region, the 64-size reuse mapping, a
+  reference anchor and the up-right-diagonal decoding of the 4×4 scan.
 
-Next: import the coefficient scan-order tables and context derivation, then assemble the
-coefficient/token reader (txb_skip → eob → coeff_base → base_range → dc_sign) feeding
-dequantisation and the 2D transform, followed by partition/block decode and intra prediction
-(Phase 4 → first decoded keyframe).
+Next: coefficient context derivation, then assemble the coefficient/token reader (txb_skip → eob →
+coeff_base → base_range → dc_sign) feeding dequantisation and the 2D transform, followed by
+partition/block decode and intra prediction (Phase 4 → first decoded keyframe).
