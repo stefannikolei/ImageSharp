@@ -174,8 +174,14 @@ Phases 0–2 implemented and unit-tested:
   transform type to its 2D / horizontal / vertical class (per the AV1 `Tx_Type_To_Class` table),
   which the coefficient reader uses for scan order and neighbour-context selection. Validated against
   the reference mapping.
+- **Phase 4d:** `Av1CoefficientCdfContext` — the per-tile container of mutable, adaptive coefficient
+  CDFs, initialized from the default tables for the tile's quantizer context, with a deep `Clone`.
+  Validated by default-value copies, quantizer-context and clone independence, the EOB group shape,
+  and a round-trip through a container CDF.
 
 Next: the coefficient/token reader proper — EOB position decode (eob_pt/eob_extra/eob_hi_bit) and
-the coefficient-level loop (coeff_base → base_range → dc_sign) with neighbour-context derivation,
-validated by round-trips against a matching test encoder, then wired through dequantisation and the
-2D transform into block reconstruction (Phase 4 → first decoded keyframe).
+the coefficient-level loop (coeff_base → base_range → dc_sign) with neighbour-context derivation.
+Bit-exact verification of this stage needs AV1 reference vectors (the spec is network-blocked here),
+so it will be implemented with a matching round-trip encoder and confirmed against vectors when
+available, then wired through dequantisation and the 2D transform into block reconstruction
+(Phase 4 → first decoded keyframe).
