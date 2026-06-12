@@ -126,4 +126,44 @@ internal static class Av1DefaultModeInfoCdf
             [29624, 27681, 25386, 25264, 25175, 25078, 24967, 24704, 24536, 23520, 22893, 22247, 3720, 0, 0],
         ],
     ];
+
+    /// <summary>The use_filter_intra CDFs, indexed by square block size (4x4..128x128).</summary>
+    public static readonly ushort[][] UseFilterIntra =
+    [
+        [28147, 0, 0],
+        [24902, 0, 0],
+        [20360, 0, 0],
+        [10425, 0, 0],
+        [16384, 0, 0],
+        [16384, 0, 0],
+    ];
+
+    /// <summary>The filter_intra mode CDF (5 modes).</summary>
+    public static readonly ushort[] FilterIntraMode =
+        [23819, 19992, 15557, 3210, 0, 0];
+
+    /// <summary>The tx-depth CDFs, indexed by (max transform size - 1) then context.</summary>
+    public static readonly ushort[][][] TransformDepth =
+    [
+        [
+            [12800, 0, 0],
+            [12800, 0, 0],
+            [8448, 0, 0],
+        ],
+        [
+            [20496, 2596, 0, 0],
+            [20496, 2596, 0, 0],
+            [14091, 1920, 0, 0],
+        ],
+        [
+            [19782, 17588, 0, 0],
+            [19782, 17588, 0, 0],
+            [8466, 7166, 0, 0],
+        ],
+        [
+            [26986, 21293, 0, 0],
+            [26986, 21293, 0, 0],
+            [15965, 10009, 0, 0],
+        ],
+    ];
 }

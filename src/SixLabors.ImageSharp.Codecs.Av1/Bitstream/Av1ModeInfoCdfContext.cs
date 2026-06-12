@@ -26,6 +26,15 @@ internal sealed class Av1ModeInfoCdfContext
     /// <summary>Gets the chroma intra-mode CDFs, indexed by cfl-allowed then luma mode.</summary>
     public ushort[][][] UvMode { get; private set; } = default!;
 
+    /// <summary>Gets the use_filter_intra CDFs, indexed by square block size.</summary>
+    public ushort[][] UseFilterIntra { get; private set; } = default!;
+
+    /// <summary>Gets the filter_intra mode CDF.</summary>
+    public ushort[] FilterIntraMode { get; private set; } = default!;
+
+    /// <summary>Gets the tx-depth CDFs, indexed by (max transform size - 1) then context.</summary>
+    public ushort[][][] TransformDepth { get; private set; } = default!;
+
     /// <summary>
     /// Creates a mode-info CDF context initialized from the default tables.
     /// </summary>
@@ -36,6 +45,9 @@ internal sealed class Av1ModeInfoCdfContext
         Partition = Clone(Av1DefaultModeInfoCdf.Partition),
         KeyFrameYMode = Clone(Av1DefaultModeInfoCdf.KeyFrameYMode),
         UvMode = Clone(Av1DefaultModeInfoCdf.UvMode),
+        UseFilterIntra = Clone(Av1DefaultModeInfoCdf.UseFilterIntra),
+        FilterIntraMode = (ushort[])Av1DefaultModeInfoCdf.FilterIntraMode.Clone(),
+        TransformDepth = Clone(Av1DefaultModeInfoCdf.TransformDepth),
     };
 
     private static ushort[][] Clone(ushort[][] group)
