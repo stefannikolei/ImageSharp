@@ -37,6 +37,12 @@ internal sealed class Av1SymbolDecoder
     }
 
     /// <summary>
+    /// Gets the current arithmetic-decoder range, matching dav1d's <c>msac.rng</c>. Exposed to allow
+    /// bit-exact validation of the decode against a reference trace.
+    /// </summary>
+    public uint Range => this.range;
+
+    /// <summary>
     /// Decodes a symbol using the supplied adaptive CDF and updates the CDF.
     /// </summary>
     /// <param name="cdf">The icdf array of length <c>nsymbs + 1</c>.</param>
