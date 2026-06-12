@@ -102,6 +102,9 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets a value indicating whether the reduced transform-type set is used.</summary>
     public bool ReducedTxSet { get; init; }
 
+    /// <summary>Gets the number of bits used to code each block's CDEF index.</summary>
+    public int CdefBits { get; init; }
+
     /// <summary>Gets the bit position immediately after the uncompressed header (before byte alignment).</summary>
     public int EndBitPosition { get; init; }
 
@@ -256,7 +259,7 @@ internal readonly struct ObuFrameHeader
             q.DeltaQUDc == 0 && q.DeltaQUAc == 0 && q.DeltaQVDc == 0 && q.DeltaQVAc == 0;
 
         ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
-        ReadCdefParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
+        int cdefBits = ReadCdefParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
         ReadLoopRestorationParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
 
         // read_tx_mode().
@@ -301,6 +304,7 @@ internal readonly struct ObuFrameHeader
             CodedLossless = codedLossless,
             TxMode = txMode,
             ReducedTxSet = reducedTxSet,
+            CdefBits = cdefBits,
             EndBitPosition = reader.BitPosition,
         };
     }
@@ -512,11 +516,11 @@ internal readonly struct ObuFrameHeader
         }
     }
 
-    private static void ReadCdefParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
+    private static int ReadCdefParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
     {
         if (codedLossless || allowIntraBlockCopy || !sequenceHeader.EnableCdef)
         {
-            return;
+            return 0;
         }
 
         reader.ReadLiteral(2); // cdef_damping_minus_3
@@ -531,6 +535,8 @@ internal readonly struct ObuFrameHeader
                 reader.ReadLiteral(2); // cdef_uv_sec_strength
             }
         }
+
+        return cdefBits;
     }
 
     private static void ReadLoopRestorationParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)

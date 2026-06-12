@@ -86,6 +86,9 @@ internal static class Av1CoefficientReader
     /// <param name="skipContext">The neighbour-derived txb_skip context.</param>
     /// <param name="dcSignContext">The neighbour-derived dc_sign context.</param>
     /// <param name="coefficients">Receives the signed coefficient levels, indexed by raster position; must be cleared by the caller.</param>
+    /// <param name="modeCdf">The mode-info CDF context used to decode the intra transform type; pass <see langword="null"/> to use <paramref name="transformType"/> directly.</param>
+    /// <param name="intraLumaMode">The intra luma prediction mode, used to select the transform-type CDF.</param>
+    /// <param name="reducedTransformSet">Whether the reduced transform-type set is in use.</param>
     /// <returns>The eob index, or <see cref="AllZero"/>.</returns>
     public static int ReadCoefficients(
         Av1SymbolDecoder decoder,

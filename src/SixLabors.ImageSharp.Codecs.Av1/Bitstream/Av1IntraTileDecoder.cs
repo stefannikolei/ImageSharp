@@ -2,20 +2,33 @@
 // Licensed under the Six Labors Split License.
 
 using SixLabors.ImageSharp.Formats.Av1.Obu;
-using SixLabors.ImageSharp.Formats.Av1.Prediction;
 using SixLabors.ImageSharp.Formats.Av1.Transform;
 
 namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 
 /// <summary>
 /// Decodes the tiles of an intra (key) frame into reconstructed luma and chroma planes. This covers the
-/// recursively-split partition tree and the intra block decode (mode info, coefficient decode,
-/// dequantization, inverse transform and DC prediction) for the feature subset validated bit-exactly
-/// against the dav1d reference. Unsupported syntax raises <see cref="NotSupportedException"/> so that
-/// streams beyond the current coverage fail loudly rather than producing incorrect pixels.
+/// recursively-split partition tree, the intra block decode (mode info, transform-size and
+/// transform-type selection, the transform-block loop with neighbour-derived contexts) and DC
+/// reconstruction. Unsupported syntax raises <see cref="NotSupportedException"/> so that streams beyond
+/// the current coverage fail loudly rather than producing incorrect pixels.
 /// </summary>
 internal sealed class Av1IntraTileDecoder
 {
+    // Intra mode context lookup (dav1d_intra_mode_context).
+    private static readonly int[] IntraModeContext = [0, 1, 2, 3, 4, 4, 4, 4, 3, 0, 1, 2, 0];
+
+    private static readonly int[][] SkipContextTable =
+    [
+        [1, 2, 2, 2, 3],
+        [2, 4, 4, 4, 5],
+        [2, 4, 4, 4, 5],
+        [2, 4, 4, 4, 5],
+        [3, 5, 5, 5, 6],
+    ];
+
+    private const byte LevelContextBaseline = 0x40; // cul_level 0, dc-sign "zero".
+
     private readonly ObuSequenceHeader sequenceHeader;
     private readonly ObuFrameHeader frameHeader;
     private readonly Av1ModeInfoCdfContext modeCdf;
@@ -25,11 +38,26 @@ internal sealed class Av1IntraTileDecoder
     private readonly Av1Plane chromaU;
     private readonly Av1Plane chromaV;
 
-    // Partition context bitmasks per 8x8 column/row (specification 5.11.4, dav1d get_partition_ctx).
-    private readonly byte[] abovePartitionContext;
-    private readonly byte[] leftPartitionContext;
+    private readonly int subsamplingX;
+    private readonly int subsamplingY;
+    private readonly int midGrey;
+
+    // Neighbour context arrays in 4x4 units. The 'above' arrays span the frame width; the 'left'
+    // arrays span the frame height and are reset at the start of each superblock row.
+    private readonly byte[] abovePartition;
+    private readonly byte[] leftPartition;
+    private readonly byte[] aboveSkip;
+    private readonly byte[] leftSkip;
+    private readonly byte[] aboveMode;
+    private readonly byte[] leftMode;
+    private readonly byte[] aboveTx;
+    private readonly byte[] leftTx;
+    private readonly LevelContext lumaLevels;
+    private readonly LevelContext chromaULevels;
+    private readonly LevelContext chromaVLevels;
 
     private Av1SymbolDecoder decoder = default!;
+    private bool cdefRead;
 
     public Av1IntraTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader)
     {
@@ -38,17 +66,32 @@ internal sealed class Av1IntraTileDecoder
         this.modeCdf = Av1ModeInfoCdfContext.CreateDefault();
         this.coefficientCdf = Av1CoefficientCdfContext.CreateDefault(GetQuantizerContext(frameHeader.BaseQIndex));
 
+        this.subsamplingX = sequenceHeader.SubsamplingX;
+        this.subsamplingY = sequenceHeader.SubsamplingY;
+        this.midGrey = 1 << (sequenceHeader.BitDepth - 1);
+
         int width = frameHeader.FrameWidth;
         int height = frameHeader.FrameHeight;
-        int chromaWidth = (width + sequenceHeader.SubsamplingX) >> sequenceHeader.SubsamplingX;
-        int chromaHeight = (height + sequenceHeader.SubsamplingY) >> sequenceHeader.SubsamplingY;
+        int chromaWidth = (width + this.subsamplingX) >> this.subsamplingX;
+        int chromaHeight = (height + this.subsamplingY) >> this.subsamplingY;
 
         this.luma = new Av1Plane(width, height);
         this.chromaU = new Av1Plane(chromaWidth, chromaHeight);
         this.chromaV = new Av1Plane(chromaWidth, chromaHeight);
 
-        this.abovePartitionContext = new byte[(frameHeader.ModeInfoColumns >> 1) + 1];
-        this.leftPartitionContext = new byte[(frameHeader.ModeInfoRows >> 1) + 1];
+        int miCols = frameHeader.ModeInfoColumns;
+        int miRows = frameHeader.ModeInfoRows;
+        this.abovePartition = new byte[(miCols >> 1) + 1];
+        this.leftPartition = new byte[(miRows >> 1) + 1];
+        this.aboveSkip = new byte[miCols];
+        this.leftSkip = new byte[miRows];
+        this.aboveMode = new byte[miCols];
+        this.leftMode = new byte[miRows];
+        this.aboveTx = new byte[miCols];
+        this.leftTx = new byte[miRows];
+        this.lumaLevels = new LevelContext(miCols, miRows);
+        this.chromaULevels = new LevelContext((miCols >> this.subsamplingX) + 1, (miRows >> this.subsamplingY) + 1);
+        this.chromaVLevels = new LevelContext((miCols >> this.subsamplingX) + 1, (miRows >> this.subsamplingY) + 1);
     }
 
     /// <summary>Gets the reconstructed luma plane.</summary>
@@ -73,14 +116,22 @@ internal sealed class Av1IntraTileDecoder
 
         this.decoder = new Av1SymbolDecoder(tileData);
 
-        int superblockSize = this.sequenceHeader.Use128x128Superblock ? 32 : 16; // in 4x4 units
+        int superblock4 = this.sequenceHeader.Use128x128Superblock ? 32 : 16;
         Av1BlockSize superblock = this.sequenceHeader.Use128x128Superblock ? Av1BlockSize.Block128x128 : Av1BlockSize.Block64x64;
 
-        for (int row = 0; row < this.frameHeader.ModeInfoRows; row += superblockSize)
+        for (int row = 0; row < this.frameHeader.ModeInfoRows; row += superblock4)
         {
-            Array.Clear(this.leftPartitionContext);
-            for (int col = 0; col < this.frameHeader.ModeInfoColumns; col += superblockSize)
+            Array.Clear(this.leftPartition);
+            Array.Clear(this.leftSkip);
+            Array.Clear(this.leftMode);
+            Array.Clear(this.leftTx);
+            this.lumaLevels.ClearLeft();
+            this.chromaULevels.ClearLeft();
+            this.chromaVLevels.ClearLeft();
+
+            for (int col = 0; col < this.frameHeader.ModeInfoColumns; col += superblock4)
             {
+                this.cdefRead = false;
                 this.DecodePartition(row, col, superblock);
             }
         }
@@ -93,28 +144,25 @@ internal sealed class Av1IntraTileDecoder
             return;
         }
 
-        int blockWidth4 = bsize.GetWidth4();
-        int halfBlock4 = blockWidth4 >> 1;
-        bool hasRows = row + halfBlock4 < this.frameHeader.ModeInfoRows;
-        bool hasCols = col + halfBlock4 < this.frameHeader.ModeInfoColumns;
+        int half = bsize.GetWidth4() >> 1;
+        bool hasRows = row + half < this.frameHeader.ModeInfoRows;
+        bool hasCols = col + half < this.frameHeader.ModeInfoColumns;
 
-        // 4x4 blocks cannot be split further; everything down to 8x8 reads a partition symbol.
         Av1Partition partition = bsize == Av1BlockSize.Block4x4
             ? Av1Partition.None
             : this.ReadPartition(row, col, bsize, hasRows, hasCols);
 
-        Av1BlockSize subSize = bsize.GetSubSize(partition);
         switch (partition)
         {
             case Av1Partition.None:
                 this.DecodeBlock(row, col, bsize);
                 break;
             case Av1Partition.Split:
-                int offset = halfBlock4;
-                this.DecodePartition(row, col, subSize);
-                this.DecodePartition(row, col + offset, subSize);
-                this.DecodePartition(row + offset, col, subSize);
-                this.DecodePartition(row + offset, col + offset, subSize);
+                Av1BlockSize sub = bsize.GetSubSize(Av1Partition.Split);
+                this.DecodePartition(row, col, sub);
+                this.DecodePartition(row, col + half, sub);
+                this.DecodePartition(row + half, col, sub);
+                this.DecodePartition(row + half, col + half, sub);
                 break;
             default:
                 throw new NotSupportedException($"Partition type {partition} is not supported yet.");
@@ -125,126 +173,357 @@ internal sealed class Av1IntraTileDecoder
     {
         if (!hasRows || !hasCols)
         {
-            // Partial blocks at the frame edge use constrained split signalling that is not handled yet.
             throw new NotSupportedException("Partition signalling at the frame edge is not supported yet.");
         }
 
         int blockLevel = bsize.GetPartitionLevel();
         int shift = 4 - blockLevel;
-        int above = (this.abovePartitionContext[col >> 1] >> shift) & 1;
-        int left = (this.leftPartitionContext[row >> 1] >> shift) & 1;
-        int ctx = above + (left << 1);
-        return (Av1Partition)this.decoder.ReadSymbol(this.modeCdf.Partition[blockLevel][ctx]);
+        int above = (this.abovePartition[col >> 1] >> shift) & 1;
+        int left = (this.leftPartition[row >> 1] >> shift) & 1;
+        return (Av1Partition)this.decoder.ReadSymbol(this.modeCdf.Partition[blockLevel][above + (left << 1)]);
     }
 
     private void DecodeBlock(int row, int col, Av1BlockSize bsize)
     {
-        // skip flag.
-        int skip = this.decoder.ReadSymbol(this.modeCdf.Skip[0]);
+        int width4 = bsize.GetWidth4();
+        int height4 = bsize.GetHeight4();
 
-        // CDEF index (reads cdef_bits, which is 0 for the validated stream).
-        // delta-q / delta-lf are gated by frame-header flags that are disabled here.
-        if (this.frameHeader.DeltaQPresent)
+        // skip flag.
+        int skipContext = this.aboveSkip[col] + this.leftSkip[row];
+        int skip = this.decoder.ReadSymbol(this.modeCdf.Skip[skipContext]);
+
+        // cdef index: read once per superblock for the first non-skip block.
+        if (skip == 0 && !this.cdefRead)
         {
-            throw new NotSupportedException("Per-block delta-q is not supported yet.");
+            this.cdefRead = true;
+            if (this.frameHeader.CdefBits > 0)
+            {
+                this.decoder.ReadLiteral(this.frameHeader.CdefBits);
+            }
         }
 
-        // Intra modes (key-frame y-mode with no neighbours, chroma uv-mode).
-        int yMode = this.decoder.ReadSymbol(this.modeCdf.KeyFrameYMode[0][0]);
-        int uvMode = this.decoder.ReadSymbol(this.modeCdf.UvMode[0][0]);
-        if (yMode != 0 || uvMode != 0)
+        // luma intra mode.
+        int aboveModeContext = IntraModeContext[this.aboveMode[col]];
+        int leftModeContext = IntraModeContext[this.leftMode[row]];
+        int yMode = this.decoder.ReadSymbol(this.modeCdf.KeyFrameYMode[aboveModeContext][leftModeContext]);
+        if (yMode != 0)
         {
             throw new NotSupportedException("Only DC intra prediction is supported yet.");
         }
 
-        // tx size: TX_MODE_LARGEST forces the largest transform for the block (no bits read here).
-        if (this.frameHeader.TxMode != 1)
+        // chroma intra mode.
+        bool cflAllowed = bsize <= Av1BlockSize.Block32x32;
+        int uvMode = this.decoder.ReadSymbol(this.modeCdf.UvMode[cflAllowed ? 1 : 0][yMode]);
+        if (uvMode != 0)
         {
-            throw new NotSupportedException("Only TX_MODE_LARGEST is supported yet.");
+            throw new NotSupportedException("Only DC chroma prediction is supported yet.");
         }
 
-        Av1TransformSize lumaTx = bsize.GetMaxTransformSize();
-        this.ReconstructPlane(this.luma, row, col, lumaTx, 0, skip != 0, 0, 0);
-
-        Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
-        int chromaSkipContext = 7; // chroma skip context with no neighbours for a single transform block
-        this.ReconstructPlane(this.chromaU, row >> this.sequenceHeader.SubsamplingY, col >> this.sequenceHeader.SubsamplingX, chromaTx, 1, skip != 0, chromaSkipContext, 0);
-        this.ReconstructPlane(this.chromaV, row >> this.sequenceHeader.SubsamplingY, col >> this.sequenceHeader.SubsamplingX, chromaTx, 2, skip != 0, chromaSkipContext, 0);
-
-        // Record this leaf block's partition context for neighbouring blocks.
-        byte fill = bsize.PartitionContextFill();
-        int width8 = bsize.GetWidth4() >> 1;
-        int height8 = bsize.GetHeight4() >> 1;
-        for (int i = 0; i < width8 && (col >> 1) + i < this.abovePartitionContext.Length; i++)
+        // filter_intra: coded for DC luma blocks up to 32x32 when enabled.
+        if (this.sequenceHeader.EnableFilterIntra && bsize <= Av1BlockSize.Block32x32)
         {
-            this.abovePartitionContext[(col >> 1) + i] = fill;
-        }
-
-        for (int i = 0; i < height8 && (row >> 1) + i < this.leftPartitionContext.Length; i++)
-        {
-            this.leftPartitionContext[(row >> 1) + i] = fill;
-        }
-    }
-
-    private void ReconstructPlane(Av1Plane plane, int miRow, int miCol, Av1TransformSize tx, int planeIndex, bool skip, int skipContext, int dcSignContext)
-    {
-        int x = miCol * 4;
-        int y = miRow * 4;
-        int width = tx.GetWidth();
-        int height = tx.GetHeight();
-        if (x >= plane.Width || y >= plane.Height)
-        {
-            return;
-        }
-
-        // DC prediction: with no decoded neighbours the predictor is the mid-level (128 for 8-bit).
-        Span<byte> prediction = new byte[width * height];
-        Av1IntraPrediction.Dc128Predict(prediction, width, width, height, this.sequenceHeader.BitDepth);
-
-        int eob = -1;
-        int[] residual = new int[width * height];
-        if (!skip)
-        {
-            int[] levels = new int[Math.Min(width, 32) * Math.Min(height, 32)];
-            eob = Av1CoefficientReader.ReadCoefficients(this.decoder, this.coefficientCdf, tx, Av1TransformType.DctDct, planeIndex, skipContext, dcSignContext, levels);
-            if (eob != Av1CoefficientReader.AllZero)
+            int useFilterIntra = this.decoder.ReadSymbol(this.modeCdf.UseFilterIntra[(int)bsize]);
+            if (useFilterIntra != 0)
             {
-                this.InverseTransform(levels, tx, residual);
+                throw new NotSupportedException("Filter-intra prediction is not supported yet.");
             }
         }
 
+        // transform size (TX_MODE_LARGEST forces the largest; TX_MODE_SELECT codes a depth).
+        Av1TransformSize lumaTx = this.ReadTransformSize(row, col, bsize);
+
+        // luma transform-block loop.
+        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode);
+
+        // chroma transform-block loop (single transform per plane for the sizes handled here).
+        Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
+        int chromaRow = row >> this.subsamplingY;
+        int chromaCol = col >> this.subsamplingX;
+        this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode);
+        this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode);
+
+        // record block-level neighbour contexts.
+        Fill(this.aboveSkip, col, width4, (byte)skip);
+        Fill(this.leftSkip, row, height4, (byte)skip);
+        Fill(this.aboveMode, col, width4, (byte)yMode);
+        Fill(this.leftMode, row, height4, (byte)yMode);
+        Fill(this.aboveTx, col, width4, (byte)(lumaTx.GetWidthLog2() - 2));
+        Fill(this.leftTx, row, height4, (byte)(lumaTx.GetHeightLog2() - 2));
+
+        byte partitionFill = bsize.PartitionContextFill();
+        Fill(this.abovePartition, col >> 1, width4 >> 1, partitionFill);
+        Fill(this.leftPartition, row >> 1, height4 >> 1, partitionFill);
+    }
+
+    private Av1TransformSize ReadTransformSize(int row, int col, Av1BlockSize bsize)
+    {
+        Av1TransformSize maxTx = bsize.GetMaxTransformSize();
+        int maxIndex = maxTx.GetWidthLog2() - 2; // square: the .max field.
+        if (this.frameHeader.TxMode != 2 || maxIndex == 0)
+        {
+            return maxTx;
+        }
+
+        int aboveTxContext = this.aboveTx[col] >= maxTx.GetWidthLog2() - 2 ? 1 : 0;
+        int leftTxContext = this.leftTx[row] >= maxTx.GetHeightLog2() - 2 ? 1 : 0;
+        int txContext = leftTxContext + aboveTxContext;
+        int depth = this.decoder.ReadSymbol(this.modeCdf.TransformDepth[maxIndex - 1][txContext]);
+
+        Av1TransformSize tx = maxTx;
+        for (int i = 0; i < depth; i++)
+        {
+            tx = (Av1TransformSize)((int)tx - 1); // square sub-size.
+        }
+
+        return tx;
+    }
+
+    private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode)
+    {
+        int blockWidth4 = bsize.GetWidth4() >> (planeIndex == 0 ? 0 : this.subsamplingX);
+        int blockHeight4 = bsize.GetHeight4() >> (planeIndex == 0 ? 0 : this.subsamplingY);
+        int txWidth4 = tx.GetWidth() >> 2;
+        int txHeight4 = tx.GetHeight() >> 2;
+        bool blockEqualsTx = blockWidth4 == txWidth4 && blockHeight4 == txHeight4;
+
+        int[] coefficientLevels = new int[Math.Min(tx.GetWidth(), 32) * Math.Min(tx.GetHeight(), 32)];
+
+        for (int dy = 0; dy < blockHeight4; dy += txHeight4)
+        {
+            for (int dx = 0; dx < blockWidth4; dx += txWidth4)
+            {
+                int txRow = miRow + dy;
+                int txCol = miCol + dx;
+                int x = txCol * 4;
+                int y = txRow * 4;
+                if (x >= plane.Width || y >= plane.Height)
+                {
+                    continue;
+                }
+
+                int skipContext = planeIndex == 0
+                    ? LumaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, blockEqualsTx)
+                    : this.ChromaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, bsize, tx);
+                int dcSignContext = DcSignContext(levels, txCol, txRow, txWidth4, txHeight4);
+
+                Array.Clear(coefficientLevels);
+                int eob = Av1CoefficientReader.ReadCoefficients(
+                    this.decoder,
+                    this.coefficientCdf,
+                    tx,
+                    Av1TransformType.DctDct,
+                    planeIndex,
+                    skipContext,
+                    dcSignContext,
+                    coefficientLevels,
+                    planeIndex == 0 ? this.modeCdf : null,
+                    intraMode,
+                    this.frameHeader.ReducedTxSet);
+
+                this.Reconstruct(plane, x, y, tx, coefficientLevels, eob);
+
+                byte resContext = LevelContextByte(coefficientLevels, eob);
+                levels.Write(txCol, txRow, txWidth4, txHeight4, resContext);
+            }
+        }
+    }
+
+    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, int[] levels, int eob)
+    {
+        int width = tx.GetWidth();
+        int height = tx.GetHeight();
+        int dc = this.PredictDc(plane, x, y, width, height);
+
+        int[] residual = new int[width * height];
+        if (eob != Av1CoefficientReader.AllZero)
+        {
+            int codedWidth = Math.Min(width, 32);
+            int codedHeight = Math.Min(height, 32);
+            int[] coefficients = new int[width * height];
+            for (int rc = 0; rc < levels.Length; rc++)
+            {
+                if (levels[rc] == 0)
+                {
+                    continue;
+                }
+
+                int rowInBlock = rc % codedHeight;
+                int colInBlock = rc / codedHeight;
+                coefficients[(rowInBlock * width) + colInBlock] =
+                    Av1QuantizationLookup.Dequantize(levels[rc], rc == 0, this.frameHeader.BaseQIndex, this.sequenceHeader.BitDepth, tx);
+            }
+
+            Av1InverseTransform2d.Reconstruct(Av1TransformType.DctDct, tx, coefficients, residual, this.sequenceHeader.BitDepth);
+        }
+
+        int maxValue = (1 << this.sequenceHeader.BitDepth) - 1;
         for (int ry = 0; ry < height && y + ry < plane.Height; ry++)
         {
             for (int rx = 0; rx < width && x + rx < plane.Width; rx++)
             {
-                int value = prediction[(ry * width) + rx] + residual[(ry * width) + rx];
-                plane[x + rx, y + ry] = (byte)Math.Clamp(value, 0, (1 << this.sequenceHeader.BitDepth) - 1);
+                plane[x + rx, y + ry] = (byte)Math.Clamp(dc + residual[(ry * width) + rx], 0, maxValue);
             }
         }
     }
 
-    private void InverseTransform(int[] levels, Av1TransformSize tx, int[] residual)
+    private int PredictDc(Av1Plane plane, int x, int y, int width, int height)
     {
-        int width = tx.GetWidth();
-        int codedWidth = Math.Min(width, 32);
-        int codedHeight = Math.Min(tx.GetHeight(), 32);
-        int[] coefficients = new int[width * tx.GetHeight()];
-        for (int rc = 0; rc < levels.Length; rc++)
-        {
-            if (levels[rc] == 0)
-            {
-                continue;
-            }
+        bool hasAbove = y > 0;
+        bool hasLeft = x > 0;
+        long sum = 0;
+        int count = 0;
 
-            int row = rc % codedHeight;
-            int colInBlock = rc / codedHeight;
-            coefficients[(row * width) + colInBlock] =
-                Av1QuantizationLookup.Dequantize(levels[rc], rc == 0, this.frameHeader.BaseQIndex, this.sequenceHeader.BitDepth, tx);
+        if (hasAbove)
+        {
+            for (int i = 0; i < width && x + i < plane.Width; i++)
+            {
+                sum += plane[x + i, y - 1];
+                count++;
+            }
         }
 
-        Av1InverseTransform2d.Reconstruct(Av1TransformType.DctDct, tx, coefficients, residual, this.sequenceHeader.BitDepth);
+        if (hasLeft)
+        {
+            for (int i = 0; i < height && y + i < plane.Height; i++)
+            {
+                sum += plane[x - 1, y + i];
+                count++;
+            }
+        }
+
+        return count == 0 ? this.midGrey : (int)((sum + (count >> 1)) / count);
+    }
+
+    private static int LumaCoefficientSkipContext(LevelContext levels, int txCol, int txRow, int txWidth4, int txHeight4, bool blockEqualsTx)
+    {
+        if (blockEqualsTx)
+        {
+            return 0;
+        }
+
+        int la = 0;
+        for (int i = 0; i < txWidth4; i++)
+        {
+            la |= levels.Above(txCol + i);
+        }
+
+        int ll = 0;
+        for (int i = 0; i < txHeight4; i++)
+        {
+            ll |= levels.Left(txRow + i);
+        }
+
+        return SkipContextTable[Math.Min(la & 0x3F, 4)][Math.Min(ll & 0x3F, 4)];
+    }
+
+    private int ChromaCoefficientSkipContext(LevelContext levels, int txCol, int txRow, int txWidth4, int txHeight4, Av1BlockSize bsize, Av1TransformSize tx)
+    {
+        int blockLwAdjusted = bsize.GetWidthLog2() - (this.subsamplingX != 0 ? 1 : 0);
+        int blockLhAdjusted = bsize.GetWidthLog2() - (this.subsamplingY != 0 ? 1 : 0);
+        bool notOneBlock = blockLwAdjusted > tx.GetWidthLog2() - 2 || blockLhAdjusted > tx.GetHeightLog2() - 2;
+
+        int ca = 0;
+        for (int i = 0; i < txWidth4; i++)
+        {
+            if (levels.Above(txCol + i) != LevelContextBaseline)
+            {
+                ca = 1;
+                break;
+            }
+        }
+
+        int cl = 0;
+        for (int i = 0; i < txHeight4; i++)
+        {
+            if (levels.Left(txRow + i) != LevelContextBaseline)
+            {
+                cl = 1;
+                break;
+            }
+        }
+
+        return 7 + ((notOneBlock ? 1 : 0) * 3) + ca + cl;
+    }
+
+    private static int DcSignContext(LevelContext levels, int txCol, int txRow, int txWidth4, int txHeight4)
+    {
+        int sum = 0;
+        for (int i = 0; i < txWidth4; i++)
+        {
+            sum += levels.Above(txCol + i) >> 6;
+        }
+
+        for (int i = 0; i < txHeight4; i++)
+        {
+            sum += levels.Left(txRow + i) >> 6;
+        }
+
+        int s = sum - txWidth4 - txHeight4;
+        return s < 0 ? 1 : s > 0 ? 2 : 0;
+    }
+
+    private static byte LevelContextByte(int[] levels, int eob)
+    {
+        if (eob == Av1CoefficientReader.AllZero)
+        {
+            return LevelContextBaseline;
+        }
+
+        int culLevel = 0;
+        for (int i = 0; i < levels.Length; i++)
+        {
+            culLevel += Math.Abs(levels[i]);
+        }
+
+        int dcSignLevel = levels[0] == 0 ? 0x40 : levels[0] > 0 ? 0x80 : 0x00;
+        return (byte)(Math.Min(culLevel, 63) | dcSignLevel);
+    }
+
+    private static void Fill(byte[] context, int start, int count, byte value)
+    {
+        for (int i = 0; i < count && start + i < context.Length; i++)
+        {
+            context[start + i] = value;
+        }
     }
 
     private static int GetQuantizerContext(int baseQIndex)
         => baseQIndex <= 20 ? 0 : baseQIndex <= 60 ? 1 : baseQIndex <= 120 ? 2 : 3;
+
+    /// <summary>
+    /// The coefficient level-context bytes for one plane: an 'above' row spanning the frame width and a
+    /// 'left' column spanning the frame height (reset per superblock row), in 4x4 units.
+    /// </summary>
+    private sealed class LevelContext
+    {
+        private readonly byte[] above;
+        private readonly byte[] left;
+
+        public LevelContext(int cols, int rows)
+        {
+            this.above = new byte[cols];
+            this.left = new byte[rows];
+            Array.Fill(this.above, LevelContextBaseline);
+            Array.Fill(this.left, LevelContextBaseline);
+        }
+
+        public byte Above(int col) => col < this.above.Length ? this.above[col] : LevelContextBaseline;
+
+        public byte Left(int row) => row < this.left.Length ? this.left[row] : LevelContextBaseline;
+
+        public void Write(int col, int row, int width4, int height4, byte value)
+        {
+            for (int i = 0; i < width4 && col + i < this.above.Length; i++)
+            {
+                this.above[col + i] = value;
+            }
+
+            for (int i = 0; i < height4 && row + i < this.left.Length; i++)
+            {
+                this.left[row + i] = value;
+            }
+        }
+
+        public void ClearLeft() => Array.Fill(this.left, LevelContextBaseline);
+    }
 }
