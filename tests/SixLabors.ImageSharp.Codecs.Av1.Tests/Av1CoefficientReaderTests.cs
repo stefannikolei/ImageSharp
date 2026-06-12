@@ -13,12 +13,19 @@ public class Av1CoefficientReaderTests
     [InlineData((int)Av1TransformSize.Size8x8, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size16x16, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size32x32, (int)Av1TransformType.DctDct)]
+    [InlineData((int)Av1TransformSize.Size64x64, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size4x8, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size8x4, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size8x16, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size16x8, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size4x16, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size16x4, (int)Av1TransformType.DctDct)]
+    [InlineData((int)Av1TransformSize.Size16x32, (int)Av1TransformType.DctDct)]
+    [InlineData((int)Av1TransformSize.Size32x16, (int)Av1TransformType.DctDct)]
+    [InlineData((int)Av1TransformSize.Size32x64, (int)Av1TransformType.DctDct)]
+    [InlineData((int)Av1TransformSize.Size64x32, (int)Av1TransformType.DctDct)]
+    [InlineData((int)Av1TransformSize.Size16x64, (int)Av1TransformType.DctDct)]
+    [InlineData((int)Av1TransformSize.Size64x16, (int)Av1TransformType.DctDct)]
     [InlineData((int)Av1TransformSize.Size4x4, (int)Av1TransformType.HorizontalDct)]
     [InlineData((int)Av1TransformSize.Size8x8, (int)Av1TransformType.HorizontalDct)]
     [InlineData((int)Av1TransformSize.Size16x16, (int)Av1TransformType.HorizontalDct)]
@@ -29,7 +36,11 @@ public class Av1CoefficientReaderTests
     {
         Av1TransformSize size = (Av1TransformSize)sizeValue;
         Av1TransformType type = (Av1TransformType)typeValue;
-        int count = size.GetWidth() * size.GetHeight();
+
+        // The number of coded coefficients: for the 2D class this is the scan length (which already
+        // accounts for the 64-wide/high truncation to a 32x32 region); otherwise the full block.
+        bool is2d = type.GetTransformClass() == Av1TransformClass.TwoDimensional;
+        int count = is2d ? Av1ScanOrder.GetScan(size).Length : size.GetWidth() * size.GetHeight();
         Random random = new(HashCode.Combine(sizeValue, typeValue));
 
         for (int plane = 0; plane <= 1; plane++)
