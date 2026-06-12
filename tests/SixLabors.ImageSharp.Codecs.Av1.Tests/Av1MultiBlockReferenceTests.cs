@@ -66,9 +66,119 @@ public class Av1MultiBlockReferenceTests
         Assert.Equal(1, decoder.ReadSymbol(modeCdf.TransformDepth[2][0]));
         Assert.Equal(51296u, decoder.Range);
 
+        // The 32x32 luma block holds a 2x2 grid of TX_16X16 transforms decoded in raster order. Each
+        // codes a per-block transform type (txtp_intra) and uses a txb_skip / dc-sign context derived
+        // from the neighbouring coefficient-level bytes.
+        Av1CoefficientCdfContext coeffCdf = Av1CoefficientCdfContext.CreateDefault(GetQuantizerContext(frameHeader.BaseQIndex));
+        byte[] aboveLuma = NewLevelContext(16);
+        byte[] leftLuma = NewLevelContext(16);
+        uint[] expectedLumaRanges = [49416, 43016, 41488, 50628];
+        int[][] positions = [[0, 0], [4, 0], [0, 4], [4, 4]];
+        int[] levels = new int[16 * 16];
+        for (int i = 0; i < 4; i++)
+        {
+            int bx4 = positions[i][0];
+            int by4 = positions[i][1];
+            int skipContext = LumaSkipContext(aboveLuma, leftLuma, bx4, by4, 4, 4);
+            int dcSignContext = DcSignContext(aboveLuma, leftLuma, bx4, by4, 4, 4);
 
-        // NOTE: decoding the luma transform blocks of this 32x32 block additionally requires the
-        // per-block transform-type (txtp_intra) syntax, which the coefficient reader does not yet
-        // decode for intra blocks with a transform smaller than 64x64. That is the next step.
+            Array.Clear(levels);
+            int eob = Av1CoefficientReader.ReadCoefficients(
+                decoder, coeffCdf, Av1TransformSize.Size16x16, Av1TransformType.DctDct, 0, skipContext, dcSignContext, levels, modeCdf, 0, false);
+            Assert.Equal(expectedLumaRanges[i], decoder.Range);
+
+            byte resContext = LevelContext(levels, eob);
+            WriteContext(aboveLuma, bx4, 4, resContext);
+            WriteContext(leftLuma, by4, 4, resContext);
+        }
+
+        // Chroma: a single TX_16X16 per plane (32x32 luma -> 16x16 chroma in 4:2:0), both all-zero.
+        int eobU = Av1CoefficientReader.ReadCoefficients(
+            decoder, coeffCdf, Av1TransformSize.Size16x16, Av1TransformType.DctDct, 1, 7, 0, levels);
+        Assert.Equal(Av1CoefficientReader.AllZero, eobU);
+        Assert.Equal(45117u, decoder.Range);
+
+        int eobV = Av1CoefficientReader.ReadCoefficients(
+            decoder, coeffCdf, Av1TransformSize.Size16x16, Av1TransformType.DctDct, 2, 7, 0, levels);
+        Assert.Equal(Av1CoefficientReader.AllZero, eobV);
+        Assert.Equal(40572u, decoder.Range);
     }
+
+    private static readonly int[][] SkipContextTable =
+    [
+        [1, 2, 2, 2, 3],
+        [2, 4, 4, 4, 5],
+        [2, 4, 4, 4, 5],
+        [2, 4, 4, 4, 5],
+        [3, 5, 5, 5, 6],
+    ];
+
+    private static byte[] NewLevelContext(int length)
+    {
+        byte[] context = new byte[length];
+        Array.Fill(context, (byte)0x40);
+        return context;
+    }
+
+    private static int LumaSkipContext(byte[] above, byte[] left, int bx4, int by4, int txWidth4, int txHeight4)
+    {
+        int la = 0;
+        for (int i = 0; i < txWidth4; i++)
+        {
+            la |= above[bx4 + i];
+        }
+
+        int ll = 0;
+        for (int i = 0; i < txHeight4; i++)
+        {
+            ll |= left[by4 + i];
+        }
+
+        return SkipContextTable[Math.Min(la & 0x3F, 4)][Math.Min(ll & 0x3F, 4)];
+    }
+
+    private static int DcSignContext(byte[] above, byte[] left, int bx4, int by4, int txWidth4, int txHeight4)
+    {
+        int sum = 0;
+        for (int i = 0; i < txWidth4; i++)
+        {
+            sum += above[bx4 + i] >> 6;
+        }
+
+        for (int i = 0; i < txHeight4; i++)
+        {
+            sum += left[by4 + i] >> 6;
+        }
+
+        int s = sum - txWidth4 - txHeight4;
+        return s < 0 ? 1 : s > 0 ? 2 : 0;
+    }
+
+    private static byte LevelContext(int[] levels, int eob)
+    {
+        if (eob == Av1CoefficientReader.AllZero)
+        {
+            return 0x40;
+        }
+
+        int culLevel = 0;
+        for (int i = 0; i < levels.Length; i++)
+        {
+            culLevel += Math.Abs(levels[i]);
+        }
+
+        int dcSignLevel = levels[0] == 0 ? 0x40 : levels[0] > 0 ? 0x80 : 0x00;
+        return (byte)(Math.Min(culLevel, 63) | dcSignLevel);
+    }
+
+    private static void WriteContext(byte[] context, int start, int count, byte value)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            context[start + i] = value;
+        }
+    }
+
+    private static int GetQuantizerContext(int baseQIndex)
+        => baseQIndex <= 20 ? 0 : baseQIndex <= 60 ? 1 : baseQIndex <= 120 ? 2 : 3;
 }

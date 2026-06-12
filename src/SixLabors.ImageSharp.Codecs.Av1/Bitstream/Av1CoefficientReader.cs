@@ -24,8 +24,54 @@ internal static class Av1CoefficientReader
     private static readonly int[] TxSizeContextTable =
         [0, 1, 2, 3, 4, 1, 1, 2, 2, 3, 3, 4, 4, 1, 1, 2, 2, 3, 3];
 
+    // The intra transform-type sets (dav1d_tx_types_per_set), mapped to Av1TransformType.
+    private static readonly Av1TransformType[] IntraTransformSet2 =
+    [
+        Av1TransformType.Identity, Av1TransformType.DctDct, Av1TransformType.AdstAdst,
+        Av1TransformType.AdstDct, Av1TransformType.DctAdst,
+    ];
+
+    private static readonly Av1TransformType[] IntraTransformSet1 =
+    [
+        Av1TransformType.Identity, Av1TransformType.DctDct, Av1TransformType.VerticalDct,
+        Av1TransformType.HorizontalDct, Av1TransformType.AdstAdst, Av1TransformType.AdstDct,
+        Av1TransformType.DctAdst,
+    ];
+
     /// <summary>Gets the txb_skip / coefficient CDF context (t_dim->ctx) for the given size.</summary>
     public static int GetTransformSizeContext(Av1TransformSize transformSize) => TxSizeContextTable[(int)transformSize];
+
+    /// <summary>
+    /// Reads the per-block transform type for an intra luma block (specification section 5.11.40,
+    /// <c>transform_type</c>), assuming a non-lossless block with a non-zero quantizer.
+    /// </summary>
+    private static Av1TransformType ReadIntraTransformType(
+        Av1SymbolDecoder decoder,
+        Av1ModeInfoCdfContext modeCdf,
+        Av1TransformSize transformSize,
+        int intraLumaMode,
+        bool reducedTransformSet)
+    {
+        int lw = transformSize.GetWidthLog2() - 2;
+        int lh = transformSize.GetHeightLog2() - 2;
+        int maxTx = Math.Max(lw, lh);
+        int minTx = Math.Min(lw, lh);
+
+        // For transforms of 32x32 and larger the intra transform type is implicitly DCT_DCT.
+        if (maxTx >= 3)
+        {
+            return Av1TransformType.DctDct;
+        }
+
+        if (reducedTransformSet || minTx == 2)
+        {
+            int index = decoder.ReadSymbol(modeCdf.TransformTypeIntra2[minTx][intraLumaMode]);
+            return IntraTransformSet2[index];
+        }
+
+        int index1 = decoder.ReadSymbol(modeCdf.TransformTypeIntra1[minTx][intraLumaMode]);
+        return IntraTransformSet1[index1];
+    }
 
     /// <summary>
     /// Reads the coefficients of one transform block into <paramref name="coefficients"/> as signed
@@ -49,7 +95,10 @@ internal static class Av1CoefficientReader
         int plane,
         int skipContext,
         int dcSignContext,
-        Span<int> coefficients)
+        Span<int> coefficients,
+        Av1ModeInfoCdfContext? modeCdf = null,
+        int intraLumaMode = 0,
+        bool reducedTransformSet = false)
     {
         int chroma = plane != 0 ? 1 : 0;
         int txCtx = GetTransformSizeContext(transformSize);
@@ -59,6 +108,13 @@ internal static class Av1CoefficientReader
         if (allZero)
         {
             return AllZero;
+        }
+
+        // Intra luma blocks code a per-block transform type after txb_skip when the transform is
+        // smaller than 64x64; otherwise (and for chroma) the supplied type is used as-is.
+        if (modeCdf is not null && plane == 0)
+        {
+            transformType = ReadIntraTransformType(decoder, modeCdf, transformSize, intraLumaMode, reducedTransformSet);
         }
 
         int slw = Math.Min(transformSize.GetWidthLog2() - 2, 3);
