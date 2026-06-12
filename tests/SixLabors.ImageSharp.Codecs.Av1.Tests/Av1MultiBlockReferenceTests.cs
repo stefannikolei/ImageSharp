@@ -3,6 +3,7 @@
 
 using SixLabors.ImageSharp.Formats.Av1.Bitstream;
 using SixLabors.ImageSharp.Formats.Av1.Obu;
+using SixLabors.ImageSharp.Formats.Av1.Transform;
 
 namespace SixLabors.ImageSharp.Codecs.Av1.Tests;
 
@@ -64,5 +65,10 @@ public class Av1MultiBlockReferenceTests
         // tx depth for a 32x32 block (max transform TX_32X32, context 0) -> TX_16X16 (depth 1).
         Assert.Equal(1, decoder.ReadSymbol(modeCdf.TransformDepth[2][0]));
         Assert.Equal(51296u, decoder.Range);
+
+
+        // NOTE: decoding the luma transform blocks of this 32x32 block additionally requires the
+        // per-block transform-type (txtp_intra) syntax, which the coefficient reader does not yet
+        // decode for intra blocks with a transform smaller than 64x64. That is the next step.
     }
 }
