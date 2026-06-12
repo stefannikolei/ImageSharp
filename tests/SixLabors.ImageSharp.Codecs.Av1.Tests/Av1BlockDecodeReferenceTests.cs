@@ -117,9 +117,11 @@ public class Av1BlockDecodeReferenceTests
         byte[] reference = Convert.FromBase64String(Dav1dLumaBase64);
 
         // The decode, dequantization, inverse transform and DC prediction reproduce dav1d's luma to
-        // within a single level. The residual off-by-one originates in the 64-point inverse DCT
-        // rounding (a transform-internal detail, separate from the entropy decode); the entropy decode
-        // itself is bit-exact, as the range checks above confirm.
+        // within a single level. The residual is in fact bit-exact with dav1d's inverse transform (the
+        // dequantized coefficients fed through dav1d's own inv_dct64_1d produce an identical residual);
+        // the remaining off-by-one versus the final decoded frame is the CDEF post-filter, which this
+        // frame enables and which is not applied here. The entropy decode is bit-exact, as the range
+        // checks in the companion test confirm.
         int exact = 0;
         for (int i = 0; i < luma.Length; i++)
         {
