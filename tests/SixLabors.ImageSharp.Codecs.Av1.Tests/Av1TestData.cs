@@ -20,9 +20,11 @@ internal static class Av1TestData
     /// A hand-encoded reduced-still-picture sequence-header payload:
     /// <c>seq_profile=0, still_picture=1, reduced_still_picture_header=1</c>,
     /// <c>frame_width_bits_minus_1=5, frame_height_bits_minus_1=5</c>,
-    /// <c>max_frame_width_minus_1=63 (=> 64), max_frame_height_minus_1=47 (=> 48)</c>.
+    /// <c>max_frame_width_minus_1=63 (=> 64), max_frame_height_minus_1=47 (=> 48)</c>,
+    /// followed by the coding-tool flags (all disabled), an 8-bit 4:2:0 colour configuration and the
+    /// trailing bits, forming a complete sequence header.
     /// </summary>
-    public static byte[] SequenceHeaderPayload => [0x18, 0x15, 0x7F, 0xBC];
+    public static byte[] SequenceHeaderPayload => [0x18, 0x15, 0x7F, 0xBC, 0x00, 0x08];
 
     /// <summary>
     /// Wraps <see cref="SequenceHeaderPayload"/> in a sequence-header OBU with an explicit size.
