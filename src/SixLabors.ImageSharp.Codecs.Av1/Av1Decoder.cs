@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Six Labors Split License.
 
+using SixLabors.ImageSharp.Formats.Av1.Bitstream;
 using SixLabors.ImageSharp.Metadata;
 using SixLabors.ImageSharp.PixelFormats;
 
@@ -41,14 +42,52 @@ public sealed class Av1Decoder : SpecializedImageDecoder<Av1DecoderOptions>
         Guard.NotNull(options, nameof(options));
         Guard.NotNull(stream, nameof(stream));
 
-        // Validate the container and headers so malformed input still fails cleanly before
-        // reporting that pixel reconstruction is not yet available.
-        _ = Av1DecoderCore.ReadDimensions(stream);
-
-        throw new NotSupportedException(
-            "AV1 frame decoding is not yet implemented. The current build supports container and " +
-            "sequence-header parsing (Identify) only. See docs/av1-codec-roadmap.md.");
+        Av1IntraTileDecoder frame = Av1DecoderCore.DecodeFirstFrame(stream);
+        return ConvertToImage<TPixel>(frame);
     }
+
+    private static Image<TPixel> ConvertToImage<TPixel>(Av1IntraTileDecoder frame)
+        where TPixel : unmanaged, IPixel<TPixel>
+    {
+        Av1Plane luma = frame.Luma;
+        Av1Plane chromaU = frame.ChromaU;
+        Av1Plane chromaV = frame.ChromaV;
+        int width = luma.Width;
+        int height = luma.Height;
+
+        // Chroma subsampling ratios inferred from the plane dimensions (4:2:0, 4:2:2 or 4:4:4).
+        int subsampleX = width > chromaU.Width ? 1 : 0;
+        int subsampleY = height > chromaU.Height ? 1 : 0;
+
+        Image<TPixel> image = new(width, height);
+        Rgba32 rgba = default;
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int cx = x >> subsampleX;
+                int cy = y >> subsampleY;
+                YuvToRgb(luma[x, y], chromaU[cx, cy], chromaV[cx, cy], ref rgba);
+                image[x, y] = TPixel.FromRgba32(rgba);
+            }
+        }
+
+        return image;
+    }
+
+    // BT.601 limited-range YUV to RGB conversion (specification's default matrix for 8-bit content).
+    private static void YuvToRgb(byte yy, byte uu, byte vv, ref Rgba32 rgba)
+    {
+        float y = 1.164f * (yy - 16);
+        float u = uu - 128;
+        float v = vv - 128;
+        rgba.R = ClampToByte(y + (1.596f * v));
+        rgba.G = ClampToByte(y - (0.391f * u) - (0.813f * v));
+        rgba.B = ClampToByte(y + (2.018f * u));
+        rgba.A = 255;
+    }
+
+    private static byte ClampToByte(float value) => (byte)Math.Clamp((int)MathF.Round(value), 0, 255);
 
     /// <inheritdoc/>
     protected override Image Decode(Av1DecoderOptions options, Stream stream, CancellationToken cancellationToken)

@@ -1,0 +1,59 @@
+// Copyright (c) Six Labors.
+// Licensed under the Six Labors Split License.
+
+using SixLabors.ImageSharp.Formats.Av1.Bitstream;
+using SixLabors.ImageSharp.Formats.Av1.Obu;
+
+namespace SixLabors.ImageSharp.Codecs.Av1.Tests;
+
+/// <summary>
+/// End-to-end intra tile decode of the real 64x64 single-tile clip, exercising the full chain:
+/// sequence header -> frame header -> tile group -> partition tree -> block decode -> reconstruction.
+/// </summary>
+public class Av1IntraTileDecoderTests
+{
+    private static readonly byte[] SequencePayload = Convert.FromHexString("00000002afff9b5f3008");
+
+    private static readonly byte[] FramePayload = Convert.FromHexString("1000d00000028800001ff8195e23effcafeea34da6");
+
+    [Fact]
+    public void DecodeTile_RealStream_ReconstructsPlanes()
+    {
+        ObuSequenceHeader sequenceHeader = ObuSequenceHeader.Parse(SequencePayload);
+        Av1BitStreamReader reader = new(FramePayload);
+        ObuFrameHeader frameHeader = ObuFrameHeader.ParseIntra(ref reader, sequenceHeader);
+
+        int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
+        ObuTileGroup tileGroup = ObuTileGroup.Parse(FramePayload.AsSpan(tileGroupStart), frameHeader);
+        (int offset, int length) = tileGroup.GetTile(0);
+        ReadOnlyMemory<byte> tileData = FramePayload.AsMemory(tileGroupStart + offset, length);
+
+        Av1IntraTileDecoder decoder = new(sequenceHeader, frameHeader);
+        decoder.DecodeTile(tileData);
+
+        Assert.Equal(64, decoder.Luma.Width);
+        Assert.Equal(64, decoder.Luma.Height);
+        Assert.Equal(32, decoder.ChromaU.Width);
+
+        // Chroma is all-zero residual DC prediction -> a flat mid-level plane.
+        Assert.All(decoder.ChromaU.Samples, s => Assert.Equal(128, s));
+        Assert.All(decoder.ChromaV.Samples, s => Assert.Equal(128, s));
+
+        // Luma matches dav1d's decoded frame to within the CDEF post-filter (not yet applied).
+        byte[] reference = Convert.FromBase64String(Dav1dLumaBase64);
+        int exact = 0;
+        for (int i = 0; i < reference.Length; i++)
+        {
+            Assert.True(Math.Abs(decoder.Luma.Samples[i] - reference[i]) <= 1, $"Luma sample {i}: got {decoder.Luma.Samples[i]}, dav1d {reference[i]}.");
+            if (decoder.Luma.Samples[i] == reference[i])
+            {
+                exact++;
+            }
+        }
+
+        Assert.True(exact >= reference.Length * 95 / 100, $"Only {exact}/{reference.Length} luma samples matched exactly.");
+    }
+
+    private const string Dav1dLumaBase64 =
+        "BAQFBQYHBwgKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQmJygpKissLS0uLzAxMjM0Njc4OTo6PD09Pj8/PwQFBQUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiQlJicoKSorLC0uLzAwMTM0NTY3ODk6Ozw9Pj4/Pz8FBQUGBwcICQoLDA0OEBESExQVFhcYGRkaGxwdHiAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ozw9PT4/P0BABQUGBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJSYnKCkqKywtLi8wMDEzNDU2Nzg5Ojs8PT4+P0BAQAYGBwcICAkKCwwNDhAREhMUFRYXGBkZGhscHR4gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTs8PT0+P0BAQUEHBwcICAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BAQUFCBwgICQkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQUJCQwgJCQoKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJigpKissLS4vMDEyMzQ1NTc4OTo7PD0+P0BBQkJDQ0QJCgoLCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicpKissLS4vMDEyMzQ1NjY4OTo7PD0+P0BBQkNDRERECgsLDAwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicpKissLS4vMDEyMzQ1NjY4OTo7PD0+P0BBQkNEREVFRQwMDA0NDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUVGRkYNDQ0ODg8QERITFBUWFxkaGxwdHh4fICEiIyQlJicpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZGR0dIDg4ODw8QERITFBUWFxkaGxwdHh8gISEiIyQlJicpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNFRUZHR0hJSQ8PDxARERITFBUWFxkaGxwdHh8gISIjIyQlJicpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNFRkdHSElJSkoQEBEREhITFBUWFxgaGxwdHh8gISIjJCQlJigpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNFRkdISElKSktLERESEhMTFBUWFxgaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNFRkdISUpKS0tMTBISExMUFBUWFxgZGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERkdISUpLS0xMTU0TExQUFRYWFxgZGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERkdISUpLTExNTU5OFBQVFRYWFxgZGhscHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSUpLTExNTk5PTxUVFhYXFxgZGhscHh8gISIjJCUmJygpKiorLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSUpLTE1OTk9PUFAWFhcXGBgZGhscHR4gISIjJCUmJygpKisrLC0vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElLTE1OTk9QUFFRFxcYGBkZGhscHR4fISIjJCUmJygpKisrLC0uMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKTE1OT09QUVFSUhgYGRkZGhscHR4fICEjJCUmJygpKisrLC0uLzAxMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xOTk9QUVJSU1MZGRkaGhscHR4fICEiJCUmJygpKisrLC0uLzAxMjQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNT09QUVJTU1RUGhoaGxscHR4fICEiIyQlJygpKissLC0uLzAxMjM0NTc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFRUVRsbGxwcHR4fICEiIyQlJygpKissLC0uLzAxMjM0NTc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFRVVVYcHBwdHR4fICEiIyQlJigpKissLS0uLzAxMjM0NTY4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVVVlZXHR0dHh4fICEiIyQlJigpKissLS4vMDAxMjM0NTY4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWVldYWB4eHh8fICEiIyQlJicpKissLS4vMDExMjM0NTY4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJUVVVWV1hYWVkfHx8gISEiIyQlJicpKissLS4vMDEyMjM0NTY4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJUVVZXV1hZWVpaICAhISIiIyQlJicpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJUVVZXWFlZWlpbWyEhIiIjJCQlJicpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkRFRkdISElKS0xNTk9QUVJUVVZXWFlaWltbXFwiIiMkJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkRFRkdISUpLS0xNTk9QUVJUVVZXWFlaW1tcXV1dIyQkJSUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkRFRkdISUpLTExNTk9QUVJUVVZXWFlaW1xdXV5eXiUlJSYmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkRFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl5fX18mJiYnJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkRFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9fYGBgJycnKCgpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYGFhYSgoKCkpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWFiYmMpKSkqKissLS4vMDEyMzQ1Nzc4OTo7PD0+P0BBQkNERkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJiY2NkKioqKyssLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjY2RkZSorKywsLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGRlZWUrLCwtLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSEpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVlZmZmLC0tLi4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKTE1OT1BRUlNUVVZXWFlZW1xdXl9gYWJjZGVmZmdnZy0uLi8vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS01OT1BRUlNUVVZXWFlZW1xdXl9gYWJjZGVmZ2doaGguLi8vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNT1BRUlNUVVZXWFlZWltcXl9gYWJjZGVmZ2hoaWlpLy8wMTEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNT1BRUlNUVVZXWFlZWltcXV9gYWJjZGVmZ2hpaWpqajAwMTIyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUlNUVVZXWFlaWltcXV5fYGJjZGVmZ2hpampra2sxMTIzMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUlNUVVZXWFlaW1tcXV5fYGJjZGVmZ2hpamtrbGxsMjMzNDQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVNUVVZXWFlaW1tcXV5fYGJjZGVmZ2hpamtsbG1tbTM0NDU1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVNUVVZXWFlaW1xdXl9fYGFjZGVmZ2hpamtsbW1ubm40NTU2Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJUVVZXWFlaW1xdXl9gYGJjZGVmZ2hpamtsbW5ub29vNjY2Nzc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vb3BwcDc3Nzg4OTo7PD0+P0BBQkNERkZHSElKS0xNTk9QUVJUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHBxcXI4ODg5OTo7PD0+P0BBQkRFRkdISUpLS0xNTk9QUVNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW9vcHFxcnNzOTk5Ojs7PD0+P0BBQkRFRkdISUpLTE1NTk9QUVNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW9wcXFyc3N0dDo6Ozs8PD0+P0BBQkRFRkdISUpLTE1OTk9QUVNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW9wcXJyc3R0dXU6Ozw8PT0+P0BBQkNFRkdISUpLTE1OT09QUVJUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5wcXJzdHR1dXZ2Ozw9PT4+P0BBQkNERkdISUpLTE1OT09QUVJTVFZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcXJzdHR1dnZ3dz09PT4+P0BBQkNERUZISUpLTE1OT1BQUVJTVFVWWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFzdHR1dnd3eHg9Pj4/P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd3eHh4Pj4/P0BBQUJDREVGSElKS0xNTk9QUVJTU1RVVlhZWltcXV5fYGFiY2RlZmdoaWprbG1ub3Bxc3R1dnd3eHh5eT8/P0BAQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHh5eXk/Pz9AQUFCQ0RFRkdJSktMTU5PUFFSU1NUVVZYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJ0dXZ3d3h5eXp6Pz9AQEFCQ0RERUdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYmNkZWZmZ2hpamtsbW5vcHJzdHV2d3h4eXl6eg==";
+}

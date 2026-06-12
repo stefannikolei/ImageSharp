@@ -59,11 +59,12 @@ public class Av1DecoderTests
     }
 
     [Fact]
-    public void Decode_NotYetImplemented_Throws()
+    public void Decode_HeaderOnlyStream_ThrowsInvalidData()
     {
+        // The synthetic test stream carries only headers (no frame OBU), so there is nothing to decode.
         using MemoryStream stream = new(Av1TestData.IvfFile());
 
-        Assert.Throws<NotSupportedException>(
+        Assert.Throws<InvalidDataException>(
             () => Av1Decoder.Instance.Decode<Rgba32>(new DecoderOptions(), stream));
     }
 

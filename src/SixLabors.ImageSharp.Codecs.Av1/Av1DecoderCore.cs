@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Six Labors Split License.
 
+using SixLabors.ImageSharp.Formats.Av1.Bitstream;
 using SixLabors.ImageSharp.Formats.Av1.Containers.Ivf;
 using SixLabors.ImageSharp.Formats.Av1.Obu;
 
@@ -36,6 +37,62 @@ internal static class Av1DecoderCore
         }
 
         return new Size(fileHeader.Width, fileHeader.Height);
+    }
+
+    /// <summary>
+    /// Decodes the first key frame of an IVF-wrapped AV1 stream into reconstructed planes. Supports the
+    /// intra feature subset implemented by <see cref="Av1IntraTileDecoder"/>.
+    /// </summary>
+    /// <param name="stream">The stream positioned at the start of the IVF container.</param>
+    /// <returns>The decoder holding the reconstructed luma and chroma planes.</returns>
+    /// <exception cref="InvalidDataException">The stream is not a valid AV1/IVF bitstream.</exception>
+    public static Av1IntraTileDecoder DecodeFirstFrame(Stream stream)
+    {
+        Guard.NotNull(stream, nameof(stream));
+
+        IvfFileHeader fileHeader = IvfReader.ReadFileHeader(stream);
+        if (!fileHeader.IsAv1)
+        {
+            throw new InvalidDataException($"Unsupported IVF codec FourCC '{fileHeader.FourCc}', expected AV1.");
+        }
+
+        if (!IvfReader.TryReadFrame(stream, out _, out byte[] frame))
+        {
+            throw new InvalidDataException("The AV1 stream contains no coded frames.");
+        }
+
+        bool haveSequenceHeader = false;
+        ObuSequenceHeader sequenceHeader = default;
+        int offset = 0;
+        while (ObuReader.TryRead(frame, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
+        {
+            if (header.Type == ObuType.SequenceHeader)
+            {
+                sequenceHeader = ObuSequenceHeader.Parse(payload);
+                haveSequenceHeader = true;
+            }
+            else if (header.Type == ObuType.Frame)
+            {
+                if (!haveSequenceHeader)
+                {
+                    throw new InvalidDataException("Encountered a frame OBU before any sequence header.");
+                }
+
+                Av1BitStreamReader reader = new(payload);
+                ObuFrameHeader frameHeader = ObuFrameHeader.ParseIntra(ref reader, sequenceHeader);
+
+                int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
+                ObuTileGroup tileGroup = ObuTileGroup.Parse(payload[tileGroupStart..], frameHeader);
+                (int tileOffset, int tileLength) = tileGroup.GetTile(0);
+                byte[] tileData = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
+
+                Av1IntraTileDecoder tileDecoder = new(sequenceHeader, frameHeader);
+                tileDecoder.DecodeTile(tileData);
+                return tileDecoder;
+            }
+        }
+
+        throw new InvalidDataException("The AV1 stream contains no decodable frame OBU.");
     }
 
     private static bool TryReadSequenceHeaderDimensions(Stream stream, out Size size)
