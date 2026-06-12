@@ -22,6 +22,17 @@ public class Av1DefaultCoefficientCdfTests
     }
 
     [Fact]
+    public void EobBin16_MatchesKnownReferenceValues()
+    {
+        // dav1d default coef.eob_bin_16 qctx0, plane 0, ctx 0 is CDF4(840, 1039, 1980, 4895).
+        Assert.Equal(31928, Av1DefaultCoefficientCdf.EobBin16[0, 0, 0, 0]);
+        Assert.Equal(31729, Av1DefaultCoefficientCdf.EobBin16[0, 0, 0, 1]);
+        Assert.Equal(30788, Av1DefaultCoefficientCdf.EobBin16[0, 0, 0, 2]);
+        Assert.Equal(27873, Av1DefaultCoefficientCdf.EobBin16[0, 0, 0, 3]);
+        Assert.Equal(0, Av1DefaultCoefficientCdf.EobBin16[0, 0, 0, 4]); // terminal boundary
+    }
+
+    [Fact]
     public void AllBoundaries_AreValidTwoSymbolCdfs()
     {
         foreach (ushort boundary in Av1DefaultCoefficientCdf.DcSign)
