@@ -2,6 +2,7 @@
 // Licensed under the Six Labors Split License.
 
 using SixLabors.ImageSharp.Formats.Av1.Obu;
+using SixLabors.ImageSharp.Formats.Av1.Prediction;
 using SixLabors.ImageSharp.Formats.Av1.Transform;
 
 namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
@@ -206,21 +207,15 @@ internal sealed class Av1IntraTileDecoder
         int aboveModeContext = IntraModeContext[this.aboveMode[col]];
         int leftModeContext = IntraModeContext[this.leftMode[row]];
         int yMode = this.decoder.ReadSymbol(this.modeCdf.KeyFrameYMode[aboveModeContext][leftModeContext]);
-        if (yMode != 0)
-        {
-            throw new NotSupportedException("Only DC intra prediction is supported yet.");
-        }
+        EnsureSupportedMode(yMode);
 
         // chroma intra mode.
         bool cflAllowed = bsize <= Av1BlockSize.Block32x32;
         int uvMode = this.decoder.ReadSymbol(this.modeCdf.UvMode[cflAllowed ? 1 : 0][yMode]);
-        if (uvMode != 0)
-        {
-            throw new NotSupportedException("Only DC chroma prediction is supported yet.");
-        }
+        EnsureSupportedMode(uvMode);
 
         // filter_intra: coded for DC luma blocks up to 32x32 when enabled.
-        if (this.sequenceHeader.EnableFilterIntra && bsize <= Av1BlockSize.Block32x32)
+        if (this.sequenceHeader.EnableFilterIntra && bsize <= Av1BlockSize.Block32x32 && yMode == 0)
         {
             int useFilterIntra = this.decoder.ReadSymbol(this.modeCdf.UseFilterIntra[(int)bsize]);
             if (useFilterIntra != 0)
@@ -320,7 +315,7 @@ internal sealed class Av1IntraTileDecoder
                     intraMode,
                     this.frameHeader.ReducedTxSet);
 
-                this.Reconstruct(plane, x, y, tx, coefficientLevels, eob);
+                this.Reconstruct(plane, x, y, tx, coefficientLevels, eob, intraMode);
 
                 byte resContext = LevelContextByte(coefficientLevels, eob);
                 levels.Write(txCol, txRow, txWidth4, txHeight4, resContext);
@@ -328,16 +323,17 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, int[] levels, int eob)
+    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, int[] levels, int eob, int intraMode)
     {
         int width = tx.GetWidth();
         int height = tx.GetHeight();
-        int dc = this.PredictDc(plane, x, y, width, height);
+
+        byte[] prediction = new byte[width * height];
+        this.Predict(plane, x, y, width, height, intraMode, prediction);
 
         int[] residual = new int[width * height];
         if (eob != Av1CoefficientReader.AllZero)
         {
-            int codedWidth = Math.Min(width, 32);
             int codedHeight = Math.Min(height, 32);
             int[] coefficients = new int[width * height];
             for (int rc = 0; rc < levels.Length; rc++)
@@ -361,8 +357,85 @@ internal sealed class Av1IntraTileDecoder
         {
             for (int rx = 0; rx < width && x + rx < plane.Width; rx++)
             {
-                plane[x + rx, y + ry] = (byte)Math.Clamp(dc + residual[(ry * width) + rx], 0, maxValue);
+                plane[x + rx, y + ry] = (byte)Math.Clamp(prediction[(ry * width) + rx] + residual[(ry * width) + rx], 0, maxValue);
             }
+        }
+    }
+
+    private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, byte[] prediction)
+    {
+        // DC prediction is computed directly from the available neighbour averages.
+        if (intraMode == 0)
+        {
+            byte dc = (byte)this.PredictDc(plane, x, y, width, height);
+            Array.Fill(prediction, dc);
+            return;
+        }
+
+        this.PrepareEdges(plane, x, y, width, height, out byte[] above, out byte[] left, out byte topLeft);
+        switch (intraMode)
+        {
+            case 9: // SMOOTH_PRED
+                Av1IntraPrediction.SmoothPredict(prediction, width, width, height, above, left);
+                break;
+            case 10: // SMOOTH_V_PRED
+                Av1IntraPrediction.SmoothVerticalPredict(prediction, width, width, height, above, left);
+                break;
+            case 11: // SMOOTH_H_PRED
+                Av1IntraPrediction.SmoothHorizontalPredict(prediction, width, width, height, above, left);
+                break;
+            default: // 12 PAETH_PRED
+                Av1IntraPrediction.PaethPredict(prediction, width, width, height, above, left, topLeft);
+                break;
+        }
+    }
+
+    private void PrepareEdges(Av1Plane plane, int x, int y, int width, int height, out byte[] above, out byte[] left, out byte topLeft)
+    {
+        bool hasAbove = y > 0;
+        bool hasLeft = x > 0;
+        byte mid = (byte)this.midGrey;
+        above = new byte[width];
+        left = new byte[height];
+
+        if (hasAbove)
+        {
+            for (int i = 0; i < width; i++)
+            {
+                above[i] = plane[Math.Min(x + i, plane.Width - 1), y - 1];
+            }
+        }
+        else
+        {
+            byte fill = hasLeft ? plane[x - 1, y] : (byte)(this.midGrey - 1);
+            Array.Fill(above, fill);
+        }
+
+        if (hasLeft)
+        {
+            for (int i = 0; i < height; i++)
+            {
+                left[i] = plane[x - 1, Math.Min(y + i, plane.Height - 1)];
+            }
+        }
+        else
+        {
+            byte fill = hasAbove ? plane[x, y - 1] : (byte)(this.midGrey + 1);
+            Array.Fill(left, fill);
+        }
+
+        topLeft = hasLeft
+            ? hasAbove ? plane[x - 1, y - 1] : plane[x - 1, y]
+            : hasAbove ? plane[x, y - 1] : mid;
+    }
+
+    private static void EnsureSupportedMode(int mode)
+    {
+        // DC (0) and the non-directional modes (SMOOTH 9, SMOOTH_V 10, SMOOTH_H 11, PAETH 12) are
+        // supported; directional modes and CfL are not handled yet.
+        if (mode is not (0 or 9 or 10 or 11 or 12))
+        {
+            throw new NotSupportedException($"Intra prediction mode {mode} is not supported yet.");
         }
     }
 
