@@ -21,26 +21,27 @@ public class Av1BlockDecodeReferenceTests
     public void IntraSuperblock_DecodesBitExactWithDav1d()
     {
         Av1SymbolDecoder decoder = new(TileData);
+        Av1ModeInfoCdfContext modeCdf = Av1ModeInfoCdfContext.CreateDefault();
 
-        // 1) partition: CDF9(20137,...) for the 64x64 split, ctx 0 -> PARTITION_NONE.
-        int partition = decoder.ReadSymbol(InverseCdf(20137, 21547, 23078, 29566, 29837, 30261, 30524, 30892, 31724));
+        // 1) partition: the 64x64 block level (index 1), context 0 -> PARTITION_NONE.
+        int partition = decoder.ReadSymbol(modeCdf.Partition[1][0]);
         Assert.Equal(0, partition);
         Assert.Equal(40248u, decoder.Range);
 
-        // 2) skip: m.skip ctx 0 = CDF1(31671) -> not skipped.
-        int skip = decoder.ReadSymbol(InverseCdf(31671));
+        // 2) skip: context 0 -> not skipped.
+        int skip = decoder.ReadSymbol(modeCdf.Skip[0]);
         Assert.Equal(0, skip);
         Assert.Equal(38910u, decoder.Range);
 
         // (cdef_idx reads 0 bits: cdef_bits == 0 in the frame header.)
 
-        // 3) luma intra mode: kfym[0][0] = CDF12(15588,...) -> DC_PRED.
-        int yMode = decoder.ReadSymbol(InverseCdf(15588, 17027, 19338, 20218, 20682, 21110, 21825, 23244, 24189, 28165, 29093, 30466));
+        // 3) luma intra mode: key-frame y-mode with above/left context 0 -> DC_PRED.
+        int yMode = decoder.ReadSymbol(modeCdf.KeyFrameYMode[0][0]);
         Assert.Equal(0, yMode);
         Assert.Equal(37256u, decoder.Range);
 
-        // 4) chroma intra mode: uv_mode[cfl=0][DC_PRED] = CDF12(22631,...) -> DC_PRED.
-        int uvMode = decoder.ReadSymbol(InverseCdf(22631, 24152, 25378, 25661, 25986, 26520, 27055, 27923, 28244, 30059, 30941, 31961));
+        // 4) chroma intra mode: uv-mode (cfl not allowed for 64x64) for luma DC_PRED -> DC_PRED.
+        int uvMode = decoder.ReadSymbol(modeCdf.UvMode[0][0]);
         Assert.Equal(0, uvMode);
         Assert.Equal(51506u, decoder.Range);
 
@@ -72,16 +73,5 @@ public class Av1BlockDecodeReferenceTests
         // dav1d: Post-uv-cf-blk[pl=1,tx=3,txtp=0,eob=-1]: r=40760
         Assert.Equal(Av1CoefficientReader.AllZero, eobV);
         Assert.Equal(40760u, decoder.Range);
-    }
-
-    private static ushort[] InverseCdf(params int[] cumulative)
-    {
-        ushort[] cdf = new ushort[cumulative.Length + 2];
-        for (int i = 0; i < cumulative.Length; i++)
-        {
-            cdf[i] = (ushort)(32768 - cumulative[i]);
-        }
-
-        return cdf;
     }
 }
