@@ -596,6 +596,8 @@ internal sealed class Av1IntraTileDecoder
                 false,
                 y > 0,
                 x > 0,
+                plane.Width - x,
+                plane.Height - y,
                 prediction);
             return;
         }
