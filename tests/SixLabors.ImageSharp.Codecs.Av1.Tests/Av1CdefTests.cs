@@ -50,4 +50,93 @@ public class Av1CdefTests
         Assert.Equal(4, dir);
         Assert.Equal(29155, variance);
     }
+
+    [Fact]
+    public void FilterBlock_Case0_W8H8Pri6Sec0_MatchesDav1d()
+    {
+        int w = 8, h = 8, stride = 10;
+        byte[] dst = [101, 249, 115, 183, 124, 131, 47, 233, 253, 204, 98, 12, 171, 221, 218, 83, 143, 219, 8, 177, 79, 96, 124, 16, 204, 67, 62, 61, 215, 129, 146, 250, 123, 255, 62, 194, 17, 17, 105, 152, 70, 246, 95, 97, 205, 248, 162, 31, 206, 109, 55, 24, 47, 154, 214, 134, 187, 141, 79, 106, 46, 110, 18, 166, 77, 24, 209, 153, 87, 91, 90, 83, 148, 179, 61, 184, 213, 192, 59, 210];
+        byte[] left = [159, 235, 8, 110, 134, 249, 122, 159, 83, 172, 61, 91, 113, 106, 217, 51];
+        byte[] top = [106, 180, 105, 101, 237, 160, 93, 255, 47, 146, 226, 238, 251, 187, 193, 6, 106, 23, 37, 141, 92, 60, 233, 155];
+        byte[] bottom = [138, 91, 251, 154, 43, 201, 36, 150, 13, 30, 70, 149, 208, 151, 145, 115, 217, 65, 221, 190, 44, 117, 152, 81];
+        byte[] reference = [102, 249, 115, 182, 125, 131, 48, 234, 99, 13, 172, 221, 218, 83, 143, 219, 80, 96, 124, 16, 204, 66, 62, 61, 146, 250, 123, 255, 63, 195, 16, 17, 70, 246, 95, 97, 204, 248, 162, 30, 55, 24, 47, 154, 214, 134, 187, 142, 47, 109, 18, 165, 77, 25, 209, 153, 91, 83, 149, 179, 61, 184, 214, 192];
+        Av1Cdef.FilterBlock(dst, 0, stride, left, top, bottom, 6, 0, 0, 4, w, h,
+            Av1Cdef.EdgeFlags.Left | Av1Cdef.EdgeFlags.Right | Av1Cdef.EdgeFlags.Top | Av1Cdef.EdgeFlags.Bottom);
+        byte[] result = new byte[w * h];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                result[(y * w) + x] = dst[(y * stride) + x];
+            }
+        }
+
+        Assert.True(result.AsSpan().SequenceEqual(reference), "CDEF filter output differs from dav1d.");
+    }
+    [Fact]
+    public void FilterBlock_Case1_W8H8Pri0Sec2_MatchesDav1d()
+    {
+        int w = 8, h = 8, stride = 10;
+        byte[] dst = [8, 123, 149, 147, 107, 106, 90, 159, 184, 178, 212, 8, 42, 116, 198, 101, 109, 162, 234, 221, 79, 189, 128, 44, 192, 129, 21, 152, 2, 206, 116, 212, 234, 99, 178, 15, 176, 162, 14, 242, 139, 132, 217, 19, 124, 126, 183, 82, 243, 145, 86, 15, 27, 92, 249, 195, 174, 63, 12, 222, 95, 5, 115, 172, 41, 114, 236, 246, 29, 151, 129, 193, 56, 226, 174, 18, 218, 199, 214, 154];
+        byte[] left = [132, 119, 170, 119, 39, 97, 134, 105, 111, 212, 112, 231, 166, 56, 22, 160];
+        byte[] top = [248, 30, 186, 22, 53, 222, 175, 125, 162, 147, 61, 211, 20, 129, 3, 93, 110, 147, 177, 23, 44, 88, 101, 31];
+        byte[] bottom = [122, 108, 234, 57, 153, 133, 250, 195, 189, 227, 34, 37, 161, 84, 199, 125, 75, 22, 78, 195, 137, 76, 42, 172];
+        byte[] reference = [8, 123, 149, 147, 107, 106, 90, 159, 212, 8, 42, 116, 198, 101, 109, 162, 79, 189, 128, 44, 192, 129, 21, 152, 116, 212, 234, 99, 178, 15, 176, 162, 139, 132, 217, 19, 124, 126, 183, 82, 86, 15, 27, 92, 249, 195, 174, 63, 95, 5, 115, 172, 41, 114, 236, 246, 129, 193, 56, 226, 174, 18, 218, 199];
+        Av1Cdef.FilterBlock(dst, 0, stride, left, top, bottom, 0, 2, 0, 4, w, h,
+            Av1Cdef.EdgeFlags.Left | Av1Cdef.EdgeFlags.Right | Av1Cdef.EdgeFlags.Top | Av1Cdef.EdgeFlags.Bottom);
+        byte[] result = new byte[w * h];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                result[(y * w) + x] = dst[(y * stride) + x];
+            }
+        }
+
+        Assert.True(result.AsSpan().SequenceEqual(reference), "CDEF filter output differs from dav1d.");
+    }
+    [Fact]
+    public void FilterBlock_Case2_W8H8Pri6Sec2_MatchesDav1d()
+    {
+        int w = 8, h = 8, stride = 10;
+        byte[] dst = [87, 113, 108, 173, 193, 107, 245, 191, 243, 130, 72, 6, 164, 205, 33, 81, 147, 232, 226, 101, 31, 109, 252, 25, 17, 67, 207, 121, 97, 214, 27, 26, 13, 98, 143, 88, 113, 6, 221, 132, 102, 175, 38, 74, 100, 109, 171, 4, 54, 43, 21, 49, 20, 251, 198, 185, 6, 199, 251, 246, 43, 113, 217, 46, 66, 4, 15, 174, 110, 9, 121, 81, 70, 147, 177, 175, 87, 172, 168, 95];
+        byte[] left = [37, 147, 134, 189, 28, 150, 79, 116, 170, 30, 10, 121, 180, 155, 67, 137];
+        byte[] top = [212, 86, 10, 145, 108, 124, 209, 237, 42, 134, 202, 68, 241, 145, 229, 86, 149, 131, 194, 34, 174, 7, 213, 161];
+        byte[] bottom = [140, 194, 119, 208, 31, 80, 122, 220, 55, 17, 34, 101, 219, 213, 178, 177, 20, 38, 45, 32, 234, 124, 25, 45];
+        byte[] reference = [87, 113, 109, 172, 194, 107, 245, 191, 73, 6, 165, 204, 32, 81, 146, 233, 31, 109, 252, 25, 17, 68, 207, 120, 27, 26, 15, 98, 144, 89, 113, 6, 103, 175, 40, 73, 99, 110, 172, 5, 20, 47, 20, 251, 198, 184, 5, 199, 44, 114, 217, 46, 66, 5, 15, 174, 120, 81, 70, 147, 177, 175, 87, 172];
+        Av1Cdef.FilterBlock(dst, 0, stride, left, top, bottom, 6, 2, 0, 4, w, h,
+            Av1Cdef.EdgeFlags.Left | Av1Cdef.EdgeFlags.Right | Av1Cdef.EdgeFlags.Top | Av1Cdef.EdgeFlags.Bottom);
+        byte[] result = new byte[w * h];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                result[(y * w) + x] = dst[(y * stride) + x];
+            }
+        }
+
+        Assert.True(result.AsSpan().SequenceEqual(reference), "CDEF filter output differs from dav1d.");
+    }
+    [Fact]
+    public void FilterBlock_Case3_W4H4Pri6Sec2_MatchesDav1d()
+    {
+        int w = 4, h = 4, stride = 6;
+        byte[] dst = [128, 11, 32, 225, 198, 42, 11, 145, 192, 107, 253, 171, 83, 17, 251, 232, 145, 162, 231, 153, 208, 175, 14, 255];
+        byte[] left = [184, 139, 30, 128, 46, 81, 62, 190];
+        byte[] top = [227, 69, 67, 69, 1, 190, 202, 7, 52, 137, 195, 242, 75, 54, 133, 27];
+        byte[] bottom = [42, 243, 91, 40, 66, 53, 227, 56, 141, 180, 46, 6, 163, 71, 26, 123];
+        byte[] reference = [128, 11, 32, 225, 11, 145, 192, 107, 83, 17, 251, 232, 232, 153, 208, 174];
+        Av1Cdef.FilterBlock(dst, 0, stride, left, top, bottom, 6, 2, 0, 4, w, h,
+            Av1Cdef.EdgeFlags.Left | Av1Cdef.EdgeFlags.Right | Av1Cdef.EdgeFlags.Top | Av1Cdef.EdgeFlags.Bottom);
+        byte[] result = new byte[w * h];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                result[(y * w) + x] = dst[(y * stride) + x];
+            }
+        }
+
+        Assert.True(result.AsSpan().SequenceEqual(reference), "CDEF filter output differs from dav1d.");
+    }
 }

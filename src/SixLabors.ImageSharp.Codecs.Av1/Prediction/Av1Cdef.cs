@@ -138,9 +138,8 @@ internal static class Av1Cdef
 
     /// <summary>
     /// Applies the CDEF filter to a w x h block in place, reading the surrounding samples from the
-    /// supplied edges (a port of dav1d's <c>cdef_filter_block</c>). Not yet wired into the decode path:
-    /// the direction search is bit-exact, but the block filter still has a boundary rounding difference
-    /// from dav1d under investigation, so it must not be relied upon for reconstruction yet.
+    /// supplied edges (a port of dav1d's <c>cdef_filter_block</c>). The block's two right-neighbour
+    /// columns are read directly from <paramref name="dst"/> when the right edge is available.
     /// </summary>
     /// <param name="dst">The destination plane buffer.</param>
     /// <param name="dstOffset">The offset of the block's top-left sample.</param>
