@@ -424,12 +424,13 @@ internal sealed class Av1IntraTileDecoder
         int uvAngleDelta = this.ReadAngleDelta(uvMode, bsize);
 
         // filter_intra: coded for DC luma blocks up to 32x32 when enabled.
+        int filterIntraMode = -1;
         if (this.sequenceHeader.EnableFilterIntra && bsize <= Av1BlockSize.Block32x32 && yMode == 0)
         {
             int useFilterIntra = this.decoder.ReadSymbol(this.modeCdf.UseFilterIntra[(int)bsize]);
             if (useFilterIntra != 0)
             {
-                throw new NotSupportedException("Filter-intra prediction is not supported yet.");
+                filterIntraMode = this.decoder.ReadSymbol(this.modeCdf.FilterIntraMode);
             }
         }
 
@@ -437,14 +438,14 @@ internal sealed class Av1IntraTileDecoder
         Av1TransformSize lumaTx = this.ReadTransformSize(row, col, bsize);
 
         // luma transform-block loop.
-        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta);
+        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode);
 
         // chroma transform-block loop (single transform per plane for the sizes handled here).
         Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
         int chromaRow = row >> this.subsamplingY;
         int chromaCol = col >> this.subsamplingX;
-        this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta);
-        this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta);
+        this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1);
+        this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1);
 
         // record block-level neighbour contexts.
         Fill(this.aboveSkip, col, width4, (byte)skip);
@@ -482,7 +483,7 @@ internal sealed class Av1IntraTileDecoder
         return tx;
     }
 
-    private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta)
+    private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode)
     {
         int blockWidth4 = bsize.GetWidth4() >> (planeIndex == 0 ? 0 : this.subsamplingX);
         int blockHeight4 = bsize.GetHeight4() >> (planeIndex == 0 ? 0 : this.subsamplingY);
@@ -524,7 +525,7 @@ internal sealed class Av1IntraTileDecoder
                     intraMode,
                     this.frameHeader.ReducedTxSet);
 
-                this.Reconstruct(plane, x, y, tx, coefficientLevels, eob, intraMode, angleDelta);
+                this.Reconstruct(plane, x, y, tx, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode);
 
                 byte resContext = LevelContextByte(coefficientLevels, eob);
                 levels.Write(txCol, txRow, txWidth4, txHeight4, resContext);
@@ -532,13 +533,13 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, int[] levels, int eob, int intraMode, int angleDelta)
+    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, int[] levels, int eob, int intraMode, int angleDelta, int filterIntraMode)
     {
         int width = tx.GetWidth();
         int height = tx.GetHeight();
 
         byte[] prediction = new byte[width * height];
-        this.Predict(plane, x, y, width, height, intraMode, angleDelta, prediction);
+        this.Predict(plane, x, y, width, height, intraMode, angleDelta, filterIntraMode, prediction);
 
         int[] residual = new int[width * height];
         if (eob != Av1CoefficientReader.AllZero)
@@ -571,8 +572,16 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, byte[] prediction)
+    private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, byte[] prediction)
     {
+        // Filter-intra (luma, DC blocks): predict each square unit from the prepared edges.
+        if (filterIntraMode >= 0)
+        {
+            this.PrepareEdges(plane, x, y, width, height, out byte[] fAbove, out byte[] fLeft, out byte fTopLeft);
+            Av1FilterIntraPrediction.Predict(fAbove, fLeft, fTopLeft, width, filterIntraMode, prediction);
+            return;
+        }
+
         // DC prediction is computed directly from the available neighbour averages.
         if (intraMode == 0)
         {
