@@ -57,6 +57,13 @@ internal sealed class Av1IntraTileDecoder
     private readonly LevelContext chromaULevels;
     private readonly LevelContext chromaVLevels;
 
+    // CDEF post-filter state, gathered during decode and consumed by ApplyCdef.
+    private readonly int miColumns;
+    private readonly int miRows;
+    private readonly bool[] noskip;
+    private readonly int[] cdefIndices;
+    private readonly int cdefColumns64;
+
     private Av1SymbolDecoder decoder = default!;
     private bool cdefRead;
 
@@ -93,6 +100,13 @@ internal sealed class Av1IntraTileDecoder
         this.lumaLevels = new LevelContext(miCols, miRows);
         this.chromaULevels = new LevelContext((miCols >> this.subsamplingX) + 1, (miRows >> this.subsamplingY) + 1);
         this.chromaVLevels = new LevelContext((miCols >> this.subsamplingX) + 1, (miRows >> this.subsamplingY) + 1);
+
+        this.miColumns = miCols;
+        this.miRows = miRows;
+        this.noskip = new bool[miCols * miRows];
+        this.cdefColumns64 = (miCols + 15) >> 4;
+        this.cdefIndices = new int[this.cdefColumns64 * ((miRows + 15) >> 4)];
+        Array.Fill(this.cdefIndices, -1);
     }
 
     /// <summary>Gets the reconstructed luma plane.</summary>
@@ -136,6 +150,189 @@ internal sealed class Av1IntraTileDecoder
                 this.DecodePartition(row, col, superblock);
             }
         }
+
+        this.ApplyCdef();
+    }
+
+    /// <summary>
+    /// Applies the constrained directional enhancement filter to the reconstructed planes (a port of
+    /// dav1d's <c>cdef_brow</c> for the single-tile, 64x64-superblock case). All neighbour taps are read
+    /// from a pre-filter clone of each plane so the result is independent of the block iteration order.
+    /// </summary>
+    private void ApplyCdef()
+    {
+        if (this.sequenceHeader.Use128x128Superblock)
+        {
+            // The 64x64 CDEF preset grid differs for 128x128 superblocks; not handled yet.
+            return;
+        }
+
+        ObuFrameHeader.Cdef cdef = this.frameHeader.CdefParameters;
+        int bitDepthMin8 = this.sequenceHeader.BitDepth - 8;
+        int damping = cdef.Damping + bitDepthMin8;
+        bool hasChroma = this.sequenceHeader.NumPlanes > 1;
+
+        // dav1d uv_dirs: identity for 4:2:0/4:4:4, a remap for 4:2:2.
+        bool is422 = this.subsamplingX == 1 && this.subsamplingY == 0;
+        ReadOnlySpan<byte> uvDir = is422 ? [7, 0, 2, 4, 5, 6, 6, 6] : [0, 1, 2, 3, 4, 5, 6, 7];
+
+        byte[] lumaSrc = (byte[])this.luma.Samples.Clone();
+        byte[] uSrc = hasChroma ? (byte[])this.chromaU.Samples.Clone() : [];
+        byte[] vSrc = hasChroma ? (byte[])this.chromaV.Samples.Clone() : [];
+
+        int bw4 = this.miColumns;
+        int bh4 = this.miRows;
+
+        for (int by = 0; by < bh4; by += 2)
+        {
+            for (int bx = 0; bx < bw4; bx += 2)
+            {
+                int cdefIndex = this.cdefIndices[((by >> 4) * this.cdefColumns64) + (bx >> 4)];
+                if (cdefIndex < 0)
+                {
+                    continue;
+                }
+
+                int yPriLevel = cdef.YPrimary[cdefIndex] << bitDepthMin8;
+                int ySecLevel = cdef.YSecondary[cdefIndex] << bitDepthMin8;
+                int uvPriLevel = cdef.UvPrimary[cdefIndex] << bitDepthMin8;
+                int uvSecLevel = cdef.UvSecondary[cdefIndex] << bitDepthMin8;
+                if (yPriLevel == 0 && ySecLevel == 0 && uvPriLevel == 0 && uvSecLevel == 0)
+                {
+                    continue;
+                }
+
+                // Skip 8x8 blocks whose four 4x4 units were all coded as skip.
+                if (!this.AnyNoskip(bx, by))
+                {
+                    continue;
+                }
+
+                Av1Cdef.EdgeFlags edges = 0;
+                if (bx > 0)
+                {
+                    edges |= Av1Cdef.EdgeFlags.Left;
+                }
+
+                if (bx + 2 < bw4)
+                {
+                    edges |= Av1Cdef.EdgeFlags.Right;
+                }
+
+                if (by > 0)
+                {
+                    edges |= Av1Cdef.EdgeFlags.Top;
+                }
+
+                if (by + 2 < bh4)
+                {
+                    edges |= Av1Cdef.EdgeFlags.Bottom;
+                }
+
+                int dir = 0;
+                int variance = 0;
+                if (yPriLevel != 0 || uvPriLevel != 0)
+                {
+                    dir = Av1Cdef.FindDirection(lumaSrc, ((by * 4) * this.luma.Width) + (bx * 4), this.luma.Width, out variance);
+                }
+
+                // Luma: 8x8 block, primary strength scaled by the block variance.
+                if (yPriLevel != 0)
+                {
+                    int adjusted = Av1Cdef.AdjustStrength(yPriLevel, variance);
+                    if (adjusted != 0 || ySecLevel != 0)
+                    {
+                        FilterPlaneBlock(this.luma, lumaSrc, bx * 4, by * 4, 8, 8, adjusted, ySecLevel, dir, damping, edges);
+                    }
+                }
+                else if (ySecLevel != 0)
+                {
+                    FilterPlaneBlock(this.luma, lumaSrc, bx * 4, by * 4, 8, 8, 0, ySecLevel, 0, damping, edges);
+                }
+
+                // Chroma: subsampled block, no variance adjustment, damping reduced by one.
+                if (hasChroma && (uvPriLevel != 0 || uvSecLevel != 0))
+                {
+                    int uvDirection = uvPriLevel != 0 ? uvDir[dir] : 0;
+                    int cw = 8 >> this.subsamplingX;
+                    int ch = 8 >> this.subsamplingY;
+                    int cx = (bx * 4) >> this.subsamplingX;
+                    int cy = (by * 4) >> this.subsamplingY;
+                    FilterPlaneBlock(this.chromaU, uSrc, cx, cy, cw, ch, uvPriLevel, uvSecLevel, uvDirection, damping - 1, edges);
+                    FilterPlaneBlock(this.chromaV, vSrc, cx, cy, cw, ch, uvPriLevel, uvSecLevel, uvDirection, damping - 1, edges);
+                }
+            }
+        }
+    }
+
+    private bool AnyNoskip(int bx, int by)
+    {
+        for (int dy = 0; dy < 2 && by + dy < this.miRows; dy++)
+        {
+            for (int dx = 0; dx < 2 && bx + dx < this.miColumns; dx++)
+            {
+                if (this.noskip[((by + dy) * this.miColumns) + bx + dx])
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Gathers the pre-filter edge spans for one CDEF block from the plane clone and filters in place.
+    private static void FilterPlaneBlock(Av1Plane plane, byte[] src, int px, int py, int w, int h, int priStrength, int secStrength, int dir, int damping, Av1Cdef.EdgeFlags edges)
+    {
+        int stride = plane.Width;
+        int clampW = Math.Min(w, plane.Width - px);
+        int clampH = Math.Min(h, plane.Height - py);
+        if (clampW <= 0 || clampH <= 0)
+        {
+            return;
+        }
+
+        int topWidth = clampW + 4;
+        byte[] top = new byte[2 * topWidth];
+        byte[] bottom = new byte[2 * topWidth];
+        byte[] left = new byte[clampH * 2];
+
+        for (int r = 0; r < 2; r++)
+        {
+            for (int c = 0; c < topWidth; c++)
+            {
+                top[(r * topWidth) + c] = Sample(src, stride, plane.Width, plane.Height, px - 2 + c, py - 2 + r);
+                bottom[(r * topWidth) + c] = Sample(src, stride, plane.Width, plane.Height, px - 2 + c, py + clampH + r);
+            }
+        }
+
+        for (int y = 0; y < clampH; y++)
+        {
+            left[(y * 2) + 0] = Sample(src, stride, plane.Width, plane.Height, px - 2, py + y);
+            left[(y * 2) + 1] = Sample(src, stride, plane.Width, plane.Height, px - 1, py + y);
+        }
+
+        Av1Cdef.FilterBlock(
+            plane.Samples,
+            (py * stride) + px,
+            stride,
+            left,
+            top,
+            bottom,
+            priStrength,
+            secStrength,
+            dir,
+            damping,
+            clampW,
+            clampH,
+            edges);
+    }
+
+    private static byte Sample(byte[] src, int stride, int width, int height, int x, int y)
+    {
+        int cx = Math.Clamp(x, 0, width - 1);
+        int cy = Math.Clamp(y, 0, height - 1);
+        return src[(cy * stride) + cx];
     }
 
     private void DecodePartition(int row, int col, Av1BlockSize bsize)
@@ -197,9 +394,19 @@ internal sealed class Av1IntraTileDecoder
         if (skip == 0 && !this.cdefRead)
         {
             this.cdefRead = true;
-            if (this.frameHeader.CdefBits > 0)
+            int cdefIndex = this.frameHeader.CdefBits > 0 ? (int)this.decoder.ReadLiteral(this.frameHeader.CdefBits) : 0;
+            this.cdefIndices[((row >> 4) * this.cdefColumns64) + (col >> 4)] = cdefIndex;
+        }
+
+        // Record the non-skip status of every 4x4 unit so CDEF can leave fully-skipped blocks alone.
+        if (skip == 0)
+        {
+            for (int dy = 0; dy < height4 && row + dy < this.miRows; dy++)
             {
-                this.decoder.ReadLiteral(this.frameHeader.CdefBits);
+                for (int dx = 0; dx < width4 && col + dx < this.miColumns; dx++)
+                {
+                    this.noskip[((row + dy) * this.miColumns) + col + dx] = true;
+                }
             }
         }
 

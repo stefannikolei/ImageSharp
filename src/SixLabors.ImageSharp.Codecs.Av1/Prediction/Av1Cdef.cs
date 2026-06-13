@@ -317,6 +317,24 @@ internal static class Av1Cdef
         }
     }
 
+    /// <summary>
+    /// Scales the primary luma strength by the block variance (a port of dav1d's
+    /// <c>adjust_strength</c>); blocks with little variance receive a weaker filter.
+    /// </summary>
+    /// <param name="strength">The primary strength.</param>
+    /// <param name="variance">The block variance from <see cref="FindDirection"/>.</param>
+    /// <returns>The variance-adjusted strength.</returns>
+    public static int AdjustStrength(int strength, int variance)
+    {
+        if (variance == 0)
+        {
+            return 0;
+        }
+
+        int i = (variance >> 6) != 0 ? Math.Min(Log2(variance >> 6), 12) : 0;
+        return ((strength * (4 + i)) + 8) >> 4;
+    }
+
     private static int Constrain(int diff, int threshold, int shift)
     {
         int adiff = Math.Abs(diff);
