@@ -105,6 +105,9 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets the number of bits used to code each block's CDEF index.</summary>
     public int CdefBits { get; init; }
 
+    /// <summary>Gets the CDEF strength parameters.</summary>
+    public Cdef CdefParameters { get; init; }
+
     /// <summary>Gets the bit position immediately after the uncompressed header (before byte alignment).</summary>
     public int EndBitPosition { get; init; }
 
@@ -259,7 +262,7 @@ internal readonly struct ObuFrameHeader
             q.DeltaQUDc == 0 && q.DeltaQUAc == 0 && q.DeltaQVDc == 0 && q.DeltaQVAc == 0;
 
         ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
-        int cdefBits = ReadCdefParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
+        Cdef cdef = ReadCdefParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
         ReadLoopRestorationParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
 
         // read_tx_mode().
@@ -304,7 +307,8 @@ internal readonly struct ObuFrameHeader
             CodedLossless = codedLossless,
             TxMode = txMode,
             ReducedTxSet = reducedTxSet,
-            CdefBits = cdefBits,
+            CdefBits = cdef.Bits,
+            CdefParameters = cdef,
             EndBitPosition = reader.BitPosition,
         };
     }
@@ -516,27 +520,42 @@ internal readonly struct ObuFrameHeader
         }
     }
 
-    private static int ReadCdefParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
+    private static Cdef ReadCdefParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
     {
         if (codedLossless || allowIntraBlockCopy || !sequenceHeader.EnableCdef)
         {
-            return 0;
+            // A single all-zero preset: CDEF performs no filtering.
+            return new Cdef { Damping = 3, Bits = 0, YPrimary = [0], YSecondary = [0], UvPrimary = [0], UvSecondary = [0] };
         }
 
-        reader.ReadLiteral(2); // cdef_damping_minus_3
+        int damping = (int)reader.ReadLiteral(2) + 3;
         int cdefBits = (int)reader.ReadLiteral(2);
-        for (int i = 0; i < (1 << cdefBits); i++)
+        int count = 1 << cdefBits;
+        int[] yPri = new int[count];
+        int[] ySec = new int[count];
+        int[] uvPri = new int[count];
+        int[] uvSec = new int[count];
+        for (int i = 0; i < count; i++)
         {
-            reader.ReadLiteral(4); // cdef_y_pri_strength
-            reader.ReadLiteral(2); // cdef_y_sec_strength
+            yPri[i] = (int)reader.ReadLiteral(4);
+            ySec[i] = (int)reader.ReadLiteral(2);
+            if (ySec[i] == 3)
+            {
+                ySec[i]++;
+            }
+
             if (sequenceHeader.NumPlanes > 1)
             {
-                reader.ReadLiteral(4); // cdef_uv_pri_strength
-                reader.ReadLiteral(2); // cdef_uv_sec_strength
+                uvPri[i] = (int)reader.ReadLiteral(4);
+                uvSec[i] = (int)reader.ReadLiteral(2);
+                if (uvSec[i] == 3)
+                {
+                    uvSec[i]++;
+                }
             }
         }
 
-        return cdefBits;
+        return new Cdef { Damping = damping, Bits = cdefBits, YPrimary = yPri, YSecondary = ySec, UvPrimary = uvPri, UvSecondary = uvSec };
     }
 
     private static void ReadLoopRestorationParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
@@ -601,6 +620,31 @@ internal readonly struct ObuFrameHeader
         public int RowsLog2 { get; init; }
 
         public int SizeBytes { get; init; }
+    }
+
+    /// <summary>
+    /// The CDEF (constrained directional enhancement filter) parameters from the frame header
+    /// (specification section 5.9.19). Strengths are indexed by the per-block CDEF preset.
+    /// </summary>
+    public readonly struct Cdef
+    {
+        /// <summary>Gets the CDEF damping value (<c>cdef_damping_minus_3 + 3</c>).</summary>
+        public int Damping { get; init; }
+
+        /// <summary>Gets the number of bits used to select the per-block CDEF preset.</summary>
+        public int Bits { get; init; }
+
+        /// <summary>Gets the luma primary strengths per preset.</summary>
+        public int[] YPrimary { get; init; }
+
+        /// <summary>Gets the luma secondary strengths per preset.</summary>
+        public int[] YSecondary { get; init; }
+
+        /// <summary>Gets the chroma primary strengths per preset.</summary>
+        public int[] UvPrimary { get; init; }
+
+        /// <summary>Gets the chroma secondary strengths per preset.</summary>
+        public int[] UvSecondary { get; init; }
     }
 
     private readonly struct Quantization
