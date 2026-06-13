@@ -208,11 +208,13 @@ internal sealed class Av1IntraTileDecoder
         int leftModeContext = IntraModeContext[this.leftMode[row]];
         int yMode = this.decoder.ReadSymbol(this.modeCdf.KeyFrameYMode[aboveModeContext][leftModeContext]);
         EnsureSupportedMode(yMode);
+        int yAngleDelta = this.ReadAngleDelta(yMode, bsize);
 
         // chroma intra mode.
         bool cflAllowed = bsize <= Av1BlockSize.Block32x32;
         int uvMode = this.decoder.ReadSymbol(this.modeCdf.UvMode[cflAllowed ? 1 : 0][yMode]);
         EnsureSupportedMode(uvMode);
+        int uvAngleDelta = this.ReadAngleDelta(uvMode, bsize);
 
         // filter_intra: coded for DC luma blocks up to 32x32 when enabled.
         if (this.sequenceHeader.EnableFilterIntra && bsize <= Av1BlockSize.Block32x32 && yMode == 0)
@@ -228,14 +230,14 @@ internal sealed class Av1IntraTileDecoder
         Av1TransformSize lumaTx = this.ReadTransformSize(row, col, bsize);
 
         // luma transform-block loop.
-        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode);
+        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta);
 
         // chroma transform-block loop (single transform per plane for the sizes handled here).
         Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
         int chromaRow = row >> this.subsamplingY;
         int chromaCol = col >> this.subsamplingX;
-        this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode);
-        this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode);
+        this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta);
+        this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta);
 
         // record block-level neighbour contexts.
         Fill(this.aboveSkip, col, width4, (byte)skip);
@@ -273,7 +275,7 @@ internal sealed class Av1IntraTileDecoder
         return tx;
     }
 
-    private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode)
+    private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta)
     {
         int blockWidth4 = bsize.GetWidth4() >> (planeIndex == 0 ? 0 : this.subsamplingX);
         int blockHeight4 = bsize.GetHeight4() >> (planeIndex == 0 ? 0 : this.subsamplingY);
@@ -315,7 +317,7 @@ internal sealed class Av1IntraTileDecoder
                     intraMode,
                     this.frameHeader.ReducedTxSet);
 
-                this.Reconstruct(plane, x, y, tx, coefficientLevels, eob, intraMode);
+                this.Reconstruct(plane, x, y, tx, coefficientLevels, eob, intraMode, angleDelta);
 
                 byte resContext = LevelContextByte(coefficientLevels, eob);
                 levels.Write(txCol, txRow, txWidth4, txHeight4, resContext);
@@ -323,13 +325,13 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, int[] levels, int eob, int intraMode)
+    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, int[] levels, int eob, int intraMode, int angleDelta)
     {
         int width = tx.GetWidth();
         int height = tx.GetHeight();
 
         byte[] prediction = new byte[width * height];
-        this.Predict(plane, x, y, width, height, intraMode, prediction);
+        this.Predict(plane, x, y, width, height, intraMode, angleDelta, prediction);
 
         int[] residual = new int[width * height];
         if (eob != Av1CoefficientReader.AllZero)
@@ -362,13 +364,32 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, byte[] prediction)
+    private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, byte[] prediction)
     {
         // DC prediction is computed directly from the available neighbour averages.
         if (intraMode == 0)
         {
             byte dc = (byte)this.PredictDc(plane, x, y, width, height);
             Array.Fill(prediction, dc);
+            return;
+        }
+
+        // Directional modes (VERT..VERT_LEFT) use the extended edges and the angular predictor.
+        if (intraMode is >= 1 and <= 8)
+        {
+            this.PrepareDirectionalEdges(plane, x, y, width, out byte[] dAbove, out byte[] dLeft, out byte dTopLeft);
+            Av1DirectionalPrediction.Predict(
+                dAbove,
+                dLeft,
+                dTopLeft,
+                width,
+                intraMode,
+                angleDelta,
+                this.sequenceHeader.EnableIntraEdgeFilter,
+                false,
+                y > 0,
+                x > 0,
+                prediction);
             return;
         }
 
@@ -388,6 +409,60 @@ internal sealed class Av1IntraTileDecoder
                 Av1IntraPrediction.PaethPredict(prediction, width, width, height, above, left, topLeft);
                 break;
         }
+    }
+
+    // Gathers the extended reference edges (2*size above and left) for directional prediction, applying
+    // the dav1d availability fills and frame-edge replication. Only square transforms are handled.
+    private void PrepareDirectionalEdges(Av1Plane plane, int x, int y, int size, out byte[] above, out byte[] left, out byte topLeft)
+    {
+        bool hasAbove = y > 0;
+        bool hasLeft = x > 0;
+        int extent = 2 * size;
+        above = new byte[extent];
+        left = new byte[extent];
+
+        if (hasAbove)
+        {
+            for (int i = 0; i < extent; i++)
+            {
+                int sx = Math.Min(x + i, plane.Width - 1);
+                above[i] = plane[sx, y - 1];
+            }
+        }
+        else
+        {
+            byte fill = hasLeft ? plane[x - 1, y] : (byte)(this.midGrey - 1);
+            Array.Fill(above, fill);
+        }
+
+        if (hasLeft)
+        {
+            for (int i = 0; i < extent; i++)
+            {
+                int sy = Math.Min(y + i, plane.Height - 1);
+                left[i] = plane[x - 1, sy];
+            }
+        }
+        else
+        {
+            byte fill = hasAbove ? plane[x, y - 1] : (byte)(this.midGrey + 1);
+            Array.Fill(left, fill);
+        }
+
+        topLeft = hasLeft
+            ? hasAbove ? plane[x - 1, y - 1] : plane[x - 1, y]
+            : hasAbove ? plane[x, y - 1] : (byte)this.midGrey;
+    }
+
+    private int ReadAngleDelta(int mode, Av1BlockSize bsize)
+    {
+        // Angle delta is coded for directional modes on blocks of at least 8x8.
+        if (mode is >= 1 and <= 8 && bsize.GetWidthLog2() >= 1)
+        {
+            return this.decoder.ReadSymbol(this.modeCdf.AngleDelta[mode - 1]) - 3;
+        }
+
+        return 0;
     }
 
     private void PrepareEdges(Av1Plane plane, int x, int y, int width, int height, out byte[] above, out byte[] left, out byte topLeft)
@@ -431,9 +506,9 @@ internal sealed class Av1IntraTileDecoder
 
     private static void EnsureSupportedMode(int mode)
     {
-        // DC (0) and the non-directional modes (SMOOTH 9, SMOOTH_V 10, SMOOTH_H 11, PAETH 12) are
-        // supported; directional modes and CfL are not handled yet.
-        if (mode is not (0 or 9 or 10 or 11 or 12))
+        // All 13 intra prediction modes (DC, the 8 directional and the 4 non-directional) are handled;
+        // chroma-from-luma (CfL, uv mode 13) is not yet supported.
+        if (mode is < 0 or > 12)
         {
             throw new NotSupportedException($"Intra prediction mode {mode} is not supported yet.");
         }

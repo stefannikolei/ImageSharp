@@ -41,6 +41,9 @@ internal sealed class Av1ModeInfoCdfContext
     /// <summary>Gets the intra txtp_intra2 CDFs, indexed by tx-size-min then luma mode.</summary>
     public ushort[][][] TransformTypeIntra2 { get; private set; } = default!;
 
+    /// <summary>Gets the angle-delta CDFs, indexed by directional mode.</summary>
+    public ushort[][] AngleDelta { get; private set; } = default!;
+
     /// <summary>
     /// Creates a mode-info CDF context initialized from the default tables.
     /// </summary>
@@ -56,6 +59,7 @@ internal sealed class Av1ModeInfoCdfContext
         TransformDepth = Clone(Av1DefaultModeInfoCdf.TransformDepth),
         TransformTypeIntra1 = Clone(Av1DefaultModeInfoCdf.TransformTypeIntra1),
         TransformTypeIntra2 = Clone(Av1DefaultModeInfoCdf.TransformTypeIntra2),
+        AngleDelta = Clone(Av1DefaultModeInfoCdf.AngleDelta),
     };
 
     private static ushort[][] Clone(ushort[][] group)
