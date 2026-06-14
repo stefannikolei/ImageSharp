@@ -578,7 +578,7 @@ internal sealed class Av1IntraTileDecoder
         if (filterIntraMode >= 0)
         {
             this.PrepareEdges(plane, x, y, width, height, out byte[] fAbove, out byte[] fLeft, out byte fTopLeft);
-            Av1FilterIntraPrediction.Predict(fAbove, fLeft, fTopLeft, width, filterIntraMode, prediction);
+            Av1FilterIntraPrediction.Predict(fAbove, fLeft, fTopLeft, width, height, filterIntraMode, prediction);
             return;
         }
 
@@ -593,12 +593,13 @@ internal sealed class Av1IntraTileDecoder
         // Directional modes (VERT..VERT_LEFT) use the extended edges and the angular predictor.
         if (intraMode is >= 1 and <= 8)
         {
-            this.PrepareDirectionalEdges(plane, x, y, width, out byte[] dAbove, out byte[] dLeft, out byte dTopLeft);
+            this.PrepareDirectionalEdges(plane, x, y, width, height, out byte[] dAbove, out byte[] dLeft, out byte dTopLeft);
             Av1DirectionalPrediction.Predict(
                 dAbove,
                 dLeft,
                 dTopLeft,
                 width,
+                height,
                 intraMode,
                 angleDelta,
                 this.sequenceHeader.EnableIntraEdgeFilter,
@@ -631,11 +632,11 @@ internal sealed class Av1IntraTileDecoder
 
     // Gathers the extended reference edges (2*size above and left) for directional prediction, applying
     // the dav1d availability fills and frame-edge replication. Only square transforms are handled.
-    private void PrepareDirectionalEdges(Av1Plane plane, int x, int y, int size, out byte[] above, out byte[] left, out byte topLeft)
+    private void PrepareDirectionalEdges(Av1Plane plane, int x, int y, int width, int height, out byte[] above, out byte[] left, out byte topLeft)
     {
         bool hasAbove = y > 0;
         bool hasLeft = x > 0;
-        int extent = 2 * size;
+        int extent = width + height;
         above = new byte[extent];
         left = new byte[extent];
 

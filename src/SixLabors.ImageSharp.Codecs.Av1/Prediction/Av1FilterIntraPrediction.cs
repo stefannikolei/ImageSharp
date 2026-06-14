@@ -40,25 +40,26 @@ internal static class Av1FilterIntraPrediction
     /// Predicts a square filter-intra block. The above and left reference samples and the corner are
     /// taken from the reconstructed neighbours; predicted samples feed later sub-units in place.
     /// </summary>
-    /// <param name="above">The above reference row (index 0..size-1).</param>
-    /// <param name="left">The left reference column (index 0..size-1).</param>
+    /// <param name="above">The above reference row (index 0..width-1).</param>
+    /// <param name="left">The left reference column (index 0..height-1).</param>
     /// <param name="topLeft">The top-left corner sample.</param>
-    /// <param name="size">The block size (width == height).</param>
+    /// <param name="width">The block width.</param>
+    /// <param name="height">The block height.</param>
     /// <param name="filterIndex">The filter tap set index (0..4).</param>
-    /// <param name="destination">The prediction output buffer (size*size, row-major).</param>
-    public static void Predict(ReadOnlySpan<byte> above, ReadOnlySpan<byte> left, byte topLeft, int size, int filterIndex, Span<byte> destination)
+    /// <param name="destination">The prediction output buffer (width*height, row-major).</param>
+    public static void Predict(ReadOnlySpan<byte> above, ReadOnlySpan<byte> left, byte topLeft, int width, int height, int filterIndex, Span<byte> destination)
     {
         sbyte[][] filter = Taps[filterIndex];
 
-        for (int y = 0; y < size; y += 2)
+        for (int y = 0; y < height; y += 2)
         {
-            for (int x = 0; x < size; x += 4)
+            for (int x = 0; x < width; x += 4)
             {
-                int p0 = x == 0 ? (y == 0 ? topLeft : left[y - 1]) : SampleTop(destination, above, size, y, x - 1);
-                int p1 = SampleTop(destination, above, size, y, x);
-                int p2 = SampleTop(destination, above, size, y, x + 1);
-                int p3 = SampleTop(destination, above, size, y, x + 2);
-                int p4 = SampleTop(destination, above, size, y, x + 3);
+                int p0 = x == 0 ? (y == 0 ? topLeft : left[y - 1]) : SampleTop(destination, above, width, y, x - 1);
+                int p1 = SampleTop(destination, above, width, y, x);
+                int p2 = SampleTop(destination, above, width, y, x + 1);
+                int p3 = SampleTop(destination, above, width, y, x + 2);
+                int p4 = SampleTop(destination, above, width, y, x + 3);
                 int p5;
                 int p6;
                 if (x == 0)
@@ -68,8 +69,8 @@ internal static class Av1FilterIntraPrediction
                 }
                 else
                 {
-                    p5 = destination[(y * size) + (x - 1)];
-                    p6 = destination[((y + 1) * size) + (x - 1)];
+                    p5 = destination[(y * width) + (x - 1)];
+                    p6 = destination[((y + 1) * width) + (x - 1)];
                 }
 
                 for (int yy = 0; yy < 2; yy++)
@@ -78,7 +79,7 @@ internal static class Av1FilterIntraPrediction
                     {
                         sbyte[] t = filter[(yy * 4) + xx];
                         int acc = (t[0] * p0) + (t[1] * p1) + (t[2] * p2) + (t[3] * p3) + (t[4] * p4) + (t[5] * p5) + (t[6] * p6);
-                        destination[((y + yy) * size) + x + xx] = (byte)Math.Clamp((acc + 8) >> 4, 0, 255);
+                        destination[((y + yy) * width) + x + xx] = (byte)Math.Clamp((acc + 8) >> 4, 0, 255);
                     }
                 }
             }
@@ -86,6 +87,6 @@ internal static class Av1FilterIntraPrediction
     }
 
     // The "top" row for band y at column c: the above edge for the first band, otherwise the row above.
-    private static int SampleTop(Span<byte> dst, ReadOnlySpan<byte> above, int size, int y, int c) =>
-        y == 0 ? above[c] : dst[((y - 1) * size) + c];
+    private static int SampleTop(Span<byte> dst, ReadOnlySpan<byte> above, int width, int y, int c) =>
+        y == 0 ? above[c] : dst[((y - 1) * width) + c];
 }

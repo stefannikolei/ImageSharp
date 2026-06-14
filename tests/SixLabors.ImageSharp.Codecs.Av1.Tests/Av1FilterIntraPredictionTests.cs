@@ -23,7 +23,20 @@ public class Av1FilterIntraPredictionTests
         byte[] expected = Convert.FromBase64String(expectedBase64);
 
         byte[] dst = new byte[size * size];
-        Av1FilterIntraPrediction.Predict(above, left, (byte)topLeft, size, filt, dst);
+        Av1FilterIntraPrediction.Predict(above, left, (byte)topLeft, size, size, filt, dst);
+
+        Assert.Equal(expected, dst);
+    }
+
+    [Fact]
+    public void Predict_Rectangular4x8_MatchesDav1d()
+    {
+        byte[] above = Convert.FromBase64String("pmV7Yg==");
+        byte[] left = Convert.FromBase64String("/lhhxl2ppDw=");
+        byte[] expected = Convert.FromBase64String("//D772FRV1BmXmFdyMTGxF5cXVyqqamppaSkpDw8PDw=");
+
+        byte[] dst = new byte[4 * 8];
+        Av1FilterIntraPrediction.Predict(above, left, 129, 4, 8, 2, dst);
 
         Assert.Equal(expected, dst);
     }
