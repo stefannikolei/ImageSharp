@@ -38,6 +38,9 @@ internal sealed class Av1IntraTileDecoder
         Av1TransformSize.Size16x8, Av1TransformSize.Size16x32, Av1TransformSize.Size32x16,
     ];
 
+    // dav1d_filter_mode_to_y_mode: the intra direction used for a filter-intra block's transform-type CDF.
+    private static readonly int[] FilterModeToYMode = [0, 1, 2, 6, 0];
+
     private const byte LevelContextBaseline = 0x40; // cul_level 0, dc-sign "zero".
 
     private readonly ObuSequenceHeader sequenceHeader;
@@ -362,10 +365,16 @@ internal sealed class Av1IntraTileDecoder
             ? Av1Partition.None
             : this.ReadPartition(row, col, bsize, hasRows, hasCols);
 
-        // b0 = the primary leaf size for this partition; rectangular leaves are decoded directly.
-        Av1BlockSize sub = bsize.GetSplitSubSize();
-        Av1BlockSize horz = Av1BlockSizeExtensions.FromDimensions(side, half);
-        Av1BlockSize vert = Av1BlockSizeExtensions.FromDimensions(half, side);
+        // Sub-sizes are only needed for splitting partitions; a 4x4 block is always a NONE leaf.
+        Av1BlockSize sub = Av1BlockSize.Block4x4;
+        Av1BlockSize horz = Av1BlockSize.Block4x4;
+        Av1BlockSize vert = Av1BlockSize.Block4x4;
+        if (side >= 2)
+        {
+            sub = bsize.GetSplitSubSize();
+            horz = Av1BlockSizeExtensions.FromDimensions(side, half);
+            vert = Av1BlockSizeExtensions.FromDimensions(half, side);
+        }
 
         switch (partition)
         {
@@ -373,10 +382,22 @@ internal sealed class Av1IntraTileDecoder
                 this.DecodeBlock(row, col, bsize);
                 break;
             case Av1Partition.Split:
-                this.DecodePartition(row, col, sub);
-                this.DecodePartition(row, col + half, sub);
-                this.DecodePartition(row + half, col, sub);
-                this.DecodePartition(row + half, col + half, sub);
+                if (bsize == Av1BlockSize.Block8x8)
+                {
+                    // The four 4x4 leaves are decoded directly; dav1d does not recurse to a 4x4 level.
+                    this.DecodeBlock(row, col, sub);
+                    this.DecodeBlock(row, col + half, sub);
+                    this.DecodeBlock(row + half, col, sub);
+                    this.DecodeBlock(row + half, col + half, sub);
+                }
+                else
+                {
+                    this.DecodePartition(row, col, sub);
+                    this.DecodePartition(row, col + half, sub);
+                    this.DecodePartition(row + half, col, sub);
+                    this.DecodePartition(row + half, col + half, sub);
+                }
+
                 break;
             case Av1Partition.Horizontal:
                 this.DecodeBlock(row, col, horz);
@@ -511,11 +532,20 @@ internal sealed class Av1IntraTileDecoder
         bool cflAllowed = bsize.GetWidth4() <= 8 && bsize.GetHeight4() <= 8;
         int uvMode = 0;
         int uvAngleDelta = 0;
+        int cflAlphaU = 0;
+        int cflAlphaV = 0;
         if (hasChroma)
         {
             uvMode = this.decoder.ReadSymbol(this.modeCdf.UvMode[cflAllowed ? 1 : 0][yMode]);
-            EnsureSupportedMode(uvMode);
-            uvAngleDelta = this.ReadAngleDelta(uvMode, bsize);
+            if (uvMode == 13)
+            {
+                this.ReadCflAlphas(out cflAlphaU, out cflAlphaV);
+            }
+            else
+            {
+                EnsureSupportedMode(uvMode);
+                uvAngleDelta = this.ReadAngleDelta(uvMode, bsize);
+            }
         }
 
         // filter_intra: coded for DC luma blocks up to 32x32 when enabled.
@@ -533,7 +563,7 @@ internal sealed class Av1IntraTileDecoder
         Av1TransformSize lumaTx = this.ReadTransformSize(row, col, bsize);
 
         // luma transform-block loop.
-        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode);
+        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode, 0);
 
         // chroma transform-block loop (single transform per plane for the sizes handled here).
         if (hasChroma)
@@ -541,8 +571,8 @@ internal sealed class Av1IntraTileDecoder
             Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
             int chromaRow = row >> this.subsamplingY;
             int chromaCol = col >> this.subsamplingX;
-            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1);
-            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1);
+            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1, cflAlphaU);
+            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1, cflAlphaV);
         }
 
         // record block-level neighbour contexts.
@@ -579,7 +609,7 @@ internal sealed class Av1IntraTileDecoder
         return tx;
     }
 
-    private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode)
+    private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha)
     {
         int blockWidth4 = planeIndex == 0 ? bsize.GetWidth4() : (bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX;
         int blockHeight4 = planeIndex == 0 ? bsize.GetHeight4() : (bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY;
@@ -618,10 +648,11 @@ internal sealed class Av1IntraTileDecoder
                     dcSignContext,
                     coefficientLevels,
                     planeIndex == 0 ? this.modeCdf : null,
-                    intraMode,
-                    this.frameHeader.ReducedTxSet);
+                    filterIntraMode >= 0 ? FilterModeToYMode[filterIntraMode] : intraMode,
+                    this.frameHeader.ReducedTxSet,
+                    out Av1TransformType txType);
 
-                this.Reconstruct(plane, x, y, tx, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode);
+                this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);
 
                 byte resContext = LevelContextByte(coefficientLevels, eob);
                 levels.Write(txCol, txRow, txWidth4, txHeight4, resContext);
@@ -629,13 +660,13 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, int[] levels, int eob, int intraMode, int angleDelta, int filterIntraMode)
+    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, Av1TransformType txType, int[] levels, int eob, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha)
     {
         int width = tx.GetWidth();
         int height = tx.GetHeight();
 
         byte[] prediction = new byte[width * height];
-        this.Predict(plane, x, y, width, height, intraMode, angleDelta, filterIntraMode, prediction);
+        this.Predict(plane, x, y, width, height, intraMode, angleDelta, filterIntraMode, cflAlpha, prediction);
 
         int[] residual = new int[width * height];
         if (eob != Av1CoefficientReader.AllZero)
@@ -655,7 +686,7 @@ internal sealed class Av1IntraTileDecoder
                     Av1QuantizationLookup.Dequantize(levels[rc], rc == 0, this.frameHeader.BaseQIndex, this.sequenceHeader.BitDepth, tx);
             }
 
-            Av1InverseTransform2d.Reconstruct(Av1TransformType.DctDct, tx, coefficients, residual, this.sequenceHeader.BitDepth);
+            Av1InverseTransform2d.Reconstruct(txType, tx, coefficients, residual, this.sequenceHeader.BitDepth);
         }
 
         int maxValue = (1 << this.sequenceHeader.BitDepth) - 1;
@@ -668,13 +699,24 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, byte[] prediction)
+    private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, byte[] prediction)
     {
         // Filter-intra (luma, DC blocks): predict each square unit from the prepared edges.
         if (filterIntraMode >= 0)
         {
             this.PrepareEdges(plane, x, y, width, height, out byte[] fAbove, out byte[] fLeft, out byte fTopLeft);
             Av1FilterIntraPrediction.Predict(fAbove, fLeft, fTopLeft, width, height, filterIntraMode, prediction);
+            return;
+        }
+
+        // Chroma-from-luma: DC chroma prediction plus the signed-alpha-scaled luma AC contribution.
+        if (intraMode == 13)
+        {
+            int chromaDc = this.PredictDc(plane, x, y, width, height);
+            int[] ac = new int[width * height];
+            int lumaOffset = ((y << this.subsamplingY) * this.luma.Width) + (x << this.subsamplingX);
+            Av1ChromaFromLuma.ComputeAc(this.luma.Samples, lumaOffset, this.luma.Width, width, height, this.subsamplingX, this.subsamplingY, ac);
+            Av1ChromaFromLuma.Predict(chromaDc, cflAlpha, ac, width, height, prediction);
             return;
         }
 
@@ -820,11 +862,41 @@ internal sealed class Av1IntraTileDecoder
             : hasAbove ? plane[x, y - 1] : mid;
     }
 
+    // Reads the CfL joint sign and per-plane alpha magnitudes (specification 5.11.45, dav1d order).
+    private void ReadCflAlphas(out int alphaU, out int alphaV)
+    {
+        int sign = this.decoder.ReadSymbol(this.modeCdf.CflSign) + 1;
+        int signU = (sign * 0x56) >> 8;
+        int signV = sign - (signU * 3);
+
+        alphaU = 0;
+        if (signU != 0)
+        {
+            int ctx = ((signU == 2 ? 1 : 0) * 3) + signV;
+            alphaU = this.decoder.ReadSymbol(this.modeCdf.CflAlpha[ctx]) + 1;
+            if (signU == 1)
+            {
+                alphaU = -alphaU;
+            }
+        }
+
+        alphaV = 0;
+        if (signV != 0)
+        {
+            int ctx = ((signV == 2 ? 1 : 0) * 3) + signU;
+            alphaV = this.decoder.ReadSymbol(this.modeCdf.CflAlpha[ctx]) + 1;
+            if (signV == 1)
+            {
+                alphaV = -alphaV;
+            }
+        }
+    }
+
     private static void EnsureSupportedMode(int mode)
     {
-        // All 13 intra prediction modes (DC, the 8 directional and the 4 non-directional) are handled;
-        // chroma-from-luma (CfL, uv mode 13) is not yet supported.
-        if (mode is < 0 or > 12)
+        // All 13 intra prediction modes (DC, the 8 directional and the 4 non-directional) plus CfL (uv
+        // mode 13) are handled.
+        if (mode is < 0 or > 13)
         {
             throw new NotSupportedException($"Intra prediction mode {mode} is not supported yet.");
         }

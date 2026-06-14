@@ -44,6 +44,12 @@ internal sealed class Av1ModeInfoCdfContext
     /// <summary>Gets the angle-delta CDFs, indexed by directional mode.</summary>
     public ushort[][] AngleDelta { get; private set; } = default!;
 
+    /// <summary>Gets the CfL joint-sign CDF.</summary>
+    public ushort[] CflSign { get; private set; } = default!;
+
+    /// <summary>Gets the CfL alpha CDFs, indexed by sign context.</summary>
+    public ushort[][] CflAlpha { get; private set; } = default!;
+
     /// <summary>
     /// Creates a mode-info CDF context initialized from the default tables.
     /// </summary>
@@ -60,6 +66,8 @@ internal sealed class Av1ModeInfoCdfContext
         TransformTypeIntra1 = Clone(Av1DefaultModeInfoCdf.TransformTypeIntra1),
         TransformTypeIntra2 = Clone(Av1DefaultModeInfoCdf.TransformTypeIntra2),
         AngleDelta = Clone(Av1DefaultModeInfoCdf.AngleDelta),
+        CflSign = (ushort[])Av1DefaultModeInfoCdf.CflSign.Clone(),
+        CflAlpha = Clone(Av1DefaultModeInfoCdf.CflAlpha),
     };
 
     private static ushort[][] Clone(ushort[][] group)

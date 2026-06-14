@@ -102,6 +102,38 @@ internal static class Av1CoefficientReader
         Av1ModeInfoCdfContext? modeCdf = null,
         int intraLumaMode = 0,
         bool reducedTransformSet = false)
+        => ReadCoefficients(decoder, cdf, transformSize, transformType, plane, skipContext, dcSignContext, coefficients, modeCdf, intraLumaMode, reducedTransformSet, out _);
+
+    /// <summary>
+    /// As <see cref="ReadCoefficients(Av1SymbolDecoder, Av1CoefficientCdfContext, Av1TransformSize, Av1TransformType, int, int, int, Span{int}, Av1ModeInfoCdfContext, int, bool)"/>,
+    /// additionally returning the transform type actually used (which may be decoded from the stream).
+    /// </summary>
+    /// <param name="decoder">The symbol decoder.</param>
+    /// <param name="cdf">The coefficient CDF context.</param>
+    /// <param name="transformSize">The transform size.</param>
+    /// <param name="transformType">The fallback transform type.</param>
+    /// <param name="plane">The plane index.</param>
+    /// <param name="skipContext">The txb-skip context.</param>
+    /// <param name="dcSignContext">The dc-sign context.</param>
+    /// <param name="coefficients">The decoded coefficient levels.</param>
+    /// <param name="modeCdf">The mode-info CDFs, or null to use <paramref name="transformType"/>.</param>
+    /// <param name="intraLumaMode">The intra direction for the transform-type CDF.</param>
+    /// <param name="reducedTransformSet">Whether the reduced transform set is in use.</param>
+    /// <param name="decodedType">Receives the transform type used.</param>
+    /// <returns>The eob index, or <see cref="AllZero"/>.</returns>
+    public static int ReadCoefficients(
+        Av1SymbolDecoder decoder,
+        Av1CoefficientCdfContext cdf,
+        Av1TransformSize transformSize,
+        Av1TransformType transformType,
+        int plane,
+        int skipContext,
+        int dcSignContext,
+        Span<int> coefficients,
+        Av1ModeInfoCdfContext? modeCdf,
+        int intraLumaMode,
+        bool reducedTransformSet,
+        out Av1TransformType decodedType)
     {
         int chroma = plane != 0 ? 1 : 0;
         int txCtx = GetTransformSizeContext(transformSize);
@@ -110,6 +142,7 @@ internal static class Av1CoefficientReader
         bool allZero = decoder.ReadSymbol(cdf.Skip[(txCtx * 13) + skipContext]) != 0;
         if (allZero)
         {
+            decodedType = transformType;
             return AllZero;
         }
 
@@ -119,6 +152,8 @@ internal static class Av1CoefficientReader
         {
             transformType = ReadIntraTransformType(decoder, modeCdf, transformSize, intraLumaMode, reducedTransformSet);
         }
+
+        decodedType = transformType;
 
         int slw = Math.Min(transformSize.GetWidthLog2() - 2, 3);
         int slh = Math.Min(transformSize.GetHeightLog2() - 2, 3);
