@@ -77,6 +77,10 @@ internal sealed class Av1IntraTileDecoder
     private readonly int[] cdefIndices;
     private readonly int cdefColumns64;
 
+    // Per-4x4 luma "has been reconstructed" map, used to determine intra reference-sample availability
+    // (above-right / below-left samples are replicated when their source has not been decoded yet).
+    private readonly bool[] lumaDecoded;
+
     private Av1SymbolDecoder decoder = default!;
     private bool cdefRead;
 
@@ -120,6 +124,7 @@ internal sealed class Av1IntraTileDecoder
         this.cdefColumns64 = (miCols + 15) >> 4;
         this.cdefIndices = new int[this.cdefColumns64 * ((miRows + 15) >> 4)];
         Array.Fill(this.cdefIndices, -1);
+        this.lumaDecoded = new bool[miCols * miRows];
     }
 
     /// <summary>Gets the reconstructed luma plane.</summary>
@@ -654,6 +659,17 @@ internal sealed class Av1IntraTileDecoder
 
                 this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);
 
+                if (planeIndex == 0)
+                {
+                    for (int my = 0; my < txHeight4 && txRow + my < this.miRows; my++)
+                    {
+                        for (int mx = 0; mx < txWidth4 && txCol + mx < this.miColumns; mx++)
+                        {
+                            this.lumaDecoded[((txRow + my) * this.miColumns) + txCol + mx] = true;
+                        }
+                    }
+                }
+
                 byte resContext = LevelContextByte(coefficientLevels, eob);
                 levels.Write(txCol, txRow, txWidth4, txHeight4, resContext);
             }
@@ -697,6 +713,7 @@ internal sealed class Av1IntraTileDecoder
                 plane[x + rx, y + ry] = (byte)Math.Clamp(prediction[(ry * width) + rx] + residual[(ry * width) + rx], 0, maxValue);
             }
         }
+
     }
 
     private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, byte[] prediction)
@@ -780,11 +797,7 @@ internal sealed class Av1IntraTileDecoder
 
         if (hasAbove)
         {
-            for (int i = 0; i < extent; i++)
-            {
-                int sx = Math.Min(x + i, plane.Width - 1);
-                above[i] = plane[sx, y - 1];
-            }
+            this.GatherAbove(plane, x, y, extent, above);
         }
         else
         {
@@ -794,11 +807,7 @@ internal sealed class Av1IntraTileDecoder
 
         if (hasLeft)
         {
-            for (int i = 0; i < extent; i++)
-            {
-                int sy = Math.Min(y + i, plane.Height - 1);
-                left[i] = plane[x - 1, sy];
-            }
+            this.GatherLeft(plane, x, y, extent, left);
         }
         else
         {
@@ -809,6 +818,65 @@ internal sealed class Av1IntraTileDecoder
         topLeft = hasLeft
             ? hasAbove ? plane[x - 1, y - 1] : plane[x - 1, y]
             : hasAbove ? plane[x, y - 1] : (byte)this.midGrey;
+    }
+
+    // Gathers up to 'count' samples of the row above, reading reconstructed samples and replicating the
+    // last available one once the source (above-right) has not been decoded yet (dav1d edge availability).
+    private void GatherAbove(Av1Plane plane, int x, int y, int count, byte[] dst)
+    {
+        bool isLuma = ReferenceEquals(plane, this.luma);
+        byte last = plane[x, y - 1];
+        bool available = true;
+        for (int i = 0; i < count; i++)
+        {
+            int sx = x + i;
+            if (available && sx < plane.Width && this.IsDecoded(sx, y - 1, isLuma))
+            {
+                last = plane[sx, y - 1];
+            }
+            else
+            {
+                available = false;
+            }
+
+            dst[i] = last;
+        }
+    }
+
+    // Gathers up to 'count' samples of the column to the left, replicating once the source (below-left)
+    // has not been decoded yet.
+    private void GatherLeft(Av1Plane plane, int x, int y, int count, byte[] dst)
+    {
+        bool isLuma = ReferenceEquals(plane, this.luma);
+        byte last = plane[x - 1, y];
+        bool available = true;
+        for (int i = 0; i < count; i++)
+        {
+            int sy = y + i;
+            if (available && sy < plane.Height && this.IsDecoded(x - 1, sy, isLuma))
+            {
+                last = plane[x - 1, sy];
+            }
+            else
+            {
+                available = false;
+            }
+
+            dst[i] = last;
+        }
+    }
+
+    // Whether the reconstructed sample at the given plane coordinate is available as an intra reference.
+    private bool IsDecoded(int px, int py, bool isLuma)
+    {
+        int lumaCol = (isLuma ? px : px << this.subsamplingX) >> 2;
+        int lumaRow = (isLuma ? py : py << this.subsamplingY) >> 2;
+        if (lumaCol < 0 || lumaRow < 0 || lumaCol >= this.miColumns || lumaRow >= this.miRows)
+        {
+            return false;
+        }
+
+        return this.lumaDecoded[(lumaRow * this.miColumns) + lumaCol];
     }
 
     private int ReadAngleDelta(int mode, Av1BlockSize bsize)
@@ -833,10 +901,7 @@ internal sealed class Av1IntraTileDecoder
 
         if (hasAbove)
         {
-            for (int i = 0; i < width; i++)
-            {
-                above[i] = plane[Math.Min(x + i, plane.Width - 1), y - 1];
-            }
+            this.GatherAbove(plane, x, y, width, above);
         }
         else
         {
@@ -846,10 +911,7 @@ internal sealed class Av1IntraTileDecoder
 
         if (hasLeft)
         {
-            for (int i = 0; i < height; i++)
-            {
-                left[i] = plane[x - 1, Math.Min(y + i, plane.Height - 1)];
-            }
+            this.GatherLeft(plane, x, y, height, left);
         }
         else
         {
