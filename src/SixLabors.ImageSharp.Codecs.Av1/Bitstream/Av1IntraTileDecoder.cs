@@ -28,6 +28,16 @@ internal sealed class Av1IntraTileDecoder
         [3, 5, 5, 5, 6],
     ];
 
+    // dav1d_txfm_dimensions[].sub: the transform size one split-depth smaller, indexed by Av1TransformSize.
+    private static readonly Av1TransformSize[] SubTransformSize =
+    [
+        Av1TransformSize.Size4x4, Av1TransformSize.Size4x4, Av1TransformSize.Size8x8, Av1TransformSize.Size16x16,
+        Av1TransformSize.Size32x32, Av1TransformSize.Size4x4, Av1TransformSize.Size4x4, Av1TransformSize.Size8x8,
+        Av1TransformSize.Size8x8, Av1TransformSize.Size16x16, Av1TransformSize.Size16x16, Av1TransformSize.Size32x32,
+        Av1TransformSize.Size32x32, Av1TransformSize.Size4x8, Av1TransformSize.Size8x4, Av1TransformSize.Size8x16,
+        Av1TransformSize.Size16x8, Av1TransformSize.Size16x32, Av1TransformSize.Size32x16,
+    ];
+
     private const byte LevelContextBaseline = 0x40; // cul_level 0, dc-sign "zero".
 
     private readonly ObuSequenceHeader sequenceHeader;
@@ -342,7 +352,9 @@ internal sealed class Av1IntraTileDecoder
             return;
         }
 
-        int half = bsize.GetWidth4() >> 1;
+        int side = bsize.GetWidth4();
+        int half = side >> 1;
+        int quarter = side >> 2;
         bool hasRows = row + half < this.frameHeader.ModeInfoRows;
         bool hasCols = col + half < this.frameHeader.ModeInfoColumns;
 
@@ -350,20 +362,92 @@ internal sealed class Av1IntraTileDecoder
             ? Av1Partition.None
             : this.ReadPartition(row, col, bsize, hasRows, hasCols);
 
+        // b0 = the primary leaf size for this partition; rectangular leaves are decoded directly.
+        Av1BlockSize sub = bsize.GetSplitSubSize();
+        Av1BlockSize horz = Av1BlockSizeExtensions.FromDimensions(side, half);
+        Av1BlockSize vert = Av1BlockSizeExtensions.FromDimensions(half, side);
+
         switch (partition)
         {
             case Av1Partition.None:
                 this.DecodeBlock(row, col, bsize);
                 break;
             case Av1Partition.Split:
-                Av1BlockSize sub = bsize.GetSubSize(Av1Partition.Split);
                 this.DecodePartition(row, col, sub);
                 this.DecodePartition(row, col + half, sub);
                 this.DecodePartition(row + half, col, sub);
                 this.DecodePartition(row + half, col + half, sub);
                 break;
+            case Av1Partition.Horizontal:
+                this.DecodeBlock(row, col, horz);
+                if (hasRows)
+                {
+                    this.DecodeBlock(row + half, col, horz);
+                }
+
+                break;
+            case Av1Partition.Vertical:
+                this.DecodeBlock(row, col, vert);
+                if (hasCols)
+                {
+                    this.DecodeBlock(row, col + half, vert);
+                }
+
+                break;
+            case Av1Partition.HorizontalA: // split top, wide bottom.
+                this.DecodeBlock(row, col, sub);
+                this.DecodeBlock(row, col + half, sub);
+                this.DecodeBlock(row + half, col, horz);
+                break;
+            case Av1Partition.HorizontalB: // wide top, split bottom.
+                this.DecodeBlock(row, col, horz);
+                this.DecodeBlock(row + half, col, sub);
+                this.DecodeBlock(row + half, col + half, sub);
+                break;
+            case Av1Partition.VerticalA: // split left, tall right.
+                this.DecodeBlock(row, col, sub);
+                this.DecodeBlock(row + half, col, sub);
+                this.DecodeBlock(row, col + half, vert);
+                break;
+            case Av1Partition.VerticalB: // tall left, split right.
+                this.DecodeBlock(row, col, vert);
+                this.DecodeBlock(row, col + half, sub);
+                this.DecodeBlock(row + half, col + half, sub);
+                break;
+            case Av1Partition.Horizontal4:
+                Av1BlockSize h4 = Av1BlockSizeExtensions.FromDimensions(side, quarter);
+                for (int i = 0; i < 4; i++)
+                {
+                    int r = row + (i * quarter);
+                    if (r < this.frameHeader.ModeInfoRows)
+                    {
+                        this.DecodeBlock(r, col, h4);
+                    }
+                }
+
+                break;
+            case Av1Partition.Vertical4:
+                Av1BlockSize v4 = Av1BlockSizeExtensions.FromDimensions(quarter, side);
+                for (int i = 0; i < 4; i++)
+                {
+                    int c = col + (i * quarter);
+                    if (c < this.frameHeader.ModeInfoColumns)
+                    {
+                        this.DecodeBlock(row, c, v4);
+                    }
+                }
+
+                break;
             default:
                 throw new NotSupportedException($"Partition type {partition} is not supported yet.");
+        }
+
+        // Record the partition neighbour context over the square region (dav1d set_ctx); for a non-8x8
+        // SPLIT the recursion has already filled it.
+        if (partition != Av1Partition.Split || bsize == Av1BlockSize.Block8x8)
+        {
+            Fill(this.abovePartition, col >> 1, half, bsize.AbovePartitionContext(partition));
+            Fill(this.leftPartition, row >> 1, half, bsize.LeftPartitionContext(partition));
         }
     }
 
@@ -417,15 +501,26 @@ internal sealed class Av1IntraTileDecoder
         EnsureSupportedMode(yMode);
         int yAngleDelta = this.ReadAngleDelta(yMode, bsize);
 
+        // Chroma is decoded once per chroma unit; sub-sampled sub-8x8 luma blocks share it (dav1d
+        // has_chroma).
+        bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
+                         (width4 > this.subsamplingX || (col & 1) != 0) &&
+                         (height4 > this.subsamplingY || (row & 1) != 0);
+
         // chroma intra mode.
-        bool cflAllowed = bsize <= Av1BlockSize.Block32x32;
-        int uvMode = this.decoder.ReadSymbol(this.modeCdf.UvMode[cflAllowed ? 1 : 0][yMode]);
-        EnsureSupportedMode(uvMode);
-        int uvAngleDelta = this.ReadAngleDelta(uvMode, bsize);
+        bool cflAllowed = bsize.GetWidth4() <= 8 && bsize.GetHeight4() <= 8;
+        int uvMode = 0;
+        int uvAngleDelta = 0;
+        if (hasChroma)
+        {
+            uvMode = this.decoder.ReadSymbol(this.modeCdf.UvMode[cflAllowed ? 1 : 0][yMode]);
+            EnsureSupportedMode(uvMode);
+            uvAngleDelta = this.ReadAngleDelta(uvMode, bsize);
+        }
 
         // filter_intra: coded for DC luma blocks up to 32x32 when enabled.
         int filterIntraMode = -1;
-        if (this.sequenceHeader.EnableFilterIntra && bsize <= Av1BlockSize.Block32x32 && yMode == 0)
+        if (this.sequenceHeader.EnableFilterIntra && Math.Max(bsize.GetWidthLog2(), bsize.GetHeightLog2()) <= 3 && yMode == 0)
         {
             int useFilterIntra = this.decoder.ReadSymbol(this.modeCdf.UseFilterIntra[(int)bsize]);
             if (useFilterIntra != 0)
@@ -441,11 +536,14 @@ internal sealed class Av1IntraTileDecoder
         this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode);
 
         // chroma transform-block loop (single transform per plane for the sizes handled here).
-        Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
-        int chromaRow = row >> this.subsamplingY;
-        int chromaCol = col >> this.subsamplingX;
-        this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1);
-        this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1);
+        if (hasChroma)
+        {
+            Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
+            int chromaRow = row >> this.subsamplingY;
+            int chromaCol = col >> this.subsamplingX;
+            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1);
+            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1);
+        }
 
         // record block-level neighbour contexts.
         Fill(this.aboveSkip, col, width4, (byte)skip);
@@ -454,30 +552,28 @@ internal sealed class Av1IntraTileDecoder
         Fill(this.leftMode, row, height4, (byte)yMode);
         Fill(this.aboveTx, col, width4, (byte)(lumaTx.GetWidthLog2() - 2));
         Fill(this.leftTx, row, height4, (byte)(lumaTx.GetHeightLog2() - 2));
-
-        byte partitionFill = bsize.PartitionContextFill();
-        Fill(this.abovePartition, col >> 1, width4 >> 1, partitionFill);
-        Fill(this.leftPartition, row >> 1, height4 >> 1, partitionFill);
     }
 
     private Av1TransformSize ReadTransformSize(int row, int col, Av1BlockSize bsize)
     {
         Av1TransformSize maxTx = bsize.GetMaxTransformSize();
-        int maxIndex = maxTx.GetWidthLog2() - 2; // square: the .max field.
-        if (this.frameHeader.TxMode != 2 || maxIndex == 0)
+        int lw = maxTx.GetWidthLog2() - 2;
+        int lh = maxTx.GetHeightLog2() - 2;
+        int maxField = Math.Max(lw, lh); // dav1d TxfmInfo.max.
+        if (this.frameHeader.TxMode != 2 || maxField == 0)
         {
             return maxTx;
         }
 
-        int aboveTxContext = this.aboveTx[col] >= maxTx.GetWidthLog2() - 2 ? 1 : 0;
-        int leftTxContext = this.leftTx[row] >= maxTx.GetHeightLog2() - 2 ? 1 : 0;
+        int aboveTxContext = this.aboveTx[col] >= lw ? 1 : 0;
+        int leftTxContext = this.leftTx[row] >= lh ? 1 : 0;
         int txContext = leftTxContext + aboveTxContext;
-        int depth = this.decoder.ReadSymbol(this.modeCdf.TransformDepth[maxIndex - 1][txContext]);
+        int depth = this.decoder.ReadSymbol(this.modeCdf.TransformDepth[maxField - 1][txContext]);
 
         Av1TransformSize tx = maxTx;
         for (int i = 0; i < depth; i++)
         {
-            tx = (Av1TransformSize)((int)tx - 1); // square sub-size.
+            tx = SubTransformSize[(int)tx];
         }
 
         return tx;
@@ -485,8 +581,8 @@ internal sealed class Av1IntraTileDecoder
 
     private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode)
     {
-        int blockWidth4 = bsize.GetWidth4() >> (planeIndex == 0 ? 0 : this.subsamplingX);
-        int blockHeight4 = bsize.GetHeight4() >> (planeIndex == 0 ? 0 : this.subsamplingY);
+        int blockWidth4 = planeIndex == 0 ? bsize.GetWidth4() : (bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX;
+        int blockHeight4 = planeIndex == 0 ? bsize.GetHeight4() : (bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY;
         int txWidth4 = tx.GetWidth() >> 2;
         int txHeight4 = tx.GetHeight() >> 2;
         bool blockEqualsTx = blockWidth4 == txWidth4 && blockHeight4 == txHeight4;
@@ -675,8 +771,9 @@ internal sealed class Av1IntraTileDecoder
 
     private int ReadAngleDelta(int mode, Av1BlockSize bsize)
     {
-        // Angle delta is coded for directional modes on blocks of at least 8x8.
-        if (mode is >= 1 and <= 8 && bsize.GetWidthLog2() >= 1)
+        // Angle delta is coded for directional modes when the block has at least 8 samples per side
+        // total (dav1d: w_log2 + h_log2 >= 2).
+        if (mode is >= 1 and <= 8 && bsize.GetWidthLog2() + bsize.GetHeightLog2() >= 2)
         {
             return this.decoder.ReadSymbol(this.modeCdf.AngleDelta[mode - 1]) - 3;
         }
@@ -786,7 +883,7 @@ internal sealed class Av1IntraTileDecoder
     private int ChromaCoefficientSkipContext(LevelContext levels, int txCol, int txRow, int txWidth4, int txHeight4, Av1BlockSize bsize, Av1TransformSize tx)
     {
         int blockLwAdjusted = bsize.GetWidthLog2() - (this.subsamplingX != 0 ? 1 : 0);
-        int blockLhAdjusted = bsize.GetWidthLog2() - (this.subsamplingY != 0 ? 1 : 0);
+        int blockLhAdjusted = bsize.GetHeightLog2() - (this.subsamplingY != 0 ? 1 : 0);
         bool notOneBlock = blockLwAdjusted > tx.GetWidthLog2() - 2 || blockLhAdjusted > tx.GetHeightLog2() - 2;
 
         int ca = 0;

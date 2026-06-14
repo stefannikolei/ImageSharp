@@ -127,15 +127,31 @@ internal static class Av1DefaultModeInfoCdf
         ],
     ];
 
-    /// <summary>The use_filter_intra CDFs, indexed by square block size (4x4..128x128).</summary>
+    /// <summary>The use_filter_intra CDFs, indexed by <see cref="Av1BlockSize"/> (dav1d order).</summary>
     public static readonly ushort[][] UseFilterIntra =
     [
-        [28147, 0, 0],
-        [24902, 0, 0],
-        [20360, 0, 0],
-        [10425, 0, 0],
-        [16384, 0, 0],
-        [16384, 0, 0],
+        [16384, 0, 0], // 128x128
+        [16384, 0, 0], // 128x64
+        [16384, 0, 0], // 64x128
+        [16384, 0, 0], // 64x64
+        [16384, 0, 0], // 64x32
+        [16384, 0, 0], // 64x16
+        [16384, 0, 0], // 32x64
+        [10425, 0, 0], // 32x32
+        [20012, 0, 0], // 32x16
+        [14667, 0, 0], // 32x8
+        [16384, 0, 0], // 16x64
+        [18467, 0, 0], // 16x32
+        [20360, 0, 0], // 16x16
+        [23374, 0, 0], // 16x8
+        [22400, 0, 0], // 16x4
+        [12539, 0, 0], // 8x32
+        [20217, 0, 0], // 8x16
+        [24902, 0, 0], // 8x8
+        [26875, 0, 0], // 8x4
+        [19998, 0, 0], // 4x16
+        [26025, 0, 0], // 4x8
+        [28147, 0, 0], // 4x4
     ];
 
     /// <summary>The filter_intra mode CDF (5 modes).</summary>
