@@ -42,11 +42,35 @@ public sealed class Av1Decoder : SpecializedImageDecoder<Av1DecoderOptions>
         Guard.NotNull(options, nameof(options));
         Guard.NotNull(stream, nameof(stream));
 
-        Av1IntraTileDecoder frame = Av1DecoderCore.DecodeFirstFrame(stream);
-        return ConvertToImage<TPixel>(frame);
+        List<Av1IntraTileDecoder> frames = Av1DecoderCore.DecodeAllFrames(stream);
+
+        int width = frames[0].Luma.Width;
+        int height = frames[0].Luma.Height;
+        Image<TPixel> image = new(width, height);
+        CopyFrame(frames[0], image.Frames.RootFrame);
+        for (int i = 1; i < frames.Count; i++)
+        {
+            TPixel[] buffer = new TPixel[width * height];
+            ConvertFrame(frames[i], buffer);
+            image.Frames.AddFrame(buffer);
+        }
+
+        return image;
     }
 
-    private static Image<TPixel> ConvertToImage<TPixel>(Av1IntraTileDecoder frame)
+    private static void CopyFrame<TPixel>(Av1IntraTileDecoder frame, ImageFrame<TPixel> destination)
+        where TPixel : unmanaged, IPixel<TPixel>
+    {
+        TPixel[] buffer = new TPixel[destination.Width * destination.Height];
+        ConvertFrame(frame, buffer);
+        for (int y = 0; y < destination.Height; y++)
+        {
+            Span<TPixel> row = destination.PixelBuffer.DangerousGetRowSpan(y);
+            buffer.AsSpan(y * destination.Width, destination.Width).CopyTo(row);
+        }
+    }
+
+    private static void ConvertFrame<TPixel>(Av1IntraTileDecoder frame, TPixel[] buffer)
         where TPixel : unmanaged, IPixel<TPixel>
     {
         Av1Plane luma = frame.Luma;
@@ -59,7 +83,6 @@ public sealed class Av1Decoder : SpecializedImageDecoder<Av1DecoderOptions>
         int subsampleX = width > chromaU.Width ? 1 : 0;
         int subsampleY = height > chromaU.Height ? 1 : 0;
 
-        Image<TPixel> image = new(width, height);
         Rgba32 rgba = default;
         for (int y = 0; y < height; y++)
         {
@@ -68,11 +91,9 @@ public sealed class Av1Decoder : SpecializedImageDecoder<Av1DecoderOptions>
                 int cx = x >> subsampleX;
                 int cy = y >> subsampleY;
                 YuvToRgb(luma[x, y], chromaU[cx, cy], chromaV[cx, cy], ref rgba);
-                image[x, y] = TPixel.FromRgba32(rgba);
+                buffer[(y * width) + x] = TPixel.FromRgba32(rgba);
             }
         }
-
-        return image;
     }
 
     // BT.601 limited-range YUV to RGB conversion (specification's default matrix for 8-bit content).
