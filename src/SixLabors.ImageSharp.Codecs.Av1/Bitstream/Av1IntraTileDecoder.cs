@@ -81,8 +81,20 @@ internal sealed class Av1IntraTileDecoder
     // (above-right / below-left samples are replicated when their source has not been decoded yet).
     private readonly bool[] lumaDecoded;
 
+    // Per-4x4 deblocking metadata: the transform-size log2 (in 4-unit width/height) covering each cell and
+    // whether the cell begins a transform block (a vertical/horizontal filter edge), for luma and chroma.
+    private readonly byte[] lumaTxLw;
+    private readonly byte[] lumaTxLh;
+    private readonly bool[] lumaEdgeV;
+    private readonly bool[] lumaEdgeH;
+    private readonly byte[] chromaTxLw;
+    private readonly byte[] chromaTxLh;
+    private readonly bool[] chromaEdgeV;
+    private readonly bool[] chromaEdgeH;
+    private readonly int chromaStride4;
+    private readonly int chromaRows4;
+
     private Av1SymbolDecoder decoder = default!;
-    private bool cdefRead;
 
     public Av1IntraTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader)
     {
@@ -125,6 +137,18 @@ internal sealed class Av1IntraTileDecoder
         this.cdefIndices = new int[this.cdefColumns64 * ((miRows + 15) >> 4)];
         Array.Fill(this.cdefIndices, -1);
         this.lumaDecoded = new bool[miCols * miRows];
+
+        this.lumaTxLw = new byte[miCols * miRows];
+        this.lumaTxLh = new byte[miCols * miRows];
+        this.lumaEdgeV = new bool[miCols * miRows];
+        this.lumaEdgeH = new bool[miCols * miRows];
+        this.chromaStride4 = (chromaWidth + 3) >> 2;
+        this.chromaRows4 = (chromaHeight + 3) >> 2;
+        int chromaCells = Math.Max(1, this.chromaStride4 * this.chromaRows4);
+        this.chromaTxLw = new byte[chromaCells];
+        this.chromaTxLh = new byte[chromaCells];
+        this.chromaEdgeV = new bool[chromaCells];
+        this.chromaEdgeH = new bool[chromaCells];
     }
 
     /// <summary>Gets the reconstructed luma plane.</summary>
@@ -164,12 +188,168 @@ internal sealed class Av1IntraTileDecoder
 
             for (int col = 0; col < this.frameHeader.ModeInfoColumns; col += superblock4)
             {
-                this.cdefRead = false;
                 this.DecodePartition(row, col, superblock);
             }
         }
 
+        this.ApplyDeblock();
         this.ApplyCdef();
+    }
+
+    // Records the transform-size and edge metadata for one transform block, used by the deblocking pass.
+    private void RecordTxEdges(int planeIndex, int txCol, int txRow, int txWidth4, int txHeight4)
+    {
+        byte lw = (byte)System.Numerics.BitOperations.Log2((uint)txWidth4);
+        byte lh = (byte)System.Numerics.BitOperations.Log2((uint)txHeight4);
+
+        if (planeIndex == 0)
+        {
+            for (int dy = 0; dy < txHeight4 && txRow + dy < this.miRows; dy++)
+            {
+                for (int dx = 0; dx < txWidth4 && txCol + dx < this.miColumns; dx++)
+                {
+                    int mi = ((txRow + dy) * this.miColumns) + txCol + dx;
+                    this.lumaTxLw[mi] = lw;
+                    this.lumaTxLh[mi] = lh;
+                    this.lumaEdgeV[mi] = dx == 0;
+                    this.lumaEdgeH[mi] = dy == 0;
+                }
+            }
+        }
+        else if (planeIndex == 1)
+        {
+            for (int dy = 0; dy < txHeight4 && txRow + dy < this.chromaRows4; dy++)
+            {
+                for (int dx = 0; dx < txWidth4 && txCol + dx < this.chromaStride4; dx++)
+                {
+                    int mi = ((txRow + dy) * this.chromaStride4) + txCol + dx;
+                    this.chromaTxLw[mi] = lw;
+                    this.chromaTxLh[mi] = lh;
+                    this.chromaEdgeV[mi] = dx == 0;
+                    this.chromaEdgeH[mi] = dy == 0;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies the deblocking loop filter to the reconstructed planes (specification section 7.14) for
+    /// the intra-frame case, where every block references the intra frame so the per-plane filter level
+    /// is uniform. Vertical edges are filtered first, then horizontal edges.
+    /// </summary>
+    private void ApplyDeblock()
+    {
+        ObuFrameHeader.LoopFilter lf = this.frameHeader.LoopFilterParameters;
+        if (lf.Levels is null || (lf.Levels[0] == 0 && lf.Levels[1] == 0))
+        {
+            return;
+        }
+
+        int[] limit = new int[64];
+        int[] blimit = new int[64];
+        int sharp = lf.Sharpness;
+        for (int level = 0; level < 64; level++)
+        {
+            int lim = level;
+            if (sharp > 0)
+            {
+                lim >>= (sharp + 3) >> 2;
+                lim = Math.Min(lim, 9 - sharp);
+            }
+
+            lim = Math.Max(lim, 1);
+            limit[level] = lim;
+            blimit[level] = (2 * (level + 2)) + lim;
+        }
+
+        int levelYv = DeriveFilterLevel(lf, lf.Levels[0]);
+        int levelYh = DeriveFilterLevel(lf, lf.Levels[1]);
+        this.DeblockPlane(this.luma, this.miColumns, this.miRows, this.lumaTxLw, this.lumaTxLh, this.lumaEdgeV, this.lumaEdgeH, levelYv, levelYh, true, limit, blimit);
+
+        if (this.sequenceHeader.NumPlanes > 1)
+        {
+            int levelU = DeriveFilterLevel(lf, lf.Levels[2]);
+            int levelV = DeriveFilterLevel(lf, lf.Levels[3]);
+            this.DeblockPlane(this.chromaU, this.chromaStride4, this.chromaRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, levelU, levelU, false, limit, blimit);
+            this.DeblockPlane(this.chromaV, this.chromaStride4, this.chromaRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, levelV, levelV, false, limit, blimit);
+        }
+    }
+
+    // dav1d calc_lf_value for the intra (INTRA_FRAME) reference, no segmentation or delta_lf.
+    private static int DeriveFilterLevel(in ObuFrameHeader.LoopFilter lf, int baseLevel)
+    {
+        if (baseLevel == 0)
+        {
+            return 0;
+        }
+
+        if (!lf.DeltaEnabled)
+        {
+            return baseLevel;
+        }
+
+        int shift = baseLevel >= 32 ? 1 : 0;
+        return Math.Clamp(baseLevel + (lf.RefDeltas[0] * (1 << shift)), 0, 63);
+    }
+
+    private void DeblockPlane(Av1Plane plane, int stride4, int rows4, byte[] txLw, byte[] txLh, bool[] edgeV, bool[] edgeH, int levelVert, int levelHoriz, bool isLuma, int[] limit, int[] blimit)
+    {
+        int stride = plane.Width;
+        int maxIdx = isLuma ? 2 : 1;
+
+        if (levelVert > 0)
+        {
+            int e = blimit[levelVert];
+            int i = limit[levelVert];
+            int h = levelVert >> 4;
+            for (int r4 = 0; r4 < rows4; r4++)
+            {
+                for (int c4 = 1; c4 < stride4; c4++)
+                {
+                    int mi = (r4 * stride4) + c4;
+                    if (!edgeV[mi])
+                    {
+                        continue;
+                    }
+
+                    int idx = Math.Min(maxIdx, Math.Min(txLw[mi], txLw[mi - 1]));
+                    int wd = isLuma ? 4 << idx : 4 + (2 * idx);
+                    int px = c4 * 4;
+                    int py = r4 * 4;
+                    if (px < plane.Width && py < plane.Height)
+                    {
+                        Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, stride, 1, e, i, h, wd);
+                    }
+                }
+            }
+        }
+
+        if (levelHoriz > 0)
+        {
+            int e = blimit[levelHoriz];
+            int i = limit[levelHoriz];
+            int h = levelHoriz >> 4;
+            for (int r4 = 1; r4 < rows4; r4++)
+            {
+                for (int c4 = 0; c4 < stride4; c4++)
+                {
+                    int mi = (r4 * stride4) + c4;
+                    if (!edgeH[mi])
+                    {
+                        continue;
+                    }
+
+                    int idx = Math.Min(maxIdx, Math.Min(txLh[mi], txLh[mi - stride4]));
+                    int wd = isLuma ? 4 << idx : 4 + (2 * idx);
+                    int px = c4 * 4;
+                    int py = r4 * 4;
+                    if (px < plane.Width && py < plane.Height)
+                    {
+                        Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, 1, stride, e, i, h, wd);
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -179,12 +359,6 @@ internal sealed class Av1IntraTileDecoder
     /// </summary>
     private void ApplyCdef()
     {
-        if (this.sequenceHeader.Use128x128Superblock)
-        {
-            // The 64x64 CDEF preset grid differs for 128x128 superblocks; not handled yet.
-            return;
-        }
-
         ObuFrameHeader.Cdef cdef = this.frameHeader.CdefParameters;
         int bitDepthMin8 = this.sequenceHeader.BitDepth - 8;
         int damping = cdef.Damping + bitDepthMin8;
@@ -500,12 +674,18 @@ internal sealed class Av1IntraTileDecoder
         int skipContext = this.aboveSkip[col] + this.leftSkip[row];
         int skip = this.decoder.ReadSymbol(this.modeCdf.Skip[skipContext]);
 
-        // cdef index: read once per superblock for the first non-skip block.
-        if (skip == 0 && !this.cdefRead)
+        // cdef index: read once per 64x64 region at its first non-skip block, then propagated to every
+        // 64x64 cell the block covers (dav1d reads cdef_idx per 64x64, even within a 128x128 superblock).
+        if (skip == 0 && this.cdefIndices[((row >> 4) * this.cdefColumns64) + (col >> 4)] == -1)
         {
-            this.cdefRead = true;
             int cdefIndex = this.frameHeader.CdefBits > 0 ? (int)this.decoder.ReadLiteral(this.frameHeader.CdefBits) : 0;
-            this.cdefIndices[((row >> 4) * this.cdefColumns64) + (col >> 4)] = cdefIndex;
+            for (int cr = row >> 4; cr <= (row + height4 - 1) >> 4; cr++)
+            {
+                for (int cc = col >> 4; cc <= (col + width4 - 1) >> 4; cc++)
+                {
+                    this.cdefIndices[(cr * this.cdefColumns64) + cc] = cdefIndex;
+                }
+            }
         }
 
         // Record the non-skip status of every 4x4 unit so CDEF can leave fully-skipped blocks alone.
@@ -636,6 +816,8 @@ internal sealed class Av1IntraTileDecoder
                 {
                     continue;
                 }
+
+                this.RecordTxEdges(planeIndex, txCol, txRow, txWidth4, txHeight4);
 
                 int skipContext = planeIndex == 0
                     ? LumaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, blockEqualsTx)

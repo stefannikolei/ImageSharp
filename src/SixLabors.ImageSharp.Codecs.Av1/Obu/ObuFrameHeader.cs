@@ -108,6 +108,9 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets the CDEF strength parameters.</summary>
     public Cdef CdefParameters { get; init; }
 
+    /// <summary>Gets the deblocking loop-filter parameters.</summary>
+    public LoopFilter LoopFilterParameters { get; init; }
+
     /// <summary>Gets the bit position immediately after the uncompressed header (before byte alignment).</summary>
     public int EndBitPosition { get; init; }
 
@@ -261,7 +264,7 @@ internal readonly struct ObuFrameHeader
         bool codedLossless = q.BaseQIndex == 0 && q.DeltaQYDc == 0 &&
             q.DeltaQUDc == 0 && q.DeltaQUAc == 0 && q.DeltaQVDc == 0 && q.DeltaQVAc == 0;
 
-        ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
+        LoopFilter loopFilter = ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
         Cdef cdef = ReadCdefParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
         ReadLoopRestorationParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
 
@@ -309,6 +312,7 @@ internal readonly struct ObuFrameHeader
             ReducedTxSet = reducedTxSet,
             CdefBits = cdef.Bits,
             CdefParameters = cdef,
+            LoopFilterParameters = loopFilter,
             EndBitPosition = reader.BitPosition,
         };
     }
@@ -481,22 +485,28 @@ internal readonly struct ObuFrameHeader
         return segmentationEnabled;
     }
 
-    private static void ReadLoopFilterParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
+    private static LoopFilter ReadLoopFilterParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
     {
+        // Spec defaults established by setup_past_independence for a key frame.
+        int[] refDeltas = [1, 0, 0, 0, -1, 0, -1, -1];
+        int[] modeDeltas = [0, 0];
+
         if (codedLossless || allowIntraBlockCopy)
         {
-            return;
+            return new LoopFilter { Levels = [0, 0, 0, 0], Sharpness = 0, DeltaEnabled = false, RefDeltas = refDeltas, ModeDeltas = modeDeltas };
         }
 
         int level0 = (int)reader.ReadLiteral(6);
         int level1 = (int)reader.ReadLiteral(6);
+        int level2 = 0;
+        int level3 = 0;
         if (sequenceHeader.NumPlanes > 1 && (level0 != 0 || level1 != 0))
         {
-            reader.ReadLiteral(6); // loop_filter_level[2]
-            reader.ReadLiteral(6); // loop_filter_level[3]
+            level2 = (int)reader.ReadLiteral(6);
+            level3 = (int)reader.ReadLiteral(6);
         }
 
-        reader.ReadLiteral(3); // loop_filter_sharpness
+        int sharpness = (int)reader.ReadLiteral(3);
 
         bool deltaEnabled = reader.ReadBoolean();
         bool deltaUpdate = deltaEnabled && reader.ReadBoolean();
@@ -506,7 +516,7 @@ internal readonly struct ObuFrameHeader
             {
                 if (reader.ReadBoolean())
                 {
-                    reader.ReadSignedLiteral(7); // loop_filter_ref_deltas[i]
+                    refDeltas[i] = reader.ReadSignedLiteral(7);
                 }
             }
 
@@ -514,10 +524,19 @@ internal readonly struct ObuFrameHeader
             {
                 if (reader.ReadBoolean())
                 {
-                    reader.ReadSignedLiteral(7); // loop_filter_mode_deltas[i]
+                    modeDeltas[i] = reader.ReadSignedLiteral(7);
                 }
             }
         }
+
+        return new LoopFilter
+        {
+            Levels = [level0, level1, level2, level3],
+            Sharpness = sharpness,
+            DeltaEnabled = deltaEnabled,
+            RefDeltas = refDeltas,
+            ModeDeltas = modeDeltas,
+        };
     }
 
     private static Cdef ReadCdefParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
@@ -645,6 +664,27 @@ internal readonly struct ObuFrameHeader
 
         /// <summary>Gets the chroma secondary strengths per preset.</summary>
         public int[] UvSecondary { get; init; }
+    }
+
+    /// <summary>
+    /// The deblocking loop-filter parameters from the frame header (specification section 5.9.11).
+    /// </summary>
+    public readonly struct LoopFilter
+    {
+        /// <summary>Gets the filter levels [Y vertical, Y horizontal, U, V].</summary>
+        public int[] Levels { get; init; }
+
+        /// <summary>Gets the loop-filter sharpness.</summary>
+        public int Sharpness { get; init; }
+
+        /// <summary>Gets a value indicating whether reference/mode delta adjustment is enabled.</summary>
+        public bool DeltaEnabled { get; init; }
+
+        /// <summary>Gets the per-reference-frame filter-level deltas.</summary>
+        public int[] RefDeltas { get; init; }
+
+        /// <summary>Gets the per-mode filter-level deltas.</summary>
+        public int[] ModeDeltas { get; init; }
     }
 
     private readonly struct Quantization
