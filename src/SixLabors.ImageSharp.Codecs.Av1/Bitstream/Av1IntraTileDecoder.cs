@@ -417,14 +417,11 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    // dav1d calc_lf_value for the intra (INTRA_FRAME) reference, no segmentation or delta_lf.
+    // dav1d calc_lf_value for the intra (INTRA_FRAME) reference, no segmentation or delta_lf. When the
+    // mode/ref deltas are enabled the intra ref delta is applied even to a zero base level (dav1d does
+    // not short-circuit on base == 0), so a nominal level of 0 can still produce a non-zero filter.
     private static int DeriveFilterLevel(in ObuFrameHeader.LoopFilter lf, int baseLevel)
     {
-        if (baseLevel == 0)
-        {
-            return 0;
-        }
-
         if (!lf.DeltaEnabled)
         {
             return baseLevel;
