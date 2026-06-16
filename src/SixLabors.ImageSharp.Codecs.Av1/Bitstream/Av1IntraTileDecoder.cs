@@ -41,6 +41,19 @@ internal sealed class Av1IntraTileDecoder
     // dav1d_filter_mode_to_y_mode: the intra direction used for a filter-intra block's transform-type CDF.
     private static readonly int[] FilterModeToYMode = [0, 1, 2, 6, 0];
 
+    // dav1d_sgr_params: the two radii per self-guided restoration index (used to gate weight coding).
+    private static readonly int[][] SgrParams =
+    [
+        [140, 3236], [112, 2158], [93, 1618], [80, 1438], [70, 1295], [58, 1177], [47, 1079], [37, 996],
+        [30, 925], [25, 863], [0, 2589], [0, 1618], [0, 1177], [0, 925], [56, 0], [22, 0],
+    ];
+
+    // Running loop-restoration reference values per plane (Wiener taps and SGR weights), for the subexp
+    // delta coding; reset to the spec defaults at the start of the tile.
+    private readonly int[][] lrRefFilterV = [new int[3], new int[3], new int[3]];
+    private readonly int[][] lrRefFilterH = [new int[3], new int[3], new int[3]];
+    private readonly int[][] lrRefSgrWeights = [new int[2], new int[2], new int[2]];
+
     private const byte LevelContextBaseline = 0x40; // cul_level 0, dc-sign "zero".
 
     private readonly ObuSequenceHeader sequenceHeader;
@@ -173,6 +186,18 @@ internal sealed class Av1IntraTileDecoder
 
         this.decoder = new Av1SymbolDecoder(tileData);
 
+        for (int p = 0; p < 3; p++)
+        {
+            this.lrRefFilterV[p][0] = 3;
+            this.lrRefFilterV[p][1] = -7;
+            this.lrRefFilterV[p][2] = 15;
+            this.lrRefFilterH[p][0] = 3;
+            this.lrRefFilterH[p][1] = -7;
+            this.lrRefFilterH[p][2] = 15;
+            this.lrRefSgrWeights[p][0] = -32;
+            this.lrRefSgrWeights[p][1] = 31;
+        }
+
         int superblock4 = this.sequenceHeader.Use128x128Superblock ? 32 : 16;
         Av1BlockSize superblock = this.sequenceHeader.Use128x128Superblock ? Av1BlockSize.Block128x128 : Av1BlockSize.Block64x64;
 
@@ -188,12 +213,115 @@ internal sealed class Av1IntraTileDecoder
 
             for (int col = 0; col < this.frameHeader.ModeInfoColumns; col += superblock4)
             {
+                this.ReadRestorationUnits(row, col);
                 this.DecodePartition(row, col, superblock);
             }
         }
 
         this.ApplyDeblock();
         this.ApplyCdef();
+    }
+
+    // Reads the per-superblock loop-restoration unit coefficients (a port of dav1d's
+    // read_restoration_info dispatch in the tile loop) so the bitstream stays in sync. The decoded
+    // coefficients are consumed but not yet applied (loop restoration filtering is not implemented).
+    private void ReadRestorationUnits(int row, int col)
+    {
+        ObuFrameHeader.LoopRestoration lr = this.frameHeader.LoopRestorationParameters;
+        for (int p = 0; p < this.sequenceHeader.NumPlanes; p++)
+        {
+            if (lr.Types[p] == 0)
+            {
+                continue;
+            }
+
+            int ssVer = p != 0 ? this.subsamplingY : 0;
+            int ssHor = p != 0 ? this.subsamplingX : 0;
+            int unitSizeLog2 = lr.UnitSizeLog2[p != 0 ? 1 : 0];
+            int unitSize = 1 << unitSizeLog2;
+            int mask = unitSize - 1;
+            int halfUnit = unitSize >> 1;
+
+            int y = (row * 4) >> ssVer;
+            int h = (this.frameHeader.FrameHeight + ssVer) >> ssVer;
+            if ((y & mask) != 0 || (y != 0 && y + halfUnit > h))
+            {
+                continue;
+            }
+
+            int x = (col * 4) >> ssHor;
+            int w = (this.frameHeader.FrameWidth + ssHor) >> ssHor;
+            if ((x & mask) != 0 || (x != 0 && x + halfUnit > w))
+            {
+                continue;
+            }
+
+            this.ReadRestorationInfo(p, lr.Types[p]);
+        }
+    }
+
+    // Decodes one restoration unit's filter coefficients (dav1d read_restoration_info).
+    private void ReadRestorationInfo(int plane, int frameType)
+    {
+        int unitType;
+        if (frameType == 1)
+        {
+            // Switchable: none / Wiener / SGR.
+            int filter = this.decoder.ReadSymbol(this.modeCdf.RestoreSwitchable);
+            unitType = filter + (filter != 0 ? 1 : 0);
+        }
+        else
+        {
+            int present = this.decoder.ReadSymbol(frameType == 2 ? this.modeCdf.RestoreWiener : this.modeCdf.RestoreSgrProj);
+            unitType = present != 0 ? frameType : 0;
+        }
+
+        if (unitType == 2)
+        {
+            int[] fv = this.lrRefFilterV[plane];
+            int[] fh = this.lrRefFilterH[plane];
+            fv[0] = plane != 0 ? 0 : this.DecodeSubexp(fv[0] + 5, 16, 1) - 5;
+            fv[1] = this.DecodeSubexp(fv[1] + 23, 32, 2) - 23;
+            fv[2] = this.DecodeSubexp(fv[2] + 17, 64, 3) - 17;
+            fh[0] = plane != 0 ? 0 : this.DecodeSubexp(fh[0] + 5, 16, 1) - 5;
+            fh[1] = this.DecodeSubexp(fh[1] + 23, 32, 2) - 23;
+            fh[2] = this.DecodeSubexp(fh[2] + 17, 64, 3) - 17;
+        }
+        else if (unitType == 3)
+        {
+            int idx = (int)this.decoder.ReadLiteral(4);
+            int[] w = this.lrRefSgrWeights[plane];
+            w[0] = SgrParams[idx][0] != 0 ? this.DecodeSubexp(w[0] + 96, 128, 4) - 96 : 0;
+            w[1] = SgrParams[idx][1] != 0 ? this.DecodeSubexp(w[1] + 32, 128, 4) - 32 : 95;
+        }
+    }
+
+    // dav1d_msac_decode_subexp: subexponential delta decode referenced to 'reference' (n >> k == 8).
+    private int DecodeSubexp(int reference, int n, int k)
+    {
+        int a = 0;
+        if (this.decoder.ReadLiteral(1) != 0)
+        {
+            if (this.decoder.ReadLiteral(1) != 0)
+            {
+                k += (int)this.decoder.ReadLiteral(1) + 1;
+            }
+
+            a = 1 << k;
+        }
+
+        int v = (int)this.decoder.ReadLiteral(k) + a;
+        return (reference * 2) <= n ? InvRecenter(reference, v) : n - 1 - InvRecenter(n - 1 - reference, v);
+    }
+
+    private static int InvRecenter(int r, int v)
+    {
+        if (v > (r << 1))
+        {
+            return v;
+        }
+
+        return (v & 1) == 0 ? (v >> 1) + r : r - ((v + 1) >> 1);
     }
 
     // Records the transform-size and edge metadata for one transform block, used by the deblocking pass.

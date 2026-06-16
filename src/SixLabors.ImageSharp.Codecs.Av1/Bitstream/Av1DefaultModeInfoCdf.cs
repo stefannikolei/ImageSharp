@@ -162,6 +162,15 @@ internal static class Av1DefaultModeInfoCdf
     public static readonly ushort[] CflSign =
         [31350, 30645, 19428, 14363, 5796, 4425, 474, 0, 0];
 
+    /// <summary>The loop-restoration Wiener on/off CDF.</summary>
+    public static readonly ushort[] RestoreWiener = [21198, 0, 0];
+
+    /// <summary>The loop-restoration self-guided on/off CDF.</summary>
+    public static readonly ushort[] RestoreSgrProj = [15913, 0, 0];
+
+    /// <summary>The switchable loop-restoration type CDF (none/Wiener/SGR).</summary>
+    public static readonly ushort[] RestoreSwitchable = [23355, 10187, 0, 0];
+
     /// <summary>The CfL alpha CDFs, indexed by sign context (6) then 16-way magnitude.</summary>
     public static readonly ushort[][] CflAlpha =
     [

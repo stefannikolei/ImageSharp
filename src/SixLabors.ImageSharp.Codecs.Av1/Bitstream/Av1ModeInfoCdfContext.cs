@@ -50,6 +50,15 @@ internal sealed class Av1ModeInfoCdfContext
     /// <summary>Gets the CfL alpha CDFs, indexed by sign context.</summary>
     public ushort[][] CflAlpha { get; private set; } = default!;
 
+    /// <summary>Gets the loop-restoration Wiener on/off CDF.</summary>
+    public ushort[] RestoreWiener { get; private set; } = default!;
+
+    /// <summary>Gets the loop-restoration self-guided on/off CDF.</summary>
+    public ushort[] RestoreSgrProj { get; private set; } = default!;
+
+    /// <summary>Gets the switchable loop-restoration type CDF.</summary>
+    public ushort[] RestoreSwitchable { get; private set; } = default!;
+
     /// <summary>
     /// Creates a mode-info CDF context initialized from the default tables.
     /// </summary>
@@ -68,6 +77,9 @@ internal sealed class Av1ModeInfoCdfContext
         AngleDelta = Clone(Av1DefaultModeInfoCdf.AngleDelta),
         CflSign = (ushort[])Av1DefaultModeInfoCdf.CflSign.Clone(),
         CflAlpha = Clone(Av1DefaultModeInfoCdf.CflAlpha),
+        RestoreWiener = (ushort[])Av1DefaultModeInfoCdf.RestoreWiener.Clone(),
+        RestoreSgrProj = (ushort[])Av1DefaultModeInfoCdf.RestoreSgrProj.Clone(),
+        RestoreSwitchable = (ushort[])Av1DefaultModeInfoCdf.RestoreSwitchable.Clone(),
     };
 
     private static ushort[][] Clone(ushort[][] group)

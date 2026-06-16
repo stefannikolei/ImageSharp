@@ -111,6 +111,9 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets the deblocking loop-filter parameters.</summary>
     public LoopFilter LoopFilterParameters { get; init; }
 
+    /// <summary>Gets the loop-restoration parameters.</summary>
+    public LoopRestoration LoopRestorationParameters { get; init; }
+
     /// <summary>Gets the bit position immediately after the uncompressed header (before byte alignment).</summary>
     public int EndBitPosition { get; init; }
 
@@ -266,7 +269,7 @@ internal readonly struct ObuFrameHeader
 
         LoopFilter loopFilter = ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
         Cdef cdef = ReadCdefParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
-        ReadLoopRestorationParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
+        LoopRestoration loopRestoration = ReadLoopRestorationParams(ref reader, sequenceHeader, codedLossless, allowIntraBlockCopy);
 
         // read_tx_mode().
         int txMode = codedLossless ? 0 : (reader.ReadBoolean() ? 2 : 1);
@@ -313,6 +316,7 @@ internal readonly struct ObuFrameHeader
             CdefBits = cdef.Bits,
             CdefParameters = cdef,
             LoopFilterParameters = loopFilter,
+            LoopRestorationParameters = loopRestoration,
             EndBitPosition = reader.BitPosition,
         };
     }
@@ -577,19 +581,21 @@ internal readonly struct ObuFrameHeader
         return new Cdef { Damping = damping, Bits = cdefBits, YPrimary = yPri, YSecondary = ySec, UvPrimary = uvPri, UvSecondary = uvSec };
     }
 
-    private static void ReadLoopRestorationParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
+    private static LoopRestoration ReadLoopRestorationParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
     {
+        int[] types = [0, 0, 0];
+        int[] unitSizeLog2 = [8, 8];
         if (codedLossless || allowIntraBlockCopy || !sequenceHeader.EnableRestoration)
         {
-            return;
+            return new LoopRestoration { Types = types, UnitSizeLog2 = unitSizeLog2 };
         }
 
         bool usesLr = false;
         bool usesChromaLr = false;
         for (int i = 0; i < sequenceHeader.NumPlanes; i++)
         {
-            int lrType = (int)reader.ReadLiteral(2);
-            if (lrType != 0)
+            types[i] = (int)reader.ReadLiteral(2);
+            if (types[i] != 0)
             {
                 usesLr = true;
                 if (i > 0)
@@ -601,24 +607,25 @@ internal readonly struct ObuFrameHeader
 
         if (usesLr)
         {
-            if (sequenceHeader.Use128x128Superblock)
+            int size = 6 + (sequenceHeader.Use128x128Superblock ? 1 : 0);
+            if (reader.ReadBoolean())
             {
-                reader.ReadLiteral(1); // lr_unit_shift
-            }
-            else
-            {
-                bool lrUnitShift = reader.ReadBoolean();
-                if (lrUnitShift)
+                size++;
+                if (!sequenceHeader.Use128x128Superblock && reader.ReadBoolean())
                 {
-                    reader.ReadLiteral(1); // lr_unit_extra_shift
+                    size++;
                 }
             }
 
-            if (sequenceHeader.SubsamplingX == 1 && sequenceHeader.SubsamplingY == 1 && usesChromaLr)
+            unitSizeLog2[0] = size;
+            unitSizeLog2[1] = size;
+            if (usesChromaLr && sequenceHeader.SubsamplingX == 1 && sequenceHeader.SubsamplingY == 1 && reader.ReadBoolean())
             {
-                reader.ReadLiteral(1); // lr_uv_shift
+                unitSizeLog2[1] = size - 1;
             }
         }
+
+        return new LoopRestoration { Types = types, UnitSizeLog2 = unitSizeLog2 };
     }
 
     private static int TileLog2(int blockSize, int target)
@@ -685,6 +692,18 @@ internal readonly struct ObuFrameHeader
 
         /// <summary>Gets the per-mode filter-level deltas.</summary>
         public int[] ModeDeltas { get; init; }
+    }
+
+    /// <summary>
+    /// The loop-restoration parameters from the frame header (specification section 5.9.20).
+    /// </summary>
+    public readonly struct LoopRestoration
+    {
+        /// <summary>Gets the per-plane restoration type (0 = none, 1 = switchable, 2 = Wiener, 3 = SGR).</summary>
+        public int[] Types { get; init; }
+
+        /// <summary>Gets the log2 restoration unit size for [luma, chroma].</summary>
+        public int[] UnitSizeLog2 { get; init; }
     }
 
     private readonly struct Quantization
