@@ -77,8 +77,16 @@ internal sealed class Av1IntraTileDecoder
     private readonly byte[] leftSkip;
     private readonly byte[] aboveMode;
     private readonly byte[] leftMode;
-    private readonly byte[] aboveTx;
-    private readonly byte[] leftTx;
+    private readonly byte[] aboveUvMode;
+    private readonly byte[] leftUvMode;
+    private readonly sbyte[] aboveTx;
+    private readonly sbyte[] leftTx;
+
+    // Whether the current block's above/left neighbour uses a smooth prediction mode, which reduces the
+    // directional-prediction edge-filter strength (dav1d's ANGLE_SMOOTH_EDGE_FLAG / is_sm). Computed per
+    // block before reconstruction; the luma flag uses neighbour luma modes, the chroma flag uv modes.
+    private bool lumaEdgeSmooth;
+    private bool chromaEdgeSmooth;
     private readonly LevelContext lumaLevels;
     private readonly LevelContext chromaULevels;
     private readonly LevelContext chromaVLevels;
@@ -137,8 +145,14 @@ internal sealed class Av1IntraTileDecoder
         this.leftSkip = new byte[miRows];
         this.aboveMode = new byte[miCols];
         this.leftMode = new byte[miRows];
-        this.aboveTx = new byte[miCols];
-        this.leftTx = new byte[miRows];
+        this.aboveUvMode = new byte[miCols];
+        this.leftUvMode = new byte[miRows];
+        this.aboveTx = new sbyte[miCols];
+        this.leftTx = new sbyte[miRows];
+
+        // The intra tx-size context is initialised to -1 at the frame edge (dav1d's tx_intra reset),
+        // so an unavailable neighbour never satisfies the ">= current tx category" comparison.
+        Array.Fill(this.aboveTx, (sbyte)-1);
         this.lumaLevels = new LevelContext(miCols, miRows);
         this.chromaULevels = new LevelContext((miCols >> this.subsamplingX) + 1, (miRows >> this.subsamplingY) + 1);
         this.chromaVLevels = new LevelContext((miCols >> this.subsamplingX) + 1, (miRows >> this.subsamplingY) + 1);
@@ -206,7 +220,7 @@ internal sealed class Av1IntraTileDecoder
             Array.Clear(this.leftPartition);
             Array.Clear(this.leftSkip);
             Array.Clear(this.leftMode);
-            Array.Clear(this.leftTx);
+            Array.Fill(this.leftTx, (sbyte)-1);
             this.lumaLevels.ClearLeft();
             this.chromaULevels.ClearLeft();
             this.chromaVLevels.ClearLeft();
@@ -875,6 +889,10 @@ internal sealed class Av1IntraTileDecoder
         // transform size (TX_MODE_LARGEST forces the largest; TX_MODE_SELECT codes a depth).
         Av1TransformSize lumaTx = this.ReadTransformSize(row, col, bsize);
 
+        // Smooth-neighbour edge-filter flags (dav1d is_sm): read the not-yet-overwritten neighbour modes.
+        this.lumaEdgeSmooth = IsSmoothMode(this.aboveMode[col]) || IsSmoothMode(this.leftMode[row]);
+        this.chromaEdgeSmooth = IsSmoothMode(this.aboveUvMode[col]) || IsSmoothMode(this.leftUvMode[row]);
+
         // luma transform-block loop.
         this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode, 0);
 
@@ -893,8 +911,13 @@ internal sealed class Av1IntraTileDecoder
         Fill(this.leftSkip, row, height4, (byte)skip);
         Fill(this.aboveMode, col, width4, (byte)yMode);
         Fill(this.leftMode, row, height4, (byte)yMode);
-        Fill(this.aboveTx, col, width4, (byte)(lumaTx.GetWidthLog2() - 2));
-        Fill(this.leftTx, row, height4, (byte)(lumaTx.GetHeightLog2() - 2));
+        if (hasChroma)
+        {
+            Fill(this.aboveUvMode, col, width4, (byte)uvMode);
+            Fill(this.leftUvMode, row, height4, (byte)uvMode);
+        }
+        Fill(this.aboveTx, col, width4, (sbyte)(lumaTx.GetWidthLog2() - 2));
+        Fill(this.leftTx, row, height4, (sbyte)(lumaTx.GetHeightLog2() - 2));
     }
 
     private Av1TransformSize ReadTransformSize(int row, int col, Av1BlockSize bsize)
@@ -1067,7 +1090,7 @@ internal sealed class Av1IntraTileDecoder
                 intraMode,
                 angleDelta,
                 this.sequenceHeader.EnableIntraEdgeFilter,
-                false,
+                plane == this.luma ? this.lumaEdgeSmooth : this.chromaEdgeSmooth,
                 y > 0,
                 x > 0,
                 plane.Width - x,
@@ -1393,6 +1416,18 @@ internal sealed class Av1IntraTileDecoder
             context[start + i] = value;
         }
     }
+
+    private static void Fill(sbyte[] context, int start, int count, sbyte value)
+    {
+        for (int i = 0; i < count && start + i < context.Length; i++)
+        {
+            context[start + i] = value;
+        }
+    }
+
+    // Whether a neighbour intra mode is one of the smooth predictors (SMOOTH/SMOOTH_V/SMOOTH_H),
+    // matching dav1d's sm_flag; such neighbours reduce the directional edge-filter strength.
+    private static bool IsSmoothMode(int mode) => mode is 9 or 10 or 11;
 
     private static int GetQuantizerContext(int baseQIndex)
         => baseQIndex <= 20 ? 0 : baseQIndex <= 60 ? 1 : baseQIndex <= 120 ? 2 : 3;
