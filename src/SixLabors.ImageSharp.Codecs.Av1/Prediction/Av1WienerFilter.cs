@@ -100,4 +100,97 @@ internal static class Av1WienerFilter
             dst[dstOffset + i] = (byte)Math.Clamp((sum + roundingOffV) >> roundBitsV, 0, 255);
         }
     }
+
+    /// <summary>
+    /// Applies the separable Wiener filter to one stripe of a restoration unit. Interior rows are read
+    /// from the CDEF-filtered plane; the rows on either side of the stripe come from the deblocked
+    /// (pre-CDEF) plane, with the outermost tap replicated, matching the AV1 stripe-boundary rule.
+    /// </summary>
+    /// <param name="dst">The destination plane samples (initially the CDEF output), modified in place.</param>
+    /// <param name="cdef">A read-only snapshot of the CDEF-filtered plane.</param>
+    /// <param name="deblock">A read-only snapshot of the deblocked, pre-CDEF plane.</param>
+    /// <param name="planeWidth">The plane width in samples.</param>
+    /// <param name="x0">The unit's left column.</param>
+    /// <param name="unitWidth">The unit width in samples.</param>
+    /// <param name="stripeTop">The first row of the stripe.</param>
+    /// <param name="stripeEnd">One past the last row of the stripe.</param>
+    /// <param name="haveTop">Whether a stripe exists above.</param>
+    /// <param name="haveBottom">Whether a stripe exists below.</param>
+    /// <param name="haveLeft">Whether a unit exists to the left.</param>
+    /// <param name="haveRight">Whether a unit exists to the right.</param>
+    /// <param name="filterH">The three coded horizontal taps.</param>
+    /// <param name="filterV">The three coded vertical taps.</param>
+    public static void Stripe(
+        byte[] dst, byte[] cdef, byte[] deblock, int planeWidth,
+        int x0, int unitWidth, int stripeTop, int stripeEnd,
+        bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int[] filterH, int[] filterV)
+    {
+        short h0 = (short)filterH[0], h1 = (short)filterH[1], h2 = (short)filterH[2];
+        short v0 = (short)filterV[0], v1 = (short)filterV[1], v2 = (short)filterV[2];
+        short[] fh = [h0, h1, h2, (short)(-(h0 + h1 + h2) * 2), h2, h1, h0];
+        short[] fv = [v0, v1, v2, (short)(128 - ((v0 + v1 + v2) * 2)), v2, v1, v0];
+
+        EdgeFlags edges = (haveLeft ? EdgeFlags.Left : 0) | (haveRight ? EdgeFlags.Right : 0);
+
+        int rowTop = stripeTop - 3;
+        int rowBottom = stripeEnd + 2;
+        ushort[][] hor = new ushort[rowBottom - rowTop + 1][];
+        for (int ri = rowTop; ri <= rowBottom; ri++)
+        {
+            byte[] buf;
+            int row;
+            if (ri >= stripeTop && ri < stripeEnd)
+            {
+                buf = cdef;
+                row = ri;
+            }
+            else if (ri < stripeTop)
+            {
+                if (!haveTop)
+                {
+                    buf = cdef;
+                    row = stripeTop;
+                }
+                else
+                {
+                    buf = deblock;
+                    row = ri < stripeTop - 2 ? stripeTop - 2 : ri;
+                }
+            }
+            else
+            {
+                if (!haveBottom)
+                {
+                    buf = cdef;
+                    row = stripeEnd - 1;
+                }
+                else
+                {
+                    buf = deblock;
+                    row = ri > stripeEnd + 1 ? stripeEnd + 1 : ri;
+                }
+            }
+
+            byte[] left = [];
+            if (haveLeft)
+            {
+                left = [0, buf[(row * planeWidth) + x0 - 3], buf[(row * planeWidth) + x0 - 2], buf[(row * planeWidth) + x0 - 1]];
+            }
+
+            ushort[] hr = new ushort[unitWidth];
+            FilterHorizontal(hr, buf, (row * planeWidth) + x0, left, fh, unitWidth, edges);
+            hor[ri - rowTop] = hr;
+        }
+
+        ushort[][] rows7 = new ushort[7][];
+        for (int r = stripeTop; r < stripeEnd; r++)
+        {
+            for (int k = 0; k < 7; k++)
+            {
+                rows7[k] = hor[r - 3 + k - rowTop];
+            }
+
+            FilterVertical(dst, (r * planeWidth) + x0, rows7, fv, unitWidth);
+        }
+    }
 }

@@ -342,7 +342,11 @@ internal sealed class Av1IntraTileDecoder
 
             if (this.lrUnits.TryGetValue((plane, x, alignedY), out LrUnit unit) && unit.Type != 0)
             {
-                if (unit.Type == 3 && SgrParams[unit.SgrIdx][1] == 0)
+                if (unit.Type == 2)
+                {
+                    Av1WienerFilter.Stripe(dst, cdef, deblock, width, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, unit.FilterH, unit.FilterV);
+                }
+                else if (unit.Type == 3 && SgrParams[unit.SgrIdx][1] == 0)
                 {
                     Av1SelfGuidedFilter.Box5Stripe(dst, cdef, deblock, width, height, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, SgrParams[unit.SgrIdx][0], unit.SgrW0);
                 }
