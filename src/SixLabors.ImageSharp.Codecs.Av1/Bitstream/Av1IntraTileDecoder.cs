@@ -54,6 +54,15 @@ internal sealed class Av1IntraTileDecoder
     private readonly int[][] lrRefFilterH = [new int[3], new int[3], new int[3]];
     private readonly int[][] lrRefSgrWeights = [new int[2], new int[2], new int[2]];
 
+    // Per-restoration-unit decoded filter, keyed by (plane, unit top-left x, unit top-left y) in plane
+    // pixels; consumed by the loop-restoration filtering pass after deblocking and CDEF.
+    private readonly Dictionary<(int Plane, int X, int Y), LrUnit> lrUnits = [];
+
+    // The pre-CDEF (deblocked) and pre-LR (CDEF) plane snapshots, captured by the post-filter pipeline so
+    // loop restoration can read stripe-boundary rows from the deblocked image and interior rows from the
+    // CDEF image, exactly as dav1d's lr_lpf_line / frame buffer split requires.
+    private readonly byte[]?[] deblockSnapshot = new byte[3][];
+
     private const byte LevelContextBaseline = 0x40; // cul_level 0, dc-sign "zero".
 
     private readonly ObuSequenceHeader sequenceHeader;
@@ -233,12 +242,139 @@ internal sealed class Av1IntraTileDecoder
         }
 
         this.ApplyDeblock();
+
+        // Snapshot the deblocked planes that have loop restoration before CDEF overwrites them; loop
+        // restoration reads stripe-boundary rows from this pre-CDEF image.
+        ObuFrameHeader.LoopRestoration lrParams = this.frameHeader.LoopRestorationParameters;
+        bool anyRestoration = false;
+        if (lrParams.Types is not null)
+        {
+            for (int p = 0; p < this.sequenceHeader.NumPlanes; p++)
+            {
+                if (lrParams.Types[p] != 0)
+                {
+                    anyRestoration = true;
+                    this.deblockSnapshot[p] = (byte[])this.PlaneFor(p).Samples.Clone();
+                }
+            }
+        }
+
         this.ApplyCdef();
+
+        if (anyRestoration)
+        {
+            this.ApplyLoopRestoration();
+        }
+    }
+
+    private Av1Plane PlaneFor(int plane) => plane == 0 ? this.luma : plane == 1 ? this.chromaU : this.chromaV;
+
+    // Applies loop restoration (specification section 7.17) to every plane that signalled it. The frame is
+    // processed in 64-row (56 for the first) stripes per superblock row; for each stripe the applicable
+    // restoration unit selects the filter. Interior rows read the CDEF output, stripe-boundary rows the
+    // deblocked image (dav1d's lr_lpf_line split). Only the self-guided radius-2 filter is implemented.
+    private void ApplyLoopRestoration()
+    {
+        ObuFrameHeader.LoopRestoration lr = this.frameHeader.LoopRestorationParameters;
+        int sbSize = this.sequenceHeader.Use128x128Superblock ? 128 : 64;
+        int lumaHeight = this.frameHeader.FrameHeight;
+        int sbRows = (lumaHeight + sbSize - 1) / sbSize;
+
+        for (int p = 0; p < this.sequenceHeader.NumPlanes; p++)
+        {
+            if (lr.Types[p] == 0)
+            {
+                continue;
+            }
+
+            Av1Plane plane = this.PlaneFor(p);
+            byte[] dst = plane.Samples;
+            byte[] cdef = (byte[])dst.Clone();
+            byte[] deblock = this.deblockSnapshot[p]!;
+            int width = plane.Width;
+            int height = plane.Height;
+            int ssVer = p != 0 ? this.subsamplingY : 0;
+            int ssHor = p != 0 ? this.subsamplingX : 0;
+            int unitSize = 1 << lr.UnitSizeLog2[p != 0 ? 1 : 0];
+            int maxUnit = unitSize + (unitSize >> 1);
+            int half = unitSize >> 1;
+            int sbStep = sbSize >> ssVer;
+            int topOffset = 8 >> ssVer;
+
+            for (int sby = 0; sby < sbRows; sby++)
+            {
+                bool notLast = sby + 1 < sbRows;
+                int yStripe = (sby * sbStep) - (sby > 0 ? topOffset : 0);
+                int rowH = Math.Min(((sby + 1) * sbStep) - (notLast ? topOffset : 0), height);
+
+                int rowY = sby * sbStep;
+                int alignedY = rowY & ~(unitSize - 1);
+                if (alignedY != 0 && alignedY + half > height)
+                {
+                    alignedY -= unitSize;
+                }
+
+                int y = yStripe;
+                int stripeH = Math.Min((sbStep - (y == 0 ? topOffset : 0)), rowH - y);
+                while (y + stripeH <= rowH && stripeH > 0)
+                {
+                    bool haveTop = y > 0;
+                    bool haveBottom = notLast || (y + stripeH != rowH);
+                    this.RestoreStripeColumns(p, dst, cdef, deblock, width, height, unitSize, maxUnit, alignedY, y, y + stripeH, haveTop, haveBottom);
+
+                    y += stripeH;
+                    stripeH = Math.Min(sbStep, rowH - y);
+                }
+            }
+        }
+    }
+
+    // Filters every restoration unit column intersecting one stripe.
+    private void RestoreStripeColumns(int plane, byte[] dst, byte[] cdef, byte[] deblock, int width, int height, int unitSize, int maxUnit, int alignedY, int stripeTop, int stripeEnd, bool haveTop, bool haveBottom)
+    {
+        int x = 0;
+        while (true)
+        {
+            bool isLast = x + maxUnit > width;
+            int unitWidth = isLast ? width - x : unitSize;
+            bool haveRight = !isLast;
+            bool haveLeft = x > 0;
+
+            if (this.lrUnits.TryGetValue((plane, x, alignedY), out LrUnit unit) && unit.Type != 0)
+            {
+                if (unit.Type == 3 && SgrParams[unit.SgrIdx][1] == 0)
+                {
+                    Av1SelfGuidedFilter.Box5Stripe(dst, cdef, deblock, width, height, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, SgrParams[unit.SgrIdx][0], unit.SgrW0);
+                }
+                else
+                {
+                    throw new NotSupportedException($"Loop-restoration filter type {unit.Type} (sgr idx {unit.SgrIdx}) is not implemented yet.");
+                }
+            }
+
+            if (isLast)
+            {
+                break;
+            }
+
+            x += unitSize;
+        }
+    }
+
+    // A decoded loop-restoration unit's filter parameters.
+    private struct LrUnit
+    {
+        public int Type;
+        public int[] FilterH;
+        public int[] FilterV;
+        public int SgrIdx;
+        public int SgrW0;
+        public int SgrW1;
     }
 
     // Reads the per-superblock loop-restoration unit coefficients (a port of dav1d's
-    // read_restoration_info dispatch in the tile loop) so the bitstream stays in sync. The decoded
-    // coefficients are consumed but not yet applied (loop restoration filtering is not implemented).
+    // read_restoration_info dispatch in the tile loop) and records the decoded per-unit filter, keyed by
+    // the unit's plane-pixel top-left position, for the loop-restoration filtering pass.
     private void ReadRestorationUnits(int row, int col)
     {
         ObuFrameHeader.LoopRestoration lr = this.frameHeader.LoopRestorationParameters;
@@ -270,12 +406,12 @@ internal sealed class Av1IntraTileDecoder
                 continue;
             }
 
-            this.ReadRestorationInfo(p, lr.Types[p]);
+            this.ReadRestorationInfo(p, lr.Types[p], x, y);
         }
     }
 
-    // Decodes one restoration unit's filter coefficients (dav1d read_restoration_info).
-    private void ReadRestorationInfo(int plane, int frameType)
+    // Decodes one restoration unit's filter coefficients (dav1d read_restoration_info) and stores them.
+    private void ReadRestorationInfo(int plane, int frameType, int unitX, int unitY)
     {
         int unitType;
         if (frameType == 1)
@@ -300,6 +436,7 @@ internal sealed class Av1IntraTileDecoder
             fh[0] = plane != 0 ? 0 : this.DecodeSubexp(fh[0] + 5, 16, 1) - 5;
             fh[1] = this.DecodeSubexp(fh[1] + 23, 32, 2) - 23;
             fh[2] = this.DecodeSubexp(fh[2] + 17, 64, 3) - 17;
+            this.lrUnits[(plane, unitX, unitY)] = new LrUnit { Type = 2, FilterH = [fh[0], fh[1], fh[2]], FilterV = [fv[0], fv[1], fv[2]] };
         }
         else if (unitType == 3)
         {
@@ -307,6 +444,7 @@ internal sealed class Av1IntraTileDecoder
             int[] w = this.lrRefSgrWeights[plane];
             w[0] = SgrParams[idx][0] != 0 ? this.DecodeSubexp(w[0] + 96, 128, 4) - 96 : 0;
             w[1] = SgrParams[idx][1] != 0 ? this.DecodeSubexp(w[1] + 32, 128, 4) - 32 : 95;
+            this.lrUnits[(plane, unitX, unitY)] = new LrUnit { Type = 3, SgrIdx = idx, SgrW0 = w[0], SgrW1 = 128 - (w[0] + w[1]) };
         }
     }
 
