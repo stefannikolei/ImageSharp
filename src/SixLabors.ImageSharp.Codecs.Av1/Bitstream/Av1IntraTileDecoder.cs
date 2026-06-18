@@ -299,6 +299,10 @@ internal sealed class Av1IntraTileDecoder
             int maxUnit = unitSize + (unitSize >> 1);
             int half = unitSize >> 1;
             int sbStep = sbSize >> ssVer;
+
+            // Loop-restoration stripes are always 64 luma rows tall (the first is 8 shorter), independent
+            // of the superblock size; only the superblock-row stepping uses sbStep.
+            int stripeStep = 64 >> ssVer;
             int topOffset = 8 >> ssVer;
 
             for (int sby = 0; sby < sbRows; sby++)
@@ -315,22 +319,22 @@ internal sealed class Av1IntraTileDecoder
                 }
 
                 int y = yStripe;
-                int stripeH = Math.Min((sbStep - (y == 0 ? topOffset : 0)), rowH - y);
+                int stripeH = Math.Min(stripeStep - (y == 0 ? topOffset : 0), rowH - y);
                 while (y + stripeH <= rowH && stripeH > 0)
                 {
                     bool haveTop = y > 0;
                     bool haveBottom = notLast || (y + stripeH != rowH);
-                    this.RestoreStripeColumns(p, dst, cdef, deblock, width, height, unitSize, maxUnit, alignedY, y, y + stripeH, haveTop, haveBottom);
+                    this.RestoreStripeColumns(p, dst, cdef, deblock, width, unitSize, maxUnit, alignedY, y, y + stripeH, haveTop, haveBottom);
 
                     y += stripeH;
-                    stripeH = Math.Min(sbStep, rowH - y);
+                    stripeH = Math.Min(stripeStep, rowH - y);
                 }
             }
         }
     }
 
     // Filters every restoration unit column intersecting one stripe.
-    private void RestoreStripeColumns(int plane, byte[] dst, byte[] cdef, byte[] deblock, int width, int height, int unitSize, int maxUnit, int alignedY, int stripeTop, int stripeEnd, bool haveTop, bool haveBottom)
+    private void RestoreStripeColumns(int plane, byte[] dst, byte[] cdef, byte[] deblock, int width, int unitSize, int maxUnit, int alignedY, int stripeTop, int stripeEnd, bool haveTop, bool haveBottom)
     {
         int x = 0;
         while (true)
@@ -346,13 +350,9 @@ internal sealed class Av1IntraTileDecoder
                 {
                     Av1WienerFilter.Stripe(dst, cdef, deblock, width, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, unit.FilterH, unit.FilterV);
                 }
-                else if (unit.Type == 3 && SgrParams[unit.SgrIdx][1] == 0)
-                {
-                    Av1SelfGuidedFilter.Box5Stripe(dst, cdef, deblock, width, height, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, SgrParams[unit.SgrIdx][0], unit.SgrW0);
-                }
                 else
                 {
-                    throw new NotSupportedException($"Loop-restoration filter type {unit.Type} (sgr idx {unit.SgrIdx}) is not implemented yet.");
+                    Av1SelfGuidedFilter.Stripe(dst, cdef, deblock, width, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, SgrParams[unit.SgrIdx][0], SgrParams[unit.SgrIdx][1], unit.SgrW0, unit.SgrW1);
                 }
             }
 

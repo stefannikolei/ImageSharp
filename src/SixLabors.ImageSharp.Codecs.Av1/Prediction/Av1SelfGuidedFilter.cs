@@ -35,13 +35,12 @@ internal static class Av1SelfGuidedFilter
     ];
 
     /// <summary>
-    /// Applies the radius-2 (5x5 box) self-guided filter to one stripe of a restoration unit.
+    /// Applies the self-guided filter to one stripe of a restoration unit (radius-2, radius-1 or mixed).
     /// </summary>
     /// <param name="dst">The destination plane samples (initially the CDEF output), modified in place.</param>
     /// <param name="cdef">A read-only snapshot of the CDEF-filtered plane (interior source rows).</param>
     /// <param name="deblock">A read-only snapshot of the deblocked, pre-CDEF plane (stripe-boundary rows).</param>
     /// <param name="planeWidth">The plane width in samples.</param>
-    /// <param name="planeHeight">The plane height in samples.</param>
     /// <param name="x0">The unit's left column.</param>
     /// <param name="unitWidth">The unit width in samples.</param>
     /// <param name="stripeTop">The first row of the stripe.</param>
@@ -50,15 +49,18 @@ internal static class Av1SelfGuidedFilter
     /// <param name="haveBottom">Whether a stripe exists below (else the bottom row is replicated).</param>
     /// <param name="haveLeft">Whether a unit exists to the left.</param>
     /// <param name="haveRight">Whether a unit exists to the right.</param>
-    /// <param name="s0">The radius-2 strength parameter.</param>
+    /// <param name="s0">The radius-2 strength (0 disables the radius-2 pass).</param>
+    /// <param name="s1">The radius-1 strength (0 disables the radius-1 pass).</param>
     /// <param name="w0">The radius-2 projection weight.</param>
-    public static void Box5Stripe(
-        byte[] dst, byte[] cdef, byte[] deblock, int planeWidth, int planeHeight,
+    /// <param name="w1">The radius-1 projection weight.</param>
+    public static void Stripe(
+        byte[] dst, byte[] cdef, byte[] deblock, int planeWidth,
         int x0, int unitWidth, int stripeTop, int stripeEnd,
-        bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int s0, int w0)
+        bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int s0, int s1, int w0, int w1)
     {
-        int height = stripeEnd - stripeTop;
         int n = unitWidth + 2; // A/B width; index j maps to column x = x0 - 1 + j.
+        bool useBox5 = s0 != 0;
+        bool useBox3 = s1 != 0;
 
         int SrcPix(int ri, int x)
         {
@@ -119,105 +121,186 @@ internal static class Av1SelfGuidedFilter
             return buf[(row * planeWidth) + ax];
         }
 
-        // Horizontal 5-tap box sums for every source row the vertical box and finish filter need.
         int rowTop = stripeTop - 3;
         int rowBottom = stripeEnd + 1;
         int rowCount = rowBottom - rowTop + 1;
-        int[][] hSum = new int[rowCount][];
-        int[][] hSumSq = new int[rowCount][];
+        int[][] h5Sum = useBox5 ? new int[rowCount][] : null!;
+        int[][] h5SumSq = useBox5 ? new int[rowCount][] : null!;
+        int[][] h3Sum = useBox3 ? new int[rowCount][] : null!;
+        int[][] h3SumSq = useBox3 ? new int[rowCount][] : null!;
         for (int ri = rowTop; ri <= rowBottom; ri++)
         {
-            int[] hs = new int[n];
-            int[] hq = new int[n];
+            int[] h5s = useBox5 ? new int[n] : null!;
+            int[] h5q = useBox5 ? new int[n] : null!;
+            int[] h3s = useBox3 ? new int[n] : null!;
+            int[] h3q = useBox3 ? new int[n] : null!;
             for (int j = 0; j < n; j++)
             {
                 int x = x0 - 1 + j;
-                int sum = 0;
-                int sumSq = 0;
-                for (int t = -2; t <= 2; t++)
+                if (useBox5)
                 {
-                    int v = SrcPix(ri, x + t);
-                    sum += v;
-                    sumSq += v * v;
+                    int sum = 0;
+                    int sumSq = 0;
+                    for (int t = -2; t <= 2; t++)
+                    {
+                        int v = SrcPix(ri, x + t);
+                        sum += v;
+                        sumSq += v * v;
+                    }
+
+                    h5s[j] = sum;
+                    h5q[j] = sumSq;
                 }
 
-                hs[j] = sum;
-                hq[j] = sumSq;
+                if (useBox3)
+                {
+                    int sum = 0;
+                    int sumSq = 0;
+                    for (int t = -1; t <= 1; t++)
+                    {
+                        int v = SrcPix(ri, x + t);
+                        sum += v;
+                        sumSq += v * v;
+                    }
+
+                    h3s[j] = sum;
+                    h3q[j] = sumSq;
+                }
             }
 
-            hSum[ri - rowTop] = hs;
-            hSumSq[ri - rowTop] = hq;
+            if (useBox5)
+            {
+                h5Sum[ri - rowTop] = h5s;
+                h5SumSq[ri - rowTop] = h5q;
+            }
+
+            if (useBox3)
+            {
+                h3Sum[ri - rowTop] = h3s;
+                h3SumSq[ri - rowTop] = h3q;
+            }
         }
 
-        // The box5 a/b coefficients are computed at odd-offset centre rows: stripeTop-1, +1, +3, ...
-        int centreCount = (height / 2) + 1;
-        int[][] aCoef = new int[centreCount][];
-        int[][] bCoef = new int[centreCount][];
-        for (int idx = 0; idx < centreCount; idx++)
+        int height = stripeEnd - stripeTop;
+
+        // box5 a/b at odd-offset centre rows (stripeTop-1, +1, +3, ...).
+        int box5Count = (height / 2) + 1;
+        int[][] a5 = useBox5 ? new int[box5Count][] : null!;
+        int[][] b5 = useBox5 ? new int[box5Count][] : null!;
+        if (useBox5)
         {
-            int c = stripeTop - 1 + (2 * idx);
-            int[] a = new int[n];
-            int[] b = new int[n];
-            for (int j = 0; j < n; j++)
+            for (int idx = 0; idx < box5Count; idx++)
             {
-                int sumV = 0;
-                int sumSqV = 0;
-                for (int k = c - 2; k <= c + 2; k++)
+                int c = stripeTop - 1 + (2 * idx);
+                int[] a = new int[n];
+                int[] b = new int[n];
+                for (int j = 0; j < n; j++)
                 {
-                    sumV += hSum[k - rowTop][j];
-                    sumSqV += hSumSq[k - rowTop][j];
+                    int sumV = 0;
+                    int sumSqV = 0;
+                    for (int k = c - 2; k <= c + 2; k++)
+                    {
+                        sumV += h5Sum[k - rowTop][j];
+                        sumSqV += h5SumSq[k - rowTop][j];
+                    }
+
+                    CalcAb(sumSqV, sumV, 25, s0, 164, out a[j], out b[j]);
                 }
 
-                long p = ((long)sumSqV * 25) - ((long)sumV * sumV);
-                if (p < 0)
-                {
-                    p = 0;
-                }
-
-                long z = ((p * s0) + (1 << 19)) >> 20;
-                int xx = XByX[(int)Math.Min(z, 255)];
-                a[j] = (int)((((long)xx * sumV * 164) + (1 << 11)) >> 12);
-                b[j] = xx;
+                a5[idx] = a;
+                b5[idx] = b;
             }
+        }
 
-            aCoef[idx] = a;
-            bCoef[idx] = b;
+        // box3 a/b at every centre row from stripeTop-1 to stripeEnd.
+        int box3First = stripeTop - 1;
+        int[][] a3 = useBox3 ? new int[height + 2][] : null!;
+        int[][] b3 = useBox3 ? new int[height + 2][] : null!;
+        if (useBox3)
+        {
+            for (int c = box3First; c <= stripeEnd; c++)
+            {
+                int[] a = new int[n];
+                int[] b = new int[n];
+                for (int j = 0; j < n; j++)
+                {
+                    int sumV = 0;
+                    int sumSqV = 0;
+                    for (int k = c - 1; k <= c + 1; k++)
+                    {
+                        sumV += h3Sum[k - rowTop][j];
+                        sumSqV += h3SumSq[k - rowTop][j];
+                    }
+
+                    CalcAb(sumSqV, sumV, 9, s1, 455, out a[j], out b[j]);
+                }
+
+                a3[c - box3First] = a;
+                b3[c - box3First] = b;
+            }
         }
 
         for (int r = stripeTop; r < stripeEnd; r++)
         {
-            int offset = r - stripeTop;
             int rowBase = r * planeWidth;
-            if ((offset & 1) == 0)
+            for (int x = x0; x < x0 + unitWidth; x++)
             {
-                int i0 = (r - stripeTop) / 2;
-                int i1 = i0 + 1;
-                int[] a0 = aCoef[i0], a1 = aCoef[i1], b0 = bCoef[i0], b1 = bCoef[i1];
-                for (int x = x0; x < x0 + unitWidth; x++)
+                int j = x - x0 + 1;
+                int src = cdef[rowBase + x];
+                int weighted = 0;
+
+                if (useBox5)
                 {
-                    int j = x - x0 + 1;
-                    int aTerm = ((b0[j] + b1[j]) * 6) + ((b0[j - 1] + b1[j - 1] + b0[j + 1] + b1[j + 1]) * 5);
-                    int bTerm = ((a0[j] + a1[j]) * 6) + ((a0[j - 1] + a1[j - 1] + a0[j + 1] + a1[j + 1]) * 5);
-                    int src = cdef[rowBase + x];
-                    int tmp = (bTerm - (aTerm * src) + (1 << 8)) >> 9;
-                    dst[rowBase + x] = Clip255(src + (((w0 * tmp) + (1 << 10)) >> 11));
+                    int tmp5;
+                    if (((r - stripeTop) & 1) == 0)
+                    {
+                        int i0 = (r - stripeTop) / 2;
+                        int i1 = i0 + 1;
+                        int[] pa0 = a5[i0], pa1 = a5[i1], pb0 = b5[i0], pb1 = b5[i1];
+                        int aTerm = ((pb0[j] + pb1[j]) * 6) + ((pb0[j - 1] + pb1[j - 1] + pb0[j + 1] + pb1[j + 1]) * 5);
+                        int bTerm = ((pa0[j] + pa1[j]) * 6) + ((pa0[j - 1] + pa1[j - 1] + pa0[j + 1] + pa1[j + 1]) * 5);
+                        tmp5 = (bTerm - (aTerm * src) + (1 << 8)) >> 9;
+                    }
+                    else
+                    {
+                        int i = (r - (stripeTop - 1)) / 2;
+                        int[] pa = a5[i], pb = b5[i];
+                        int aTerm = (pb[j] * 6) + ((pb[j - 1] + pb[j + 1]) * 5);
+                        int bTerm = (pa[j] * 6) + ((pa[j - 1] + pa[j + 1]) * 5);
+                        tmp5 = (bTerm - (aTerm * src) + (1 << 7)) >> 8;
+                    }
+
+                    weighted += w0 * tmp5;
                 }
-            }
-            else
-            {
-                int i = (r - (stripeTop - 1)) / 2;
-                int[] a = aCoef[i], b = bCoef[i];
-                for (int x = x0; x < x0 + unitWidth; x++)
+
+                if (useBox3)
                 {
-                    int j = x - x0 + 1;
-                    int aTerm = (b[j] * 6) + ((b[j - 1] + b[j + 1]) * 5);
-                    int bTerm = (a[j] * 6) + ((a[j - 1] + a[j + 1]) * 5);
-                    int src = cdef[rowBase + x];
-                    int tmp = (bTerm - (aTerm * src) + (1 << 7)) >> 8;
-                    dst[rowBase + x] = Clip255(src + (((w0 * tmp) + (1 << 10)) >> 11));
+                    int idxC = r - box3First;
+                    int[] pa0 = a3[idxC - 1], pa1 = a3[idxC], pa2 = a3[idxC + 1];
+                    int[] pb0 = b3[idxC - 1], pb1 = b3[idxC], pb2 = b3[idxC + 1];
+                    int aTerm = ((pb1[j] + pb1[j - 1] + pb1[j + 1] + pb0[j] + pb2[j]) * 4) + ((pb0[j - 1] + pb2[j - 1] + pb0[j + 1] + pb2[j + 1]) * 3);
+                    int bTerm = ((pa1[j] + pa1[j - 1] + pa1[j + 1] + pa0[j] + pa2[j]) * 4) + ((pa0[j - 1] + pa2[j - 1] + pa0[j + 1] + pa2[j + 1]) * 3);
+                    int tmp3 = (bTerm - (aTerm * src) + (1 << 8)) >> 9;
+                    weighted += w1 * tmp3;
                 }
+
+                dst[rowBase + x] = Clip255(src + ((weighted + (1 << 10)) >> 11));
             }
         }
+    }
+
+    private static void CalcAb(int sumSq, int sum, int n, int s, int oneByX, out int a, out int b)
+    {
+        long p = ((long)sumSq * n) - ((long)sum * sum);
+        if (p < 0)
+        {
+            p = 0;
+        }
+
+        long z = ((p * s) + (1 << 19)) >> 20;
+        int x = XByX[(int)Math.Min(z, 255)];
+        a = (int)((((long)x * sum * oneByX) + (1 << 11)) >> 12);
+        b = x;
     }
 
     private static byte Clip255(int v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
