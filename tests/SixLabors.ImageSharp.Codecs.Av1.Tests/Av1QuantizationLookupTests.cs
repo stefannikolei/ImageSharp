@@ -74,11 +74,14 @@ public class Av1QuantizationLookupTests
     }
 
     [Theory]
-    [InlineData((int)Av1TransformSize.Size16x16, 800)] // max dim 16 => shift 0
-    [InlineData((int)Av1TransformSize.Size32x32, 400)] // max dim 32 => shift 1
-    [InlineData((int)Av1TransformSize.Size64x64, 200)] // max dim 64 => shift 2
-    [InlineData((int)Av1TransformSize.Size16x32, 400)] // max dim 32 => shift 1
-    [InlineData((int)Av1TransformSize.Size16x64, 200)] // max dim 64 => shift 2
+    [InlineData((int)Av1TransformSize.Size16x16, 800)] // ctx 2 => shift 0
+    [InlineData((int)Av1TransformSize.Size32x32, 400)] // ctx 3 => shift 1
+    [InlineData((int)Av1TransformSize.Size64x64, 200)] // ctx 4 => shift 2
+    [InlineData((int)Av1TransformSize.Size16x32, 400)] // ctx 3 => shift 1
+    [InlineData((int)Av1TransformSize.Size16x64, 400)] // ctx (2+4+1)>>1 = 3 => shift 1
+    [InlineData((int)Av1TransformSize.Size32x8, 800)]  // ctx (3+1+1)>>1 = 2 => shift 0
+    [InlineData((int)Av1TransformSize.Size8x32, 800)]  // ctx (1+3+1)>>1 = 2 => shift 0
+    [InlineData((int)Av1TransformSize.Size64x16, 400)] // ctx (4+2+1)>>1 = 3 => shift 1
     public void Dequantize_AppliesTransformSizeShift(int sizeValue, int expected)
     {
         // qindex 1 => dc_q = 8, level 100 => 800 before the size shift.

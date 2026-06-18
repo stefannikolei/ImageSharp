@@ -161,8 +161,14 @@ internal static class Av1QuantizationLookup
     public static int Dequantize(int level, bool isDc, int qindex, int bitDepth, Av1TransformSize transformSize)
     {
         int quant = isDc ? GetDcQuant(qindex, bitDepth) : GetAcQuant(qindex, bitDepth);
-        int maxDimension = Math.Max(transformSize.GetWidth(), transformSize.GetHeight());
-        int dqShift = maxDimension == 64 ? 2 : (maxDimension == 32 ? 1 : 0);
+
+        // The dequant right shift depends on the transform's area-based size context (dav1d's
+        // t_dim->ctx = (lw + lh + 1) >> 1, dq_shift = max(0, ctx - 2)), not its largest dimension; the
+        // two differ for 4:1 rectangular transforms (e.g. 32x8 has ctx 2 and shift 0, not 1).
+        int lw = transformSize.GetWidthLog2() - 2;
+        int lh = transformSize.GetHeightLog2() - 2;
+        int sizeContext = (lw + lh + 1) >> 1;
+        int dqShift = Math.Max(0, sizeContext - 2);
         int coefficientMax = (1 << (7 + bitDepth)) - 1;
 
         int sign = level < 0 ? 1 : 0;
