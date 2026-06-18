@@ -80,6 +80,15 @@ internal static class Av1DirectionalPrediction
         int extent = width + height;
         int center = extent;
         byte[] tl = new byte[(2 * extent) + 1];
+
+        // Zone-2 corner smoothing (dav1d prepare_intra_edges): when the block is large enough
+        // (transform tw + th >= 6, i.e. width + height >= 24) and edge filtering is enabled, the
+        // top-left corner sample is convolved with the first above and left samples before prediction.
+        if (angle > 90 && angle < 180 && enableEdgeFilter && width + height >= 24)
+        {
+            topLeft = (byte)((((left[0] + above[0]) * 5) + (topLeft * 6) + 8) >> 4);
+        }
+
         tl[center] = topLeft;
         for (int i = 0; i < extent; i++)
         {
