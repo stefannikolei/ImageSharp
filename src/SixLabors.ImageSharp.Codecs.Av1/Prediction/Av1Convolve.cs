@@ -119,6 +119,46 @@ internal static class Av1Convolve
     ];
 
     /// <summary>
+    /// Predicts one inter block from a reference plane, gathering the source (with clamped edge
+    /// extension, dav1d's <c>emu_edge</c>) around the integer reference position and convolving it. The
+    /// integer position (dx, dy) and sub-pixel offsets (mx, my) are derived by the caller from the motion
+    /// vector; pixels outside the reference plane are replicated from its nearest edge.
+    /// </summary>
+    /// <param name="dst">The destination samples.</param>
+    /// <param name="dstOffset">The offset of the first destination sample.</param>
+    /// <param name="dstStride">The destination row stride.</param>
+    /// <param name="refPlane">The reference plane samples.</param>
+    /// <param name="refWidth">The reference plane width.</param>
+    /// <param name="refHeight">The reference plane height.</param>
+    /// <param name="refStride">The reference plane row stride.</param>
+    /// <param name="dx">The integer reference column of the block's top-left sample.</param>
+    /// <param name="dy">The integer reference row of the block's top-left sample.</param>
+    /// <param name="w">The block width.</param>
+    /// <param name="h">The block height.</param>
+    /// <param name="mx">The horizontal sub-pixel offset in sixteenths (0-15).</param>
+    /// <param name="my">The vertical sub-pixel offset in sixteenths (0-15).</param>
+    /// <param name="filterType">The combined 2D filter type.</param>
+    public static void PredictBlock(byte[] dst, int dstOffset, int dstStride, byte[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType)
+    {
+        int bw = w + 7;
+        int bh = h + 7;
+        byte[] buffer = new byte[bw * bh];
+        for (int r = 0; r < bh; r++)
+        {
+            int sy = Clamp(dy - 3 + r, 0, refHeight - 1) * refStride;
+            int rowBase = r * bw;
+            for (int c = 0; c < bw; c++)
+            {
+                buffer[rowBase + c] = refPlane[sy + Clamp(dx - 3 + c, 0, refWidth - 1)];
+            }
+        }
+
+        Predict(dst, dstOffset, dstStride, buffer, (3 * bw) + 3, bw, w, h, mx, my, filterType);
+    }
+
+    private static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
+
+    /// <summary>
     /// Convolves one inter-prediction block. Filter type encodes the vertical filter in bits 2-3 and the
     /// horizontal filter in bits 0-1 (0 = regular, 1 = smooth, 2 = sharp).
     /// </summary>
