@@ -120,6 +120,9 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets the order hint of this frame.</summary>
     public int OrderHint { get; init; }
 
+    /// <summary>Gets the eight-bit mask of reference slots this frame refreshes.</summary>
+    public int RefreshFrameFlags { get; init; }
+
     /// <summary>Gets the primary reference frame index (7 = none).</summary>
     public int PrimaryRefFrame { get; init; }
 
@@ -205,16 +208,17 @@ internal readonly struct ObuFrameHeader
         bool frameSizeOverride = frameType == Av1FrameType.Switch
             || (!sequenceHeader.ReducedStillPictureHeader && reader.ReadBoolean());
 
-        reader.ReadLiteral(sequenceHeader.OrderHintBits); // order_hint
+        int orderHintIntra = (int)reader.ReadLiteral(sequenceHeader.OrderHintBits); // order_hint
 
         // primary_ref_frame is PRIMARY_REF_NONE for intra/error-resilient frames.
+        int refreshFrameFlagsIntra;
         if (frameType == Av1FrameType.Key && showFrame)
         {
-            // refresh_frame_flags is implicitly all-ones.
+            refreshFrameFlagsIntra = 0xFF; // refresh_frame_flags is implicitly all-ones.
         }
         else
         {
-            reader.ReadLiteral(8); // refresh_frame_flags
+            refreshFrameFlagsIntra = (int)reader.ReadLiteral(8); // refresh_frame_flags
         }
 
         // frame_size().
@@ -347,6 +351,8 @@ internal readonly struct ObuFrameHeader
             CdefParameters = cdef,
             LoopFilterParameters = loopFilter,
             LoopRestorationParameters = loopRestoration,
+            OrderHint = orderHintIntra,
+            RefreshFrameFlags = refreshFrameFlagsIntra,
             EndBitPosition = reader.BitPosition,
         };
     }
@@ -534,6 +540,7 @@ internal readonly struct ObuFrameHeader
             LoopFilterParameters = loopFilter,
             LoopRestorationParameters = loopRestoration,
             OrderHint = orderHint,
+            RefreshFrameFlags = refreshFrameFlags,
             PrimaryRefFrame = primaryRefFrame,
             ReferenceFrameIndices = refFrameIndices,
             AllowHighPrecisionMv = allowHighPrecisionMv,
