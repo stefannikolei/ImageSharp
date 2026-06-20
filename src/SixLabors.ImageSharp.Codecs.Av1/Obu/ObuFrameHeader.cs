@@ -117,6 +117,36 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets the bit position immediately after the uncompressed header (before byte alignment).</summary>
     public int EndBitPosition { get; init; }
 
+    /// <summary>Gets the order hint of this frame.</summary>
+    public int OrderHint { get; init; }
+
+    /// <summary>Gets the primary reference frame index (7 = none).</summary>
+    public int PrimaryRefFrame { get; init; }
+
+    /// <summary>Gets the seven reference-frame slot indices used by this inter frame.</summary>
+    public int[] ReferenceFrameIndices { get; init; }
+
+    /// <summary>Gets a value indicating whether motion vectors use eighth-pel (high) precision.</summary>
+    public bool AllowHighPrecisionMv { get; init; }
+
+    /// <summary>Gets the interpolation filter selection (0-2 fixed, 4 = switchable).</summary>
+    public int InterpolationFilter { get; init; }
+
+    /// <summary>Gets a value indicating whether the motion mode is switchable per block.</summary>
+    public bool IsMotionModeSwitchable { get; init; }
+
+    /// <summary>Gets a value indicating whether temporal (reference-frame) motion vectors are used.</summary>
+    public bool UseReferenceFrameMotionVectors { get; init; }
+
+    /// <summary>Gets a value indicating whether the compound reference mode is switchable.</summary>
+    public bool ReferenceSelect { get; init; }
+
+    /// <summary>Gets a value indicating whether skip-mode is enabled for this frame.</summary>
+    public bool SkipModeEnabled { get; init; }
+
+    /// <summary>Gets a value indicating whether warped motion is allowed.</summary>
+    public bool AllowWarpedMotion { get; init; }
+
     /// <summary>
     /// Parses an uncompressed frame header for the intra path (specification section 5.9.2).
     /// </summary>
@@ -319,6 +349,337 @@ internal readonly struct ObuFrameHeader
             LoopRestorationParameters = loopRestoration,
             EndBitPosition = reader.BitPosition,
         };
+    }
+
+    /// <summary>
+    /// Parses an uncompressed frame header for an inter frame (specification section 5.9.2). Only the
+    /// feature subset exercised by simple single-reference clips is supported; rarer paths (short ref
+    /// signalling, primary-ref context loading, non-identity global motion, film grain) throw.
+    /// </summary>
+    /// <param name="reader">The bit-stream reader positioned at the start of the header.</param>
+    /// <param name="sequenceHeader">The active sequence header.</param>
+    /// <param name="referenceOrderHints">The order hints of the eight reference slots.</param>
+    /// <returns>The parsed inter frame header.</returns>
+    public static ObuFrameHeader ParseInter(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, int[] referenceOrderHints)
+    {
+        bool showExistingFrame = !sequenceHeader.ReducedStillPictureHeader && reader.ReadBoolean();
+        if (showExistingFrame)
+        {
+            throw new NotSupportedException("show_existing_frame is not supported yet.");
+        }
+
+        Av1FrameType frameType = (Av1FrameType)reader.ReadLiteral(2);
+        if (frameType is Av1FrameType.Key or Av1FrameType.IntraOnly)
+        {
+            throw new InvalidOperationException("ParseInter called for an intra frame.");
+        }
+
+        bool showFrame = reader.ReadBoolean();
+        bool showableFrame = showFrame ? frameType != Av1FrameType.Key : reader.ReadBoolean();
+
+        bool errorResilientMode = frameType == Av1FrameType.Switch || reader.ReadBoolean();
+        bool disableCdfUpdate = reader.ReadBoolean();
+
+        bool allowScreenContentTools = sequenceHeader.ForceScreenContentTools == ObuSequenceHeader.Select
+            ? reader.ReadBoolean()
+            : sequenceHeader.ForceScreenContentTools != 0;
+
+        bool forceIntegerMv = false;
+        if (allowScreenContentTools)
+        {
+            forceIntegerMv = sequenceHeader.ForceIntegerMotionVector == ObuSequenceHeader.Select
+                ? reader.ReadBoolean()
+                : sequenceHeader.ForceIntegerMotionVector != 0;
+        }
+
+        if (sequenceHeader.FrameIdNumbersPresent)
+        {
+            throw new NotSupportedException("frame_id_numbers_present is not supported for inter frames yet.");
+        }
+
+        bool frameSizeOverride = frameType == Av1FrameType.Switch || reader.ReadBoolean();
+        int orderHint = (int)reader.ReadLiteral(sequenceHeader.OrderHintBits);
+        int primaryRefFrame = errorResilientMode ? 7 : (int)reader.ReadLiteral(3);
+        if (primaryRefFrame != 7)
+        {
+            throw new NotSupportedException("Inter frames with a primary reference frame are not supported yet.");
+        }
+
+        int refreshFrameFlags = frameType == Av1FrameType.Switch ? 0xFF : (int)reader.ReadLiteral(8);
+        if (errorResilientMode && sequenceHeader.EnableOrderHint)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                reader.ReadLiteral(sequenceHeader.OrderHintBits); // ref_order_hint[i]
+            }
+        }
+
+        int[] refFrameIndices = new int[7];
+        if (sequenceHeader.EnableOrderHint && reader.ReadBoolean())
+        {
+            throw new NotSupportedException("frame_ref_short_signaling is not supported yet.");
+        }
+
+        for (int i = 0; i < 7; i++)
+        {
+            refFrameIndices[i] = (int)reader.ReadLiteral(3);
+        }
+
+        bool useRef = !errorResilientMode && frameSizeOverride;
+        FrameSizeResult size = ReadFrameSizeInter(ref reader, sequenceHeader, useRef, frameSizeOverride);
+
+        bool allowHighPrecisionMv = !forceIntegerMv && reader.ReadBoolean();
+        int interpolationFilter = reader.ReadBoolean() ? 4 : (int)reader.ReadLiteral(2);
+        bool isMotionModeSwitchable = reader.ReadBoolean();
+        bool useReferenceFrameMotionVectors = !errorResilientMode && sequenceHeader.EnableReferenceFrameMotionVectors
+            && sequenceHeader.EnableOrderHint && reader.ReadBoolean();
+
+        if (!sequenceHeader.ReducedStillPictureHeader && !disableCdfUpdate)
+        {
+            reader.ReadBoolean(); // disable_frame_end_update_cdf
+        }
+
+        int modeInfoColumns = 2 * ((size.FrameWidth + 7) >> 3);
+        int modeInfoRows = 2 * ((size.FrameHeight + 7) >> 3);
+
+        TileInfo tile = ReadTileInfo(ref reader, sequenceHeader, modeInfoColumns, modeInfoRows);
+        Quantization q = ReadQuantizationParams(ref reader, sequenceHeader);
+        bool segmentationEnabled = ReadSegmentationParams(ref reader);
+
+        bool deltaQPresent = false;
+        int deltaQResolution = 0;
+        if (q.BaseQIndex > 0)
+        {
+            deltaQPresent = reader.ReadBoolean();
+        }
+
+        if (deltaQPresent)
+        {
+            deltaQResolution = (int)reader.ReadLiteral(2);
+        }
+
+        bool deltaLfPresent = false;
+        if (deltaQPresent)
+        {
+            deltaLfPresent = reader.ReadBoolean();
+            if (deltaLfPresent)
+            {
+                reader.ReadLiteral(2);
+                reader.ReadBoolean();
+            }
+        }
+
+        bool codedLossless = q.BaseQIndex == 0 && q.DeltaQYDc == 0 &&
+            q.DeltaQUDc == 0 && q.DeltaQUAc == 0 && q.DeltaQVDc == 0 && q.DeltaQVAc == 0;
+
+        LoopFilter loopFilter = ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, false);
+        Cdef cdef = ReadCdefParams(ref reader, sequenceHeader, codedLossless, false);
+        LoopRestoration loopRestoration = ReadLoopRestorationParams(ref reader, sequenceHeader, codedLossless, false);
+
+        int txMode = codedLossless ? 0 : (reader.ReadBoolean() ? 2 : 1);
+
+        bool referenceSelect = reader.ReadBoolean();
+
+        bool skipModeAllowed = ComputeSkipModeAllowed(referenceSelect, sequenceHeader, orderHint, refFrameIndices, referenceOrderHints);
+        bool skipModeEnabled = skipModeAllowed && reader.ReadBoolean();
+
+        bool allowWarpedMotion = !errorResilientMode && sequenceHeader.EnableWarpedMotion && reader.ReadBoolean();
+        bool reducedTxSet = reader.ReadBoolean();
+
+        // global_motion_params(): identity for every reference (each contributes one is_global bit).
+        for (int i = 0; i < 7; i++)
+        {
+            if (reader.ReadBoolean())
+            {
+                throw new NotSupportedException("Non-identity global motion is not supported yet.");
+            }
+        }
+
+        if (sequenceHeader.FilmGrainParamsPresent && (showFrame || showableFrame))
+        {
+            throw new NotSupportedException("Film grain parameters are not supported yet.");
+        }
+
+        return new ObuFrameHeader
+        {
+            FrameType = frameType,
+            ShowFrame = showFrame,
+            DisableCdfUpdate = disableCdfUpdate,
+            AllowScreenContentTools = allowScreenContentTools,
+            FrameWidth = size.FrameWidth,
+            FrameHeight = size.FrameHeight,
+            RenderWidth = size.RenderWidth,
+            RenderHeight = size.RenderHeight,
+            ModeInfoColumns = modeInfoColumns,
+            ModeInfoRows = modeInfoRows,
+            TileColumnsLog2 = tile.ColumnsLog2,
+            TileRowsLog2 = tile.RowsLog2,
+            TileSizeBytes = tile.SizeBytes,
+            BaseQIndex = q.BaseQIndex,
+            DeltaQYDc = q.DeltaQYDc,
+            DeltaQUDc = q.DeltaQUDc,
+            DeltaQUAc = q.DeltaQUAc,
+            DeltaQVDc = q.DeltaQVDc,
+            DeltaQVAc = q.DeltaQVAc,
+            UsingQMatrix = q.UsingQMatrix,
+            SegmentationEnabled = segmentationEnabled,
+            DeltaQPresent = deltaQPresent,
+            DeltaQResolution = deltaQResolution,
+            DeltaLfPresent = deltaLfPresent,
+            CodedLossless = codedLossless,
+            TxMode = txMode,
+            ReducedTxSet = reducedTxSet,
+            CdefBits = cdef.Bits,
+            CdefParameters = cdef,
+            LoopFilterParameters = loopFilter,
+            LoopRestorationParameters = loopRestoration,
+            OrderHint = orderHint,
+            PrimaryRefFrame = primaryRefFrame,
+            ReferenceFrameIndices = refFrameIndices,
+            AllowHighPrecisionMv = allowHighPrecisionMv,
+            InterpolationFilter = interpolationFilter,
+            IsMotionModeSwitchable = isMotionModeSwitchable,
+            UseReferenceFrameMotionVectors = useReferenceFrameMotionVectors,
+            ReferenceSelect = referenceSelect,
+            SkipModeEnabled = skipModeEnabled,
+            AllowWarpedMotion = allowWarpedMotion,
+            EndBitPosition = reader.BitPosition,
+        };
+    }
+
+    // Order-hint difference with wrap-around (dav1d get_poc_diff).
+    private static int GetOrderHintDiff(int orderHintBits, int a, int b)
+    {
+        if (orderHintBits == 0)
+        {
+            return 0;
+        }
+
+        int mask = 1 << (orderHintBits - 1);
+        int diff = a - b;
+        return (diff & (mask - 1)) - (diff & mask);
+    }
+
+    // dav1d skip_mode_params allowed computation: requires either a forward and backward reference, or
+    // two distinct backward references, among the seven reference frames (by order hint).
+    private static bool ComputeSkipModeAllowed(bool referenceSelect, in ObuSequenceHeader sequenceHeader, int orderHint, int[] refFrameIndices, int[] referenceOrderHints)
+    {
+        if (!referenceSelect || !sequenceHeader.EnableOrderHint)
+        {
+            return false;
+        }
+
+        int bits = sequenceHeader.OrderHintBits;
+        int offBefore = -1;
+        int offAfter = -1;
+        int offBeforeIdx = -1;
+        int offAfterIdx = -1;
+        for (int i = 0; i < 7; i++)
+        {
+            int refPoc = referenceOrderHints[refFrameIndices[i]];
+            int diff = GetOrderHintDiff(bits, refPoc, orderHint);
+            if (diff > 0)
+            {
+                if (offAfter < 0 || GetOrderHintDiff(bits, offAfter, refPoc) > 0)
+                {
+                    offAfter = refPoc;
+                    offAfterIdx = i;
+                }
+            }
+            else if (diff < 0 && (offBefore < 0 || GetOrderHintDiff(bits, refPoc, offBefore) > 0))
+            {
+                offBefore = refPoc;
+                offBeforeIdx = i;
+            }
+        }
+
+        if (offBefore >= 0 && offAfter >= 0)
+        {
+            return true;
+        }
+
+        if (offBefore >= 0)
+        {
+            int offBefore2 = -1;
+            for (int i = 0; i < 7; i++)
+            {
+                int refPoc = referenceOrderHints[refFrameIndices[i]];
+                if (GetOrderHintDiff(bits, refPoc, offBefore) < 0 &&
+                    (offBefore2 < 0 || GetOrderHintDiff(bits, refPoc, offBefore2) > 0))
+                {
+                    offBefore2 = refPoc;
+                }
+            }
+
+            return offBefore2 >= 0;
+        }
+
+        _ = offBeforeIdx;
+        _ = offAfterIdx;
+        return false;
+    }
+
+    private readonly struct FrameSizeResult
+    {
+        public FrameSizeResult(int frameWidth, int frameHeight, int renderWidth, int renderHeight)
+        {
+            this.FrameWidth = frameWidth;
+            this.FrameHeight = frameHeight;
+            this.RenderWidth = renderWidth;
+            this.RenderHeight = renderHeight;
+        }
+
+        public int FrameWidth { get; }
+
+        public int FrameHeight { get; }
+
+        public int RenderWidth { get; }
+
+        public int RenderHeight { get; }
+    }
+
+    // dav1d read_frame_size for inter (the use_ref found-reference path is not yet supported).
+    private static FrameSizeResult ReadFrameSizeInter(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool useRef, bool frameSizeOverride)
+    {
+        if (useRef)
+        {
+            for (int i = 0; i < 7; i++)
+            {
+                if (reader.ReadBoolean())
+                {
+                    throw new NotSupportedException("frame_size_with_refs (found_ref) is not supported yet.");
+                }
+            }
+        }
+
+        int frameWidth;
+        int frameHeight;
+        if (frameSizeOverride)
+        {
+            frameWidth = (int)reader.ReadLiteral(sequenceHeader.FrameWidthBits) + 1;
+            frameHeight = (int)reader.ReadLiteral(sequenceHeader.FrameHeightBits) + 1;
+        }
+        else
+        {
+            frameWidth = sequenceHeader.MaxFrameWidth;
+            frameHeight = sequenceHeader.MaxFrameHeight;
+        }
+
+        if (sequenceHeader.EnableSuperResolution && reader.ReadBoolean())
+        {
+            reader.ReadLiteral(3); // coded_denom
+            throw new NotSupportedException("Super-resolution is not supported yet.");
+        }
+
+        int renderWidth = frameWidth;
+        int renderHeight = frameHeight;
+        if (reader.ReadBoolean())
+        {
+            renderWidth = (int)reader.ReadLiteral(16) + 1;
+            renderHeight = (int)reader.ReadLiteral(16) + 1;
+        }
+
+        return new FrameSizeResult(frameWidth, frameHeight, renderWidth, renderHeight);
     }
 
     private static TileInfo ReadTileInfo(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, int miCols, int miRows)
