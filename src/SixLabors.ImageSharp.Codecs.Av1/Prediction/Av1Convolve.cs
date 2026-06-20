@@ -238,6 +238,143 @@ internal static class Av1Convolve
         }
     }
 
+    /// <summary>
+    /// Produces the unrounded 16-bit intermediate prediction for one compound (multi-reference) inter
+    /// block (a port of dav1d's <c>prep_8tap</c> for 8-bit). The result is combined by one of the blend
+    /// operations rather than written to pixels directly.
+    /// </summary>
+    /// <param name="tmp">The 16-bit intermediate buffer (dense, stride <paramref name="w"/>).</param>
+    /// <param name="src">The reference samples.</param>
+    /// <param name="srcOffset">The offset of the block's top-left reference sample.</param>
+    /// <param name="srcStride">The reference row stride.</param>
+    /// <param name="w">The block width.</param>
+    /// <param name="h">The block height.</param>
+    /// <param name="mx">The horizontal sub-pixel offset in sixteenths (0-15).</param>
+    /// <param name="my">The vertical sub-pixel offset in sixteenths (0-15).</param>
+    /// <param name="filterType">The combined 2D filter type.</param>
+    public static void Prep(short[] tmp, byte[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType)
+    {
+        const int intermediateBits = 4;
+        sbyte[]? fh = mx == 0 ? null : (w > 4 ? SubpelFilters[filterType & 3][mx - 1] : SubpelFilters[3 + (filterType & 1)][mx - 1]);
+        sbyte[]? fv = my == 0 ? null : (h > 4 ? SubpelFilters[filterType >> 2][my - 1] : SubpelFilters[3 + ((filterType >> 2) & 1)][my - 1]);
+
+        if (fh != null)
+        {
+            if (fv != null)
+            {
+                short[] mid = new short[w * (h + 7)];
+                int s = srcOffset - (3 * srcStride);
+                for (int r = 0; r < h + 7; r++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        mid[(r * w) + x] = (short)((Filter(src, s + x, fh, 1) + ((1 << (6 - intermediateBits)) >> 1)) >> (6 - intermediateBits));
+                    }
+
+                    s += srcStride;
+                }
+
+                for (int r = 0; r < h; r++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        tmp[(r * w) + x] = (short)((FilterMid(mid, ((r + 3) * w) + x, fv, w) + 32) >> 6);
+                    }
+                }
+            }
+            else
+            {
+                for (int r = 0; r < h; r++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        tmp[(r * w) + x] = (short)((Filter(src, srcOffset + (r * srcStride) + x, fh, 1) + ((1 << (6 - intermediateBits)) >> 1)) >> (6 - intermediateBits));
+                    }
+                }
+            }
+        }
+        else if (fv != null)
+        {
+            for (int r = 0; r < h; r++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    tmp[(r * w) + x] = (short)((Filter(src, srcOffset + (r * srcStride) + x, fv, srcStride) + ((1 << (6 - intermediateBits)) >> 1)) >> (6 - intermediateBits));
+                }
+            }
+        }
+        else
+        {
+            for (int r = 0; r < h; r++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    tmp[(r * w) + x] = (short)(src[srcOffset + (r * srcStride) + x] << intermediateBits);
+                }
+            }
+        }
+    }
+
+    /// <summary>Gathers a bordered reference block (clamped edge extension) and runs <see cref="Prep"/>.</summary>
+    public static void PrepBlock(short[] tmp, byte[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType)
+    {
+        int bw = w + 7;
+        int bh = h + 7;
+        byte[] buffer = new byte[bw * bh];
+        for (int r = 0; r < bh; r++)
+        {
+            int sy = Clamp(dy - 3 + r, 0, refHeight - 1) * refStride;
+            int rowBase = r * bw;
+            for (int c = 0; c < bw; c++)
+            {
+                buffer[rowBase + c] = refPlane[sy + Clamp(dx - 3 + c, 0, refWidth - 1)];
+            }
+        }
+
+        Prep(tmp, buffer, (3 * bw) + 3, bw, w, h, mx, my, filterType);
+    }
+
+    /// <summary>Averages two compound predictions (dav1d <c>avg</c>).</summary>
+    public static void Average(byte[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h)
+    {
+        for (int r = 0; r < h; r++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                dst[dstOffset + (r * dstStride) + x] = ClipPixel((tmp1[(r * w) + x] + tmp2[(r * w) + x] + 16) >> 5);
+            }
+        }
+    }
+
+    /// <summary>Weighted-averages two compound predictions with a weight in [0, 16] (dav1d <c>w_avg</c>).</summary>
+    public static void WeightedAverage(byte[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h, int weight)
+    {
+        for (int r = 0; r < h; r++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int t1 = tmp1[(r * w) + x];
+                int t2 = tmp2[(r * w) + x];
+                dst[dstOffset + (r * dstStride) + x] = ClipPixel(((t1 * weight) + (t2 * (16 - weight)) + 128) >> 8);
+            }
+        }
+    }
+
+    /// <summary>Mask-blends two compound predictions with a per-sample mask in [0, 64] (dav1d <c>mask</c>).</summary>
+    public static void Mask(byte[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, byte[] mask, int w, int h)
+    {
+        for (int r = 0; r < h; r++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int m = mask[(r * w) + x];
+                int t1 = tmp1[(r * w) + x];
+                int t2 = tmp2[(r * w) + x];
+                dst[dstOffset + (r * dstStride) + x] = ClipPixel(((t1 * m) + (t2 * (64 - m)) + 512) >> 10);
+            }
+        }
+    }
+
     private static int Filter(byte[] src, int x, sbyte[] f, int stride)
         => (f[0] * src[x - (3 * stride)]) + (f[1] * src[x - (2 * stride)]) + (f[2] * src[x - stride]) +
            (f[3] * src[x]) + (f[4] * src[x + stride]) + (f[5] * src[x + (2 * stride)]) +
