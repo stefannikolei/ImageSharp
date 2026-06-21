@@ -99,4 +99,50 @@ public class Av1MotionVectorStackTests
     [Fact]
     public void ComposeContext_PacksFields()
         => Assert.Equal(58, Av1MotionVectorStack.ComposeContext(refMvContext: 3, globalMvContext: 1, newMvContext: 2));
+
+    [Fact]
+    public void AddSingleExtendedCandidate_AppliesSignBiasAndDeduplicates()
+    {
+        int[] signBias = [0, 0, 1, 0, 0, 0, 0];
+        Av1MotionVectorStack stack = new();
+
+        // Reference 3 has opposite sign bias to the predicted sign 0, so the vector is negated.
+        stack.AddSingleExtendedCandidate(Inter(3, 10, -20), sign: 0, signBias);
+        Assert.Equal(1, stack.Count);
+        Assert.Equal(-10, stack[0].MotionVector.Y);
+        Assert.Equal(20, stack[0].MotionVector.X);
+        Assert.Equal(2, stack[0].Weight);
+
+        // The same negated vector is not added twice.
+        stack.AddSingleExtendedCandidate(Inter(3, 10, -20), sign: 0, signBias);
+        Assert.Equal(1, stack.Count);
+    }
+
+    [Fact]
+    public void FillGlobalPredictors_FillsBelowTwoWithoutChangingCount()
+    {
+        Av1MotionVectorStack stack = new();
+        stack.AddSpatialCandidate(Inter(1, 7, 9), 4, 1, default, globalMvValid: false);
+        Assert.Equal(1, stack.Count);
+
+        stack.FillGlobalPredictors(new Av1MotionVector(3, -5));
+        Assert.Equal(1, stack.Count);
+        Assert.Equal(3, stack[1].MotionVector.Y);
+        Assert.Equal(-5, stack[1].MotionVector.X);
+    }
+
+    [Fact]
+    public void Clamp_RestrictsVectorsToBlockRange()
+    {
+        Av1MotionVectorStack stack = new();
+        stack.AddSpatialCandidate(Inter(1, 1_000_000, -1_000_000), 4, 1, default, globalMvValid: false);
+
+        // bx4=0, bw4=2, by4=0, bh4=2, iw4=ih4=64.
+        stack.Clamp(bx4: 0, bw4: 2, by4: 0, bh4: 2, imageWidth4: 64, imageHeight4: 64);
+
+        int bottom = (64 - 0 + 4) * 4 * 8;
+        int left = -(0 + 2 + 4) * 4 * 8;
+        Assert.Equal(bottom, stack[0].MotionVector.Y);
+        Assert.Equal(left, stack[0].MotionVector.X);
+    }
 }

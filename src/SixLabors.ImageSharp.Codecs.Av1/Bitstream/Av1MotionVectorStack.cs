@@ -91,6 +91,86 @@ internal sealed class Av1MotionVectorStack
     }
 
     /// <summary>
+    /// Adds the sign-adjusted non-self references of a neighbour as minimal-weight extended candidates,
+    /// matching <c>add_single_extended_candidate</c>. Used to fill the list towards two entries.
+    /// </summary>
+    /// <param name="block">The neighbour block.</param>
+    /// <param name="sign">The sign bias of the reference frame being predicted.</param>
+    /// <param name="signBias">The per-reference sign bias, indexed by zero-based reference.</param>
+    public void AddSingleExtendedCandidate(in Av1RefMvsBlock block, int sign, ReadOnlySpan<int> signBias)
+    {
+        for (int n = 0; n < 2; n++)
+        {
+            int neighbourReference = n == 0 ? block.Reference0 : block.Reference1;
+            if (neighbourReference <= 0)
+            {
+                break;
+            }
+
+            Av1MotionVector candidate = n == 0 ? block.MotionVector0 : block.MotionVector1;
+            int candidateY = candidate.Y;
+            int candidateX = candidate.X;
+            if ((sign ^ signBias[neighbourReference - 1]) != 0)
+            {
+                candidateY = -candidateY;
+                candidateX = -candidateX;
+            }
+
+            int last = this.Count;
+            int m = 0;
+            while (m < last && !(this.mvY[m] == candidateY && this.mvX[m] == candidateX))
+            {
+                m++;
+            }
+
+            if (m == last && last < MaxCandidates)
+            {
+                this.mvY[m] = candidateY;
+                this.mvX[m] = candidateX;
+                this.weight[m] = 2;
+                this.Count = last + 1;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fills the candidate slots below index two with the global-motion vector without changing the
+    /// reported candidate count, matching the predictor fill at the end of the single-reference path.
+    /// </summary>
+    /// <param name="globalMv">The global-motion vector predictor.</param>
+    public void FillGlobalPredictors(Av1MotionVector globalMv)
+    {
+        for (int n = this.Count; n < 2; n++)
+        {
+            this.mvY[n] = globalMv.Y;
+            this.mvX[n] = globalMv.X;
+        }
+    }
+
+    /// <summary>
+    /// Clamps every candidate motion vector to the allowed range for the block position, matching the
+    /// reference decoder's candidate clamping.
+    /// </summary>
+    /// <param name="bx4">The block column in 4x4 units.</param>
+    /// <param name="bw4">The block width in 4x4 units.</param>
+    /// <param name="by4">The block row in 4x4 units.</param>
+    /// <param name="bh4">The block height in 4x4 units.</param>
+    /// <param name="imageWidth4">The frame width in 4x4 units.</param>
+    /// <param name="imageHeight4">The frame height in 4x4 units.</param>
+    public void Clamp(int bx4, int bw4, int by4, int bh4, int imageWidth4, int imageHeight4)
+    {
+        int left = -(bx4 + bw4 + 4) * 4 * 8;
+        int right = (imageWidth4 - bx4 + 4) * 4 * 8;
+        int top = -(by4 + bh4 + 4) * 4 * 8;
+        int bottom = (imageHeight4 - by4 + 4) * 4 * 8;
+        for (int n = 0; n < this.Count; n++)
+        {
+            this.mvX[n] = Math.Clamp(this.mvX[n], left, right);
+            this.mvY[n] = Math.Clamp(this.mvY[n], top, bottom);
+        }
+    }
+
+    /// <summary>
     /// Adds the nearest-neighbour weight bonus (640) to the first <paramref name="nearestCount"/>
     /// candidates, matching the weight bump applied before temporal candidates in the reference decoder.
     /// </summary>
