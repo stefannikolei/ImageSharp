@@ -21,6 +21,17 @@ internal static class Av1IsInterReader
         => decoder.ReadSymbol(cdf.IsInter[context]) != 0;
 
     /// <summary>
+    /// Reads the skip-mode flag for an inter block, a port of the reference decoder's skip-mode parse.
+    /// </summary>
+    /// <param name="decoder">The tile symbol decoder.</param>
+    /// <param name="cdf">The tile's adaptive inter-mode CDFs.</param>
+    /// <param name="leftSkipMode">Whether the left neighbour used skip mode (0 or 1).</param>
+    /// <param name="topSkipMode">Whether the top neighbour used skip mode (0 or 1).</param>
+    /// <returns><see langword="true"/> when the block uses skip mode.</returns>
+    public static bool ReadSkipMode(Av1SymbolDecoder decoder, Av1InterModeCdfContext cdf, int leftSkipMode, int topSkipMode)
+        => decoder.ReadSymbol(cdf.SkipMode[leftSkipMode + topSkipMode]) != 0;
+
+    /// <summary>
     /// Derives the intra-flag context from the neighbouring blocks' intra flags, matching
     /// <c>get_intra_ctx</c>.
     /// </summary>

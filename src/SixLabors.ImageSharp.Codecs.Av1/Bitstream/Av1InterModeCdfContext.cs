@@ -17,6 +17,9 @@ internal sealed class Av1InterModeCdfContext
     /// <summary>Gets the is-inter flag CDFs, indexed by context.</summary>
     public ushort[][] IsInter { get; private set; } = default!;
 
+    /// <summary>Gets the skip-mode flag CDFs, indexed by context.</summary>
+    public ushort[][] SkipMode { get; private set; } = default!;
+
     /// <summary>Gets the new-mv flag CDFs, indexed by context.</summary>
     public ushort[][] NewMv { get; private set; } = default!;
 
@@ -40,6 +43,7 @@ internal sealed class Av1InterModeCdfContext
     public static Av1InterModeCdfContext CreateDefault() => new()
     {
         IsInter = Clone(Av1DefaultInterModeCdf.IsInter),
+        SkipMode = Clone(Av1DefaultInterModeCdf.SkipMode),
         NewMv = Clone(Av1DefaultInterModeCdf.NewMv),
         GlobalMv = Clone(Av1DefaultInterModeCdf.GlobalMv),
         RefMv = Clone(Av1DefaultInterModeCdf.RefMv),

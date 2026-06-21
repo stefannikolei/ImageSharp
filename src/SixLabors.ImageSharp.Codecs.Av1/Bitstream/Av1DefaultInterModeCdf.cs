@@ -20,6 +20,14 @@ internal static class Av1DefaultInterModeCdf
         [6230, 0, 0],
     ];
 
+    /// <summary>The skip-mode flag CDFs, indexed by context [0, 2].</summary>
+    public static readonly ushort[][] SkipMode =
+    [
+        [147, 0, 0],
+        [12060, 0, 0],
+        [24641, 0, 0],
+    ];
+
     /// <summary>The new-mv flag CDFs, indexed by context [0, 5].</summary>
     public static readonly ushort[][] NewMv =
     [

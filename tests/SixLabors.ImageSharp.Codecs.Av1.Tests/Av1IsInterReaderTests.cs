@@ -32,6 +32,24 @@ public class Av1IsInterReaderTests
     }
 
     [Theory]
+    [InlineData(true, 0, 0)]
+    [InlineData(false, 1, 0)]
+    [InlineData(true, 1, 1)]
+    public void ReadSkipMode_RoundTrips(bool skipMode, int left, int top)
+    {
+        Av1SymbolEncoder encoder = new();
+        Av1InterModeCdfContext encoderCdf = Av1InterModeCdfContext.CreateDefault();
+        encoder.WriteSymbol(skipMode ? 1 : 0, encoderCdf.SkipMode[left + top]);
+        byte[] payload = encoder.Finish();
+
+        Av1SymbolDecoder decoder = new(payload);
+        Av1InterModeCdfContext decoderCdf = Av1InterModeCdfContext.CreateDefault();
+        bool actual = Av1IsInterReader.ReadSkipMode(decoder, decoderCdf, left, top);
+
+        Assert.Equal(skipMode, actual);
+    }
+
+    [Theory]
     [InlineData(0, 0, false, false, 0)] // no neighbours
     [InlineData(1, 0, false, true, 0)]  // top only, intra=0
     [InlineData(1, 1, false, true, 2)]  // top only, intra=1 -> 2
