@@ -91,6 +91,104 @@ internal sealed class Av1MotionVectorStack
     }
 
     /// <summary>
+    /// Scans a neighbour row, adding spatial candidates with position-dependent weights, a port of
+    /// <c>scan_row</c>. The supplied span starts at the block's column in 4x4 resolution.
+    /// </summary>
+    /// <param name="row">The neighbour row blocks, indexed from the block column.</param>
+    /// <param name="bw4">The block width in 4x4 units.</param>
+    /// <param name="w4">The clamped block width used for scanning.</param>
+    /// <param name="maxRows">The maximum number of rows the weight may span.</param>
+    /// <param name="step">The minimum scan step.</param>
+    /// <param name="referenceFrame">The one-based reference frame index being predicted.</param>
+    /// <param name="globalMv">The global-motion vector for the reference.</param>
+    /// <param name="globalMvValid">Whether the global-motion vector is valid.</param>
+    /// <returns>The number of rows the scan covered.</returns>
+    public int ScanRow(
+        ReadOnlySpan<Av1RefMvsBlock> row,
+        int bw4,
+        int w4,
+        int maxRows,
+        int step,
+        int referenceFrame,
+        Av1MotionVector globalMv,
+        bool globalMvValid)
+    {
+        Av1RefMvsBlock candidate = row[0];
+        int candidateWidth = candidate.BlockSize.GetWidth4();
+        int len = Math.Max(step, Math.Min(bw4, candidateWidth));
+
+        if (bw4 <= candidateWidth)
+        {
+            int weight = bw4 == 1 ? 2 : Math.Max(2, Math.Min(2 * maxRows, candidate.BlockSize.GetHeight4()));
+            this.AddSpatialCandidate(candidate, len * weight, referenceFrame, globalMv, globalMvValid);
+            return weight >> 1;
+        }
+
+        for (int x = 0;;)
+        {
+            this.AddSpatialCandidate(candidate, len * 2, referenceFrame, globalMv, globalMvValid);
+            x += len;
+            if (x >= w4)
+            {
+                return 1;
+            }
+
+            candidate = row[x];
+            candidateWidth = candidate.BlockSize.GetWidth4();
+            len = Math.Max(step, candidateWidth);
+        }
+    }
+
+    /// <summary>
+    /// Scans a neighbour column, adding spatial candidates with position-dependent weights, a port of
+    /// <c>scan_col</c>. The supplied span starts at the block's row in 4x4 resolution.
+    /// </summary>
+    /// <param name="column">The neighbour column blocks, indexed from the block row.</param>
+    /// <param name="bh4">The block height in 4x4 units.</param>
+    /// <param name="h4">The clamped block height used for scanning.</param>
+    /// <param name="maxColumns">The maximum number of columns the weight may span.</param>
+    /// <param name="step">The minimum scan step.</param>
+    /// <param name="referenceFrame">The one-based reference frame index being predicted.</param>
+    /// <param name="globalMv">The global-motion vector for the reference.</param>
+    /// <param name="globalMvValid">Whether the global-motion vector is valid.</param>
+    /// <returns>The number of columns the scan covered.</returns>
+    public int ScanColumn(
+        ReadOnlySpan<Av1RefMvsBlock> column,
+        int bh4,
+        int h4,
+        int maxColumns,
+        int step,
+        int referenceFrame,
+        Av1MotionVector globalMv,
+        bool globalMvValid)
+    {
+        Av1RefMvsBlock candidate = column[0];
+        int candidateHeight = candidate.BlockSize.GetHeight4();
+        int len = Math.Max(step, Math.Min(bh4, candidateHeight));
+
+        if (bh4 <= candidateHeight)
+        {
+            int weight = bh4 == 1 ? 2 : Math.Max(2, Math.Min(2 * maxColumns, candidate.BlockSize.GetWidth4()));
+            this.AddSpatialCandidate(candidate, len * weight, referenceFrame, globalMv, globalMvValid);
+            return weight >> 1;
+        }
+
+        for (int y = 0;;)
+        {
+            this.AddSpatialCandidate(candidate, len * 2, referenceFrame, globalMv, globalMvValid);
+            y += len;
+            if (y >= h4)
+            {
+                return 1;
+            }
+
+            candidate = column[y];
+            candidateHeight = candidate.BlockSize.GetHeight4();
+            len = Math.Max(step, candidateHeight);
+        }
+    }
+
+    /// <summary>
     /// Adds the sign-adjusted non-self references of a neighbour as minimal-weight extended candidates,
     /// matching <c>add_single_extended_candidate</c>. Used to fill the list towards two entries.
     /// </summary>

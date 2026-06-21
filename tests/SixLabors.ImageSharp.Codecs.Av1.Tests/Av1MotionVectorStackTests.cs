@@ -101,6 +101,50 @@ public class Av1MotionVectorStackTests
         => Assert.Equal(58, Av1MotionVectorStack.ComposeContext(refMvContext: 3, globalMvContext: 1, newMvContext: 2));
 
     [Fact]
+    public void ScanRow_EqualWidthAddsWeightedCandidate()
+    {
+        Av1RefMvsBlock[] row = [Inter(1, 10, 20)];
+        Av1MotionVectorStack stack = new();
+
+        int extent = stack.ScanRow(row, bw4: 2, w4: 2, maxRows: 2, step: 1, referenceFrame: 1, default, globalMvValid: false);
+
+        Assert.Equal(1, extent);
+        Assert.Equal(1, stack.Count);
+        Assert.Equal(10, stack[0].MotionVector.Y);
+        Assert.Equal(4, stack[0].Weight); // len(2) * weight(2)
+    }
+
+    [Fact]
+    public void ScanRow_WideBlockWalksNeighbours()
+    {
+        Av1RefMvsBlock[] row = [Inter(1, 1, 1), default, Inter(1, 2, 2), default];
+        Av1MotionVectorStack stack = new();
+
+        int extent = stack.ScanRow(row, bw4: 4, w4: 4, maxRows: 2, step: 1, referenceFrame: 1, default, globalMvValid: false);
+
+        Assert.Equal(1, extent);
+        Assert.Equal(2, stack.Count);
+        Assert.Equal(1, stack[0].MotionVector.Y);
+        Assert.Equal(4, stack[0].Weight); // len(2) * 2
+        Assert.Equal(2, stack[1].MotionVector.Y);
+        Assert.Equal(4, stack[1].Weight);
+    }
+
+    [Fact]
+    public void ScanColumn_EqualHeightAddsWeightedCandidate()
+    {
+        Av1RefMvsBlock[] column = [Inter(1, 30, 40)];
+        Av1MotionVectorStack stack = new();
+
+        int extent = stack.ScanColumn(column, bh4: 2, h4: 2, maxColumns: 2, step: 1, referenceFrame: 1, default, globalMvValid: false);
+
+        Assert.Equal(1, extent);
+        Assert.Equal(1, stack.Count);
+        Assert.Equal(30, stack[0].MotionVector.Y);
+        Assert.Equal(4, stack[0].Weight);
+    }
+
+    [Fact]
     public void AddSingleExtendedCandidate_AppliesSignBiasAndDeduplicates()
     {
         int[] signBias = [0, 0, 1, 0, 0, 0, 0];
