@@ -29,7 +29,7 @@ public class Av1CdefApplyReferenceTests
         byte[] expectedLuma = Convert.FromBase64String(ReferenceLumaBase64);
 
         using MemoryStream stream = new(ivf);
-        Av1IntraTileDecoder decoder = Av1DecoderCore.DecodeFirstFrame(stream);
+        Av1TileDecoder decoder = Av1DecoderCore.DecodeFirstFrame(stream);
 
         Assert.Equal(64, decoder.Luma.Width);
         Assert.Equal(64, decoder.Luma.Height);

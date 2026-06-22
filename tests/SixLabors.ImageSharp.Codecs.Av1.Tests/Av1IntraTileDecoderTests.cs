@@ -28,7 +28,7 @@ public class Av1IntraTileDecoderTests
         (int offset, int length) = tileGroup.GetTile(0);
         ReadOnlyMemory<byte> tileData = FramePayload.AsMemory(tileGroupStart + offset, length);
 
-        Av1IntraTileDecoder decoder = new(sequenceHeader, frameHeader);
+        Av1TileDecoder decoder = new(sequenceHeader, frameHeader);
         decoder.DecodeTile(tileData);
 
         Assert.Equal(64, decoder.Luma.Width);

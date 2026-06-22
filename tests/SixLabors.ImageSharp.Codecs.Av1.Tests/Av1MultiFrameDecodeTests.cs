@@ -23,7 +23,7 @@ public class Av1MultiFrameDecodeTests
     public void DecodeAllFrames_SecondFrame_MatchesDav1d()
     {
         using MemoryStream stream = new(Convert.FromBase64String(TinyIvfBase64));
-        System.Collections.Generic.List<Av1IntraTileDecoder> frames = Av1DecoderCore.DecodeAllFrames(stream);
+        System.Collections.Generic.List<Av1TileDecoder> frames = Av1DecoderCore.DecodeAllFrames(stream);
 
         Assert.Equal(2, frames.Count);
         Assert.Equal(Convert.FromBase64String(Frame1LumaBase64), frames[1].Luma.Samples);

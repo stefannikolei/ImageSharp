@@ -41,12 +41,12 @@ internal static class Av1DecoderCore
 
     /// <summary>
     /// Decodes the first key frame of an IVF-wrapped AV1 stream into reconstructed planes. Supports the
-    /// intra feature subset implemented by <see cref="Av1IntraTileDecoder"/>.
+    /// intra feature subset implemented by <see cref="Av1TileDecoder"/>.
     /// </summary>
     /// <param name="stream">The stream positioned at the start of the IVF container.</param>
     /// <returns>The decoder holding the reconstructed luma and chroma planes.</returns>
     /// <exception cref="InvalidDataException">The stream is not a valid AV1/IVF bitstream.</exception>
-    public static Av1IntraTileDecoder DecodeFirstFrame(Stream stream)
+    public static Av1TileDecoder DecodeFirstFrame(Stream stream)
     {
         Guard.NotNull(stream, nameof(stream));
 
@@ -86,7 +86,7 @@ internal static class Av1DecoderCore
                 (int tileOffset, int tileLength) = tileGroup.GetTile(0);
                 byte[] tileData = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
 
-                Av1IntraTileDecoder tileDecoder = new(sequenceHeader, frameHeader);
+                Av1TileDecoder tileDecoder = new(sequenceHeader, frameHeader);
                 tileDecoder.DecodeTile(tileData);
                 return tileDecoder;
             }
@@ -102,7 +102,7 @@ internal static class Av1DecoderCore
     /// <param name="stream">The stream positioned at the start of the IVF container.</param>
     /// <returns>The decoders holding each reconstructed frame, in decode order.</returns>
     /// <exception cref="InvalidDataException">The stream is not a valid AV1/IVF bitstream.</exception>
-    public static List<Av1IntraTileDecoder> DecodeAllFrames(Stream stream)
+    public static List<Av1TileDecoder> DecodeAllFrames(Stream stream)
     {
         Guard.NotNull(stream, nameof(stream));
 
@@ -112,7 +112,7 @@ internal static class Av1DecoderCore
             throw new InvalidDataException($"Unsupported IVF codec FourCC '{fileHeader.FourCc}', expected AV1.");
         }
 
-        List<Av1IntraTileDecoder> frames = [];
+        List<Av1TileDecoder> frames = [];
         bool haveSequenceHeader = false;
         ObuSequenceHeader sequenceHeader = default;
 
@@ -141,7 +141,7 @@ internal static class Av1DecoderCore
                     (int tileOffset, int tileLength) = tileGroup.GetTile(0);
                     byte[] tileData = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
 
-                    Av1IntraTileDecoder tileDecoder = new(sequenceHeader, frameHeader);
+                    Av1TileDecoder tileDecoder = new(sequenceHeader, frameHeader);
                     tileDecoder.DecodeTile(tileData);
                     frames.Add(tileDecoder);
                 }

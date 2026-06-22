@@ -42,7 +42,7 @@ public sealed class Av1Decoder : SpecializedImageDecoder<Av1DecoderOptions>
         Guard.NotNull(options, nameof(options));
         Guard.NotNull(stream, nameof(stream));
 
-        List<Av1IntraTileDecoder> frames = Av1DecoderCore.DecodeAllFrames(stream);
+        List<Av1TileDecoder> frames = Av1DecoderCore.DecodeAllFrames(stream);
 
         int width = frames[0].Luma.Width;
         int height = frames[0].Luma.Height;
@@ -58,7 +58,7 @@ public sealed class Av1Decoder : SpecializedImageDecoder<Av1DecoderOptions>
         return image;
     }
 
-    private static void CopyFrame<TPixel>(Av1IntraTileDecoder frame, ImageFrame<TPixel> destination)
+    private static void CopyFrame<TPixel>(Av1TileDecoder frame, ImageFrame<TPixel> destination)
         where TPixel : unmanaged, IPixel<TPixel>
     {
         TPixel[] buffer = new TPixel[destination.Width * destination.Height];
@@ -70,7 +70,7 @@ public sealed class Av1Decoder : SpecializedImageDecoder<Av1DecoderOptions>
         }
     }
 
-    private static void ConvertFrame<TPixel>(Av1IntraTileDecoder frame, TPixel[] buffer)
+    private static void ConvertFrame<TPixel>(Av1TileDecoder frame, TPixel[] buffer)
         where TPixel : unmanaged, IPixel<TPixel>
     {
         Av1Plane luma = frame.Luma;

@@ -25,7 +25,7 @@ public class Av1LoopRestorationClipDecodeTests
     public void Decode_LoopRestorationClip_MatchesDav1d()
     {
         using MemoryStream stream = new(Convert.FromBase64String(IvfBase64));
-        Av1IntraTileDecoder decoder = Av1DecoderCore.DecodeFirstFrame(stream);
+        Av1TileDecoder decoder = Av1DecoderCore.DecodeFirstFrame(stream);
 
         Assert.Equal(Convert.FromBase64String(ReferenceLumaBase64), decoder.Luma.Samples);
         Assert.Equal(Convert.FromBase64String(ReferenceChromaUBase64), decoder.ChromaU.Samples);

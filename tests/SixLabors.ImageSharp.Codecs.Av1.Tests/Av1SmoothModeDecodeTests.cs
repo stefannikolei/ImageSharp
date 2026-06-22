@@ -30,7 +30,7 @@ public class Av1SmoothModeDecodeTests
         ObuTileGroup tileGroup = ObuTileGroup.Parse(FramePayload.AsSpan(tileGroupStart), frameHeader);
         (int offset, int length) = tileGroup.GetTile(0);
 
-        Av1IntraTileDecoder decoder = new(sequenceHeader, frameHeader);
+        Av1TileDecoder decoder = new(sequenceHeader, frameHeader);
         decoder.DecodeTile(FramePayload.AsMemory(tileGroupStart + offset, length));
 
         Assert.All(decoder.ChromaU.Samples, s => Assert.Equal(128, s));

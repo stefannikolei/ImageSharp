@@ -8,13 +8,14 @@ using SixLabors.ImageSharp.Formats.Av1.Transform;
 namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 
 /// <summary>
-/// Decodes the tiles of an intra (key) frame into reconstructed luma and chroma planes. This covers the
-/// recursively-split partition tree, the intra block decode (mode info, transform-size and
-/// transform-type selection, the transform-block loop with neighbour-derived contexts) and DC
-/// reconstruction. Unsupported syntax raises <see cref="NotSupportedException"/> so that streams beyond
-/// the current coverage fail loudly rather than producing incorrect pixels.
+/// Decodes the tiles of a frame into reconstructed luma and chroma planes: the recursively-split
+/// partition tree, the per-block decode and the shared residual reconstruction and post-filter pipeline
+/// (deblocking, CDEF and loop restoration). The base implementation decodes intra (key) frames; the
+/// per-block decode is <see langword="virtual"/> so an inter tile decoder can reuse the reconstruction
+/// surface and override only the prediction. Unsupported syntax raises <see cref="NotSupportedException"/>
+/// so that streams beyond the current coverage fail loudly rather than producing incorrect pixels.
 /// </summary>
-internal sealed class Av1IntraTileDecoder
+internal class Av1TileDecoder
 {
     // Intra mode context lookup (dav1d_intra_mode_context).
     private static readonly int[] IntraModeContext = [0, 1, 2, 3, 4, 4, 4, 4, 3, 0, 1, 2, 0];
@@ -65,17 +66,17 @@ internal sealed class Av1IntraTileDecoder
 
     private const byte LevelContextBaseline = 0x40; // cul_level 0, dc-sign "zero".
 
-    private readonly ObuSequenceHeader sequenceHeader;
-    private readonly ObuFrameHeader frameHeader;
-    private readonly Av1ModeInfoCdfContext modeCdf;
-    private readonly Av1CoefficientCdfContext coefficientCdf;
+    private protected readonly ObuSequenceHeader sequenceHeader;
+    private protected readonly ObuFrameHeader frameHeader;
+    private protected readonly Av1ModeInfoCdfContext modeCdf;
+    private protected readonly Av1CoefficientCdfContext coefficientCdf;
 
-    private readonly Av1Plane luma;
-    private readonly Av1Plane chromaU;
-    private readonly Av1Plane chromaV;
+    private protected readonly Av1Plane luma;
+    private protected readonly Av1Plane chromaU;
+    private protected readonly Av1Plane chromaV;
 
-    private readonly int subsamplingX;
-    private readonly int subsamplingY;
+    private protected readonly int subsamplingX;
+    private protected readonly int subsamplingY;
     private readonly int midGrey;
 
     // Neighbour context arrays in 4x4 units. The 'above' arrays span the frame width; the 'left'
@@ -96,13 +97,13 @@ internal sealed class Av1IntraTileDecoder
     // block before reconstruction; the luma flag uses neighbour luma modes, the chroma flag uv modes.
     private bool lumaEdgeSmooth;
     private bool chromaEdgeSmooth;
-    private readonly LevelContext lumaLevels;
-    private readonly LevelContext chromaULevels;
-    private readonly LevelContext chromaVLevels;
+    private protected readonly LevelContext lumaLevels;
+    private protected readonly LevelContext chromaULevels;
+    private protected readonly LevelContext chromaVLevels;
 
     // CDEF post-filter state, gathered during decode and consumed by ApplyCdef.
-    private readonly int miColumns;
-    private readonly int miRows;
+    private protected readonly int miColumns;
+    private protected readonly int miRows;
     private readonly bool[] noskip;
     private readonly int[] cdefIndices;
     private readonly int cdefColumns64;
@@ -124,9 +125,9 @@ internal sealed class Av1IntraTileDecoder
     private readonly int chromaStride4;
     private readonly int chromaRows4;
 
-    private Av1SymbolDecoder decoder = default!;
+    private protected Av1SymbolDecoder decoder = default!;
 
-    public Av1IntraTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader)
+    public Av1TileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader)
     {
         this.sequenceHeader = sequenceHeader;
         this.frameHeader = frameHeader;
@@ -946,7 +947,7 @@ internal sealed class Av1IntraTileDecoder
         return (Av1Partition)this.decoder.ReadSymbol(this.modeCdf.Partition[blockLevel][above + (left << 1)]);
     }
 
-    private void DecodeBlock(int row, int col, Av1BlockSize bsize)
+    private protected virtual void DecodeBlock(int row, int col, Av1BlockSize bsize)
     {
         int width4 = bsize.GetWidth4();
         int height4 = bsize.GetHeight4();
@@ -1084,7 +1085,7 @@ internal sealed class Av1IntraTileDecoder
         return tx;
     }
 
-    private void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha)
+    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha)
     {
         int blockWidth4 = planeIndex == 0 ? bsize.GetWidth4() : (bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX;
         int blockHeight4 = planeIndex == 0 ? bsize.GetHeight4() : (bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY;
@@ -1148,7 +1149,7 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, Av1TransformType txType, int[] levels, int eob, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha)
+    private protected void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, Av1TransformType txType, int[] levels, int eob, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha)
     {
         int width = tx.GetWidth();
         int height = tx.GetHeight();
@@ -1187,7 +1188,7 @@ internal sealed class Av1IntraTileDecoder
         }
     }
 
-    private void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, byte[] prediction)
+    private protected virtual void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, byte[] prediction)
     {
         // Filter-intra (luma, DC blocks): predict each square unit from the prepared edges.
         if (filterIntraMode >= 0)
@@ -1548,7 +1549,7 @@ internal sealed class Av1IntraTileDecoder
         return (byte)(Math.Min(culLevel, 63) | dcSignLevel);
     }
 
-    private static void Fill(byte[] context, int start, int count, byte value)
+    private protected static void Fill(byte[] context, int start, int count, byte value)
     {
         for (int i = 0; i < count && start + i < context.Length; i++)
         {
@@ -1575,7 +1576,7 @@ internal sealed class Av1IntraTileDecoder
     /// The coefficient level-context bytes for one plane: an 'above' row spanning the frame width and a
     /// 'left' column spanning the frame height (reset per superblock row), in 4x4 units.
     /// </summary>
-    private sealed class LevelContext
+    private protected sealed class LevelContext
     {
         private readonly byte[] above;
         private readonly byte[] left;

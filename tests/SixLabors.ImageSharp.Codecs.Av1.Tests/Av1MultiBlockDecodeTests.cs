@@ -29,7 +29,7 @@ public class Av1MultiBlockDecodeTests
         ObuTileGroup tileGroup = ObuTileGroup.Parse(FramePayload.AsSpan(tileGroupStart), frameHeader);
         (int offset, int length) = tileGroup.GetTile(0);
 
-        Av1IntraTileDecoder decoder = new(sequenceHeader, frameHeader);
+        Av1TileDecoder decoder = new(sequenceHeader, frameHeader);
         decoder.DecodeTile(FramePayload.AsMemory(tileGroupStart + offset, length));
 
         Assert.Equal(128, decoder.Luma.Width);
