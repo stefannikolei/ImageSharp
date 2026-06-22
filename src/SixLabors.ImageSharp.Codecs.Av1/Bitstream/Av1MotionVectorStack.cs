@@ -26,6 +26,16 @@ internal sealed class Av1MotionVectorStack
     public Av1MotionVectorCandidate this[int index]
         => new(new Av1MotionVector(this.mvY[index], this.mvX[index]), this.weight[index]);
 
+    /// <summary>Copies the candidates (including the two predictor slots) into the destination span.</summary>
+    /// <param name="destination">The destination span (length up to eight).</param>
+    public void CopyTo(Span<Av1MotionVectorCandidate> destination)
+    {
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = new Av1MotionVectorCandidate(new Av1MotionVector(this.mvY[i], this.mvX[i]), this.weight[i]);
+        }
+    }
+
     /// <summary>
     /// Adds a single-reference spatial neighbour to the candidate list, merging by motion-vector
     /// equality and accumulating the weight, matching <c>add_spatial_candidate</c>.
