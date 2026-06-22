@@ -95,4 +95,38 @@ public class Av1InterPredictorTests
 
         Assert.Equal(expected, actual);
     }
+
+    [Fact]
+    public void Prepare_TwoReferences_AveragesToCompoundPrediction()
+    {
+        const int rw = 32;
+        const int rh = 32;
+        byte[] reference0 = Gradient(rw, rh);
+        byte[] reference1 = new byte[rw * rh];
+        for (int i = 0; i < reference1.Length; i++)
+        {
+            reference1[i] = (byte)(255 - reference0[i]);
+        }
+
+        Av1MotionVector mv0 = new(11, 22);
+        Av1MotionVector mv1 = new(5, 9);
+
+        short[] tmp0 = new short[16 * 16];
+        short[] tmp1 = new short[16 * 16];
+        Av1InterPredictor.Prepare(tmp0, reference0, rw, rh, rw, 2, 2, 4, 4, mv0, 1, 2, 0, 0);
+        Av1InterPredictor.Prepare(tmp1, reference1, rw, rh, rw, 2, 2, 4, 4, mv1, 0, 0, 0, 0);
+
+        byte[] actual = new byte[16 * 16];
+        Av1Convolve.Average(actual, 0, 16, tmp0, tmp1, 16, 16);
+
+        // Reference path: prep each reference directly, then average.
+        short[] expected0 = new short[16 * 16];
+        short[] expected1 = new short[16 * 16];
+        Av1Convolve.PrepBlock(expected0, reference0, rw, rh, rw, dx: 10, dy: 9, w: 16, h: 16, mx: 12, my: 6, filterType: 6);
+        Av1Convolve.PrepBlock(expected1, reference1, rw, rh, rw, dx: 9, dy: 8, w: 16, h: 16, mx: 2, my: 10, filterType: 0);
+        byte[] expected = new byte[16 * 16];
+        Av1Convolve.Average(expected, 0, 16, expected0, expected1, 16, 16);
+
+        Assert.Equal(expected, actual);
+    }
 }
