@@ -947,12 +947,18 @@ internal class Av1TileDecoder
         return (Av1Partition)this.decoder.ReadSymbol(this.modeCdf.Partition[blockLevel][above + (left << 1)]);
     }
 
-    private protected virtual void DecodeBlock(int row, int col, Av1BlockSize bsize)
+    /// <summary>
+    /// Reads the block skip flag and performs the prediction-independent block bookkeeping shared by
+    /// the intra and inter paths: reading the CDEF index once per 64x64 region and recording the
+    /// non-skip status of every 4x4 unit the block covers.
+    /// </summary>
+    /// <param name="row">The block's top 4x4 row.</param>
+    /// <param name="col">The block's left 4x4 column.</param>
+    /// <param name="width4">The block width in 4x4 units.</param>
+    /// <param name="height4">The block height in 4x4 units.</param>
+    /// <returns>The decoded skip flag (0 or 1).</returns>
+    private protected int ReadSkipFlag(int row, int col, int width4, int height4)
     {
-        int width4 = bsize.GetWidth4();
-        int height4 = bsize.GetHeight4();
-
-        // skip flag.
         int skipContext = this.aboveSkip[col] + this.leftSkip[row];
         int skip = this.decoder.ReadSymbol(this.modeCdf.Skip[skipContext]);
 
@@ -981,6 +987,17 @@ internal class Av1TileDecoder
                 }
             }
         }
+
+        return skip;
+    }
+
+    private protected virtual void DecodeBlock(int row, int col, Av1BlockSize bsize)
+    {
+        int width4 = bsize.GetWidth4();
+        int height4 = bsize.GetHeight4();
+
+        // skip flag, plus the shared cdef-index and non-skip recording.
+        int skip = this.ReadSkipFlag(row, col, width4, height4);
 
         // luma intra mode.
         int aboveModeContext = IntraModeContext[this.aboveMode[col]];
