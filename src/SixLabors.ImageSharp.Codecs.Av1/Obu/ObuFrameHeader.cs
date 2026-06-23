@@ -400,7 +400,7 @@ internal readonly struct ObuFrameHeader
 
         if (sequenceHeader.FrameIdNumbersPresent)
         {
-            throw new NotSupportedException("frame_id_numbers_present is not supported for inter frames yet.");
+            reader.ReadLiteral(sequenceHeader.FrameIdLength); // current_frame_id
         }
 
         bool frameSizeOverride = frameType == Av1FrameType.Switch || reader.ReadBoolean();
@@ -429,6 +429,10 @@ internal readonly struct ObuFrameHeader
         for (int i = 0; i < 7; i++)
         {
             refFrameIndices[i] = (int)reader.ReadLiteral(3);
+            if (sequenceHeader.FrameIdNumbersPresent)
+            {
+                reader.ReadLiteral(sequenceHeader.DeltaFrameIdLength); // delta_frame_id_minus_1
+            }
         }
 
         bool useRef = !errorResilientMode && frameSizeOverride;
