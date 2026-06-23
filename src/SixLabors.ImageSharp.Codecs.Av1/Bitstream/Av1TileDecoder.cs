@@ -83,8 +83,8 @@ internal class Av1TileDecoder
     // arrays span the frame height and are reset at the start of each superblock row.
     private readonly byte[] abovePartition;
     private readonly byte[] leftPartition;
-    private readonly byte[] aboveSkip;
-    private readonly byte[] leftSkip;
+    private protected readonly byte[] aboveSkip;
+    private protected readonly byte[] leftSkip;
     private readonly byte[] aboveMode;
     private readonly byte[] leftMode;
     private readonly byte[] aboveUvMode;
