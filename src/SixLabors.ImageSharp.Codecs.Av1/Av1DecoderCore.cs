@@ -96,8 +96,10 @@ internal static class Av1DecoderCore
     }
 
     /// <summary>
-    /// Decodes every coded frame of an IVF-wrapped AV1 stream into reconstructed planes. Only the intra
-    /// feature subset is supported; an inter frame raises <see cref="NotSupportedException"/>.
+    /// Decodes every coded frame of an IVF-wrapped AV1 stream into reconstructed planes, maintaining the
+    /// reference-frame store so inter frames can be predicted from earlier frames. Key frames and the
+    /// implemented single-reference inter subset are supported; unsupported syntax raises
+    /// <see cref="NotSupportedException"/>.
     /// </summary>
     /// <param name="stream">The stream positioned at the start of the IVF container.</param>
     /// <returns>The decoders holding each reconstructed frame, in decode order.</returns>
@@ -115,6 +117,7 @@ internal static class Av1DecoderCore
         List<Av1TileDecoder> frames = [];
         bool haveSequenceHeader = false;
         ObuSequenceHeader sequenceHeader = default;
+        Av1ReferenceFrameStore referenceStore = new();
 
         while (IvfReader.TryReadFrame(stream, out _, out byte[] frame))
         {
@@ -133,17 +136,12 @@ internal static class Av1DecoderCore
                         throw new InvalidDataException("Encountered a frame OBU before any sequence header.");
                     }
 
-                    Av1BitStreamReader reader = new(payload);
-                    ObuFrameHeader frameHeader = ObuFrameHeader.ParseIntra(ref reader, sequenceHeader);
-
-                    int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
-                    ObuTileGroup tileGroup = ObuTileGroup.Parse(payload[tileGroupStart..], frameHeader);
-                    (int tileOffset, int tileLength) = tileGroup.GetTile(0);
-                    byte[] tileData = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
-
-                    Av1TileDecoder tileDecoder = new(sequenceHeader, frameHeader);
-                    tileDecoder.DecodeTile(tileData);
+                    Av1TileDecoder tileDecoder = DecodeFrame(payload, sequenceHeader, referenceStore, out ObuFrameHeader frameHeader);
                     frames.Add(tileDecoder);
+
+                    // Publish the reconstructed frame into the reference slots it refreshes.
+                    Av1ReferenceFrame decoded = new(frameHeader.OrderHint, tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV);
+                    referenceStore.Update(decoded, frameHeader.RefreshFrameFlags);
                 }
             }
         }
@@ -154,6 +152,58 @@ internal static class Av1DecoderCore
         }
 
         return frames;
+    }
+
+    // Parses a frame OBU header (dispatching between the intra and inter parsers) and decodes its single
+    // tile, predicting inter frames from the reference store.
+    private static Av1TileDecoder DecodeFrame(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader, Av1ReferenceFrameStore referenceStore, out ObuFrameHeader frameHeader)
+    {
+        Av1FrameType frameType = PeekFrameType(payload, sequenceHeader);
+        Av1TileDecoder tileDecoder;
+        if (frameType is Av1FrameType.Key or Av1FrameType.IntraOnly)
+        {
+            Av1BitStreamReader reader = new(payload);
+            frameHeader = ObuFrameHeader.ParseIntra(ref reader, sequenceHeader);
+            tileDecoder = new Av1TileDecoder(sequenceHeader, frameHeader);
+        }
+        else
+        {
+            Av1BitStreamReader reader = new(payload);
+            frameHeader = ObuFrameHeader.ParseInter(ref reader, sequenceHeader, referenceStore.GetOrderHints());
+            Av1ReferenceFrame? reference = referenceStore[frameHeader.ReferenceFrameIndices[0]];
+            if (reference is null)
+            {
+                throw new InvalidDataException("Inter frame references an empty reference slot.");
+            }
+
+            tileDecoder = new Av1InterTileDecoder(sequenceHeader, frameHeader, reference);
+        }
+
+        int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
+        ObuTileGroup tileGroup = ObuTileGroup.Parse(payload[tileGroupStart..], frameHeader);
+        (int tileOffset, int tileLength) = tileGroup.GetTile(0);
+        byte[] tileData = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
+
+        tileDecoder.DecodeTile(tileData);
+        return tileDecoder;
+    }
+
+    // Reads only enough of a frame OBU header to determine the frame type (used to choose the parser).
+    private static Av1FrameType PeekFrameType(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader)
+    {
+        if (sequenceHeader.ReducedStillPictureHeader)
+        {
+            return Av1FrameType.Key;
+        }
+
+        Av1BitStreamReader reader = new(payload);
+        bool showExistingFrame = reader.ReadBoolean();
+        if (showExistingFrame)
+        {
+            throw new NotSupportedException("show_existing_frame is not supported yet.");
+        }
+
+        return (Av1FrameType)reader.ReadLiteral(2);
     }
 
     private static bool TryReadSequenceHeaderDimensions(Stream stream, out Size size)
