@@ -1102,7 +1102,7 @@ internal class Av1TileDecoder
         return tx;
     }
 
-    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha)
+    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, bool skip = false)
     {
         int blockWidth4 = planeIndex == 0 ? bsize.GetWidth4() : (bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX;
         int blockHeight4 = planeIndex == 0 ? bsize.GetHeight4() : (bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY;
@@ -1133,19 +1133,31 @@ internal class Av1TileDecoder
                 int dcSignContext = DcSignContext(levels, txCol, txRow, txWidth4, txHeight4);
 
                 Array.Clear(coefficientLevels);
-                int eob = Av1CoefficientReader.ReadCoefficients(
-                    this.decoder,
-                    this.coefficientCdf,
-                    tx,
-                    Av1TransformType.DctDct,
-                    planeIndex,
-                    skipContext,
-                    dcSignContext,
-                    coefficientLevels,
-                    planeIndex == 0 ? this.modeCdf : null,
-                    filterIntraMode >= 0 ? FilterModeToYMode[filterIntraMode] : intraMode,
-                    this.frameHeader.ReducedTxSet,
-                    out Av1TransformType txType);
+                int eob;
+                Av1TransformType txType;
+                if (skip)
+                {
+                    // A skipped block codes no coefficients: the residual is zero and the all-zero flag
+                    // is implied rather than read.
+                    eob = Av1CoefficientReader.AllZero;
+                    txType = Av1TransformType.DctDct;
+                }
+                else
+                {
+                    eob = Av1CoefficientReader.ReadCoefficients(
+                        this.decoder,
+                        this.coefficientCdf,
+                        tx,
+                        Av1TransformType.DctDct,
+                        planeIndex,
+                        skipContext,
+                        dcSignContext,
+                        coefficientLevels,
+                        planeIndex == 0 ? this.modeCdf : null,
+                        filterIntraMode >= 0 ? FilterModeToYMode[filterIntraMode] : intraMode,
+                        this.frameHeader.ReducedTxSet,
+                        out txType);
+                }
 
                 this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);
 

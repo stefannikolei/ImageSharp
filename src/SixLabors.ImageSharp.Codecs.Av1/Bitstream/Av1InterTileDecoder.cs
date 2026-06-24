@@ -134,17 +134,18 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         }
 
         // Add the residual through the shared transform-block loop, substituting the motion-compensated
-        // prediction via the Predict override.
+        // prediction via the Predict override. A skipped block carries no residual.
+        bool blockSkip = skip != 0;
         this.currentBlockIsInter = true;
         Av1TransformSize lumaTx = bsize.GetMaxTransformSize();
-        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, 0, 0, -1, 0);
+        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, 0, 0, -1, 0, blockSkip);
         if (hasChroma)
         {
             Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
             int chromaRow = row >> this.subsamplingY;
             int chromaCol = col >> this.subsamplingX;
-            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0);
-            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0);
+            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip);
+            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip);
         }
 
         this.currentBlockIsInter = false;
