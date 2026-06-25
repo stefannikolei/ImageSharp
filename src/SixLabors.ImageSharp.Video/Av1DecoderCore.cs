@@ -156,7 +156,7 @@ internal static class Av1DecoderCore
 
     // Parses a frame OBU header (dispatching between the intra and inter parsers) and decodes its single
     // tile, predicting inter frames from the reference store.
-    private static Av1TileDecoder DecodeFrame(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader, Av1ReferenceFrameStore referenceStore, out ObuFrameHeader frameHeader)
+    internal static Av1TileDecoder DecodeFrame(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader, Av1ReferenceFrameStore referenceStore, out ObuFrameHeader frameHeader)
     {
         Av1FrameType frameType = PeekFrameType(payload, sequenceHeader);
         Av1TileDecoder tileDecoder;
@@ -189,7 +189,7 @@ internal static class Av1DecoderCore
     }
 
     // Reads only enough of a frame OBU header to determine the frame type (used to choose the parser).
-    private static Av1FrameType PeekFrameType(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader)
+    internal static Av1FrameType PeekFrameType(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader)
     {
         if (sequenceHeader.ReducedStillPictureHeader)
         {
