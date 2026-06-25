@@ -22,7 +22,7 @@
   </Choose>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\SixLabors.ImageSharp.Codecs.Av1\SixLabors.ImageSharp.Codecs.Av1.csproj" />
+    <ProjectReference Include="..\..\src\SixLabors.ImageSharp.Video\SixLabors.ImageSharp.Video.csproj" />
   </ItemGroup>
 
 </Project>

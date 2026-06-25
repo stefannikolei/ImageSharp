@@ -2,12 +2,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <AssemblyName>SixLabors.ImageSharp.Codecs.Av1</AssemblyName>
-    <AssemblyTitle>SixLabors.ImageSharp.Codecs.Av1</AssemblyTitle>
-    <RootNamespace>SixLabors.ImageSharp.Formats.Av1</RootNamespace>
-    <PackageId>SixLabors.ImageSharp.Codecs.Av1</PackageId>
-    <Description>Experimental, fully managed AV1 (AOMedia Video 1) codec for SixLabors.ImageSharp.</Description>
-    <PackageTags>ImageSharp AV1 AOMedia Video Codec Decoder NetCore</PackageTags>
+    <AssemblyName>SixLabors.ImageSharp.Video</AssemblyName>
+    <AssemblyTitle>SixLabors.ImageSharp.Video</AssemblyTitle>
+    <RootNamespace>SixLabors.ImageSharp</RootNamespace>
+    <PackageId>SixLabors.ImageSharp.Video</PackageId>
+    <Description>Experimental, fully managed video decoding (AV1) for SixLabors.ImageSharp, with a codec-agnostic Video API.</Description>
+    <PackageTags>ImageSharp Video AV1 AOMedia Codec Decoder NetCore</PackageTags>
     <Configurations>Debug;Release</Configurations>
   </PropertyGroup>
 

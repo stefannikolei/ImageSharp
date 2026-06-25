@@ -668,7 +668,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Icon", "Icon", "{95E45DDE-A
 		tests\Images\Input\Icon\flutter.ico = tests\Images\Input\Icon\flutter.ico
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SixLabors.ImageSharp.Codecs.Av1", "src\SixLabors.ImageSharp.Codecs.Av1\SixLabors.ImageSharp.Codecs.Av1.csproj", "{9AB6629D-D404-4F65-82F7-BEBF5F22D36C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SixLabors.ImageSharp.Video", "src\SixLabors.ImageSharp.Video\SixLabors.ImageSharp.Video.csproj", "{9AB6629D-D404-4F65-82F7-BEBF5F22D36C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SixLabors.ImageSharp.Codecs.Av1.Tests", "tests\SixLabors.ImageSharp.Codecs.Av1.Tests\SixLabors.ImageSharp.Codecs.Av1.Tests.csproj", "{CC9B8A60-3C20-44FB-975A-7012488B79D9}"
 EndProject
