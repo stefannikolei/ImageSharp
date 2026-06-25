@@ -26,6 +26,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     private readonly Av1MotionVectorCdfContext mvCdf = Av1MotionVectorCdfContext.CreateDefault();
     private readonly Av1InterpolationFilterCdfContext filterCdf = Av1InterpolationFilterCdfContext.CreateDefault();
     private readonly Av1MotionModeCdfContext motionModeCdf = Av1MotionModeCdfContext.CreateDefault();
+    private readonly Av1InterTransformTypeCdfContext interTransformTypeCdf = Av1InterTransformTypeCdfContext.CreateDefault();
     private readonly Av1MotionVectorGrid grid;
     private readonly Av1InterNeighbourContext interNeighbours;
     private readonly Av1InterModeInfoOptions options;
@@ -138,7 +139,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         bool blockSkip = skip != 0;
         this.currentBlockIsInter = true;
         Av1TransformSize lumaTx = bsize.GetMaxTransformSize();
-        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, 0, 0, -1, 0, blockSkip);
+        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, 0, 0, -1, 0, blockSkip, this.ReadInterLumaTransformType);
         if (hasChroma)
         {
             Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
@@ -172,6 +173,19 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                 prediction[(ry * width) + rx] = sample;
             }
         }
+    }
+
+    // Reads the luma transform type of an inter transform block. A 64x64 transform or a lossless
+    // (zero-quantizer) block implies DCT_DCT and codes no transform type.
+    private Av1TransformType ReadInterLumaTransformType(Av1TransformSize transformSize)
+    {
+        int maxCategory = Math.Max(transformSize.GetWidthLog2() - 2, transformSize.GetHeightLog2() - 2);
+        if (maxCategory >= 4 || this.frameHeader.BaseQIndex == 0)
+        {
+            return Av1TransformType.DctDct;
+        }
+
+        return Av1InterTransformTypeReader.Read(this.decoder, this.interTransformTypeCdf, transformSize, this.frameHeader.ReducedTxSet);
     }
 
     private void MotionCompensate(Av1Plane destination, Av1Plane reference, int row, int col, int width4, int height4, in Av1InterBlockInfo info, int subsamplingX, int subsamplingY)

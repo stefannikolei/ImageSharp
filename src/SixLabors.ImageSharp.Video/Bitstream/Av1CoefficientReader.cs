@@ -133,7 +133,8 @@ internal static class Av1CoefficientReader
         Av1ModeInfoCdfContext? modeCdf,
         int intraLumaMode,
         bool reducedTransformSet,
-        out Av1TransformType decodedType)
+        out Av1TransformType decodedType,
+        Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader = null)
     {
         int chroma = plane != 0 ? 1 : 0;
         int txCtx = GetTransformSizeContext(transformSize);
@@ -146,11 +147,19 @@ internal static class Av1CoefficientReader
             return AllZero;
         }
 
-        // Intra luma blocks code a per-block transform type after txb_skip when the transform is
-        // smaller than 64x64; otherwise (and for chroma) the supplied type is used as-is.
-        if (modeCdf is not null && plane == 0)
+        // The luma transform type is coded after txb_skip: an inter block reads it from the inter
+        // transform-type sets (supplied callback); an intra block reads it from the intra sets. Chroma
+        // and 64x64 transforms use the supplied type as-is.
+        if (plane == 0)
         {
-            transformType = ReadIntraTransformType(decoder, modeCdf, transformSize, intraLumaMode, reducedTransformSet);
+            if (interTransformTypeReader is not null)
+            {
+                transformType = interTransformTypeReader(transformSize);
+            }
+            else if (modeCdf is not null)
+            {
+                transformType = ReadIntraTransformType(decoder, modeCdf, transformSize, intraLumaMode, reducedTransformSet);
+            }
         }
 
         decodedType = transformType;
