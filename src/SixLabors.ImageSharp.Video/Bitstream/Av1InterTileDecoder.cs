@@ -53,11 +53,6 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             throw new NotSupportedException("The variable-transform (TX_MODE_SELECT) inter path is not supported yet.");
         }
 
-        if (frameHeader.InterpolationFilter == 4)
-        {
-            throw new NotSupportedException("Switchable interpolation filters are not supported yet.");
-        }
-
         if (frameHeader.ReferenceSelect)
         {
             throw new NotSupportedException("Compound (two-reference) prediction is not supported yet.");
@@ -78,9 +73,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             rows4,
             allowHighPrecisionMv: frameHeader.AllowHighPrecisionMv,
             forceIntegerMv: false,
-            filterSwitchable: false,
-            dualFilter: false,
-            fixedFilter: frameHeader.InterpolationFilter,
+            filterSwitchable: frameHeader.InterpolationFilter == 4,
+            dualFilter: sequenceHeader.EnableDualFilter,
+            fixedFilter: frameHeader.InterpolationFilter == 4 ? 0 : frameHeader.InterpolationFilter,
             globalMv: default,
             globalMvSubstitution: false,
             globalMvIsTranslation: false,
