@@ -1110,73 +1110,95 @@ internal class Av1TileDecoder
         int txHeight4 = tx.GetHeight() >> 2;
         bool blockEqualsTx = blockWidth4 == txWidth4 && blockHeight4 == txHeight4;
 
-        int[] coefficientLevels = new int[Math.Min(tx.GetWidth(), 32) * Math.Min(tx.GetHeight(), 32)];
-
         for (int dy = 0; dy < blockHeight4; dy += txHeight4)
         {
             for (int dx = 0; dx < blockWidth4; dx += txWidth4)
             {
-                int txRow = miRow + dy;
-                int txCol = miCol + dx;
-                int x = txCol * 4;
-                int y = txRow * 4;
-                if (x >= plane.Width || y >= plane.Height)
-                {
-                    continue;
-                }
-
-                this.RecordTxEdges(planeIndex, txCol, txRow, txWidth4, txHeight4);
-
-                int skipContext = planeIndex == 0
-                    ? LumaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, blockEqualsTx)
-                    : this.ChromaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, bsize, tx);
-                int dcSignContext = DcSignContext(levels, txCol, txRow, txWidth4, txHeight4);
-
-                Array.Clear(coefficientLevels);
-                int eob;
-                Av1TransformType txType;
-                if (skip)
-                {
-                    // A skipped block codes no coefficients: the residual is zero and the all-zero flag
-                    // is implied rather than read.
-                    eob = Av1CoefficientReader.AllZero;
-                    txType = Av1TransformType.DctDct;
-                }
-                else
-                {
-                    eob = Av1CoefficientReader.ReadCoefficients(
-                        this.decoder,
-                        this.coefficientCdf,
-                        tx,
-                        Av1TransformType.DctDct,
-                        planeIndex,
-                        skipContext,
-                        dcSignContext,
-                        coefficientLevels,
-                        planeIndex == 0 ? this.modeCdf : null,
-                        filterIntraMode >= 0 ? FilterModeToYMode[filterIntraMode] : intraMode,
-                        this.frameHeader.ReducedTxSet,
-                        out txType,
-                        planeIndex == 0 ? interTransformTypeReader : null);
-                }
-
-                this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);
-
-                if (planeIndex == 0)
-                {
-                    for (int my = 0; my < txHeight4 && txRow + my < this.miRows; my++)
-                    {
-                        for (int mx = 0; mx < txWidth4 && txCol + mx < this.miColumns; mx++)
-                        {
-                            this.lumaDecoded[((txRow + my) * this.miColumns) + txCol + mx] = true;
-                        }
-                    }
-                }
-
-                byte resContext = LevelContextByte(coefficientLevels, eob);
-                levels.Write(txCol, txRow, txWidth4, txHeight4, resContext);
+                this.DecodeTransformBlock(
+                    plane, levels, planeIndex, miCol + dx, miRow + dy, bsize, tx, blockEqualsTx,
+                    intraMode, angleDelta, filterIntraMode, cflAlpha, skip, interTransformTypeReader);
             }
         }
+    }
+
+    // Decodes a single transform block at the given 4x4 position: records deblock edges, reads the
+    // coefficient skip/level/dc-sign syntax (or treats it as all-zero for a skipped block), reconstructs
+    // prediction + residual, and updates the decoded and coefficient-level neighbour contexts.
+    private protected void DecodeTransformBlock(
+        Av1Plane plane,
+        LevelContext levels,
+        int planeIndex,
+        int txCol,
+        int txRow,
+        Av1BlockSize bsize,
+        Av1TransformSize tx,
+        bool blockEqualsTx,
+        int intraMode,
+        int angleDelta,
+        int filterIntraMode,
+        int cflAlpha,
+        bool skip,
+        Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader)
+    {
+        int txWidth4 = tx.GetWidth() >> 2;
+        int txHeight4 = tx.GetHeight() >> 2;
+        int x = txCol * 4;
+        int y = txRow * 4;
+        if (x >= plane.Width || y >= plane.Height)
+        {
+            return;
+        }
+
+        this.RecordTxEdges(planeIndex, txCol, txRow, txWidth4, txHeight4);
+
+        int skipContext = planeIndex == 0
+            ? LumaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, blockEqualsTx)
+            : this.ChromaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, bsize, tx);
+        int dcSignContext = DcSignContext(levels, txCol, txRow, txWidth4, txHeight4);
+
+        int[] coefficientLevels = new int[Math.Min(tx.GetWidth(), 32) * Math.Min(tx.GetHeight(), 32)];
+        int eob;
+        Av1TransformType txType;
+        if (skip)
+        {
+            // A skipped block codes no coefficients: the residual is zero and the all-zero flag is
+            // implied rather than read.
+            eob = Av1CoefficientReader.AllZero;
+            txType = Av1TransformType.DctDct;
+        }
+        else
+        {
+            eob = Av1CoefficientReader.ReadCoefficients(
+                this.decoder,
+                this.coefficientCdf,
+                tx,
+                Av1TransformType.DctDct,
+                planeIndex,
+                skipContext,
+                dcSignContext,
+                coefficientLevels,
+                planeIndex == 0 ? this.modeCdf : null,
+                filterIntraMode >= 0 ? FilterModeToYMode[filterIntraMode] : intraMode,
+                this.frameHeader.ReducedTxSet,
+                out txType,
+                planeIndex == 0 ? interTransformTypeReader : null);
+        }
+
+        this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);
+
+        if (planeIndex == 0)
+        {
+            for (int my = 0; my < txHeight4 && txRow + my < this.miRows; my++)
+            {
+                for (int mx = 0; mx < txWidth4 && txCol + mx < this.miColumns; mx++)
+                {
+                    this.lumaDecoded[((txRow + my) * this.miColumns) + txCol + mx] = true;
+                }
+            }
+        }
+
+        byte resContext = LevelContextByte(coefficientLevels, eob);
+        levels.Write(txCol, txRow, txWidth4, txHeight4, resContext);
     }
 
     private protected void Reconstruct(Av1Plane plane, int x, int y, Av1TransformSize tx, Av1TransformType txType, int[] levels, int eob, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha)
