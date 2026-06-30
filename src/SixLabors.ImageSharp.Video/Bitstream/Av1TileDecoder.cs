@@ -89,8 +89,8 @@ internal class Av1TileDecoder
     private readonly byte[] leftMode;
     private readonly byte[] aboveUvMode;
     private readonly byte[] leftUvMode;
-    private readonly sbyte[] aboveTx;
-    private readonly sbyte[] leftTx;
+    private protected readonly sbyte[] aboveTx;
+    private protected readonly sbyte[] leftTx;
 
     // Whether the current block's above/left neighbour uses a smooth prediction mode, which reduces the
     // directional-prediction edge-filter strength (dav1d's ANGLE_SMOOTH_EDGE_FLAG / is_sm). Computed per
@@ -234,6 +234,7 @@ internal class Av1TileDecoder
             this.lumaLevels.ClearLeft();
             this.chromaULevels.ClearLeft();
             this.chromaVLevels.ClearLeft();
+            this.OnSuperblockRowStart();
 
             for (int col = 0; col < this.frameHeader.ModeInfoColumns; col += superblock4)
             {
@@ -1601,6 +1602,13 @@ internal class Av1TileDecoder
         return (byte)(Math.Min(culLevel, 63) | dcSignLevel);
     }
 
+    // Called at the start of each superblock row, after the shared left-context arrays have been reset.
+    // Subclasses override this to reset their own per-row left contexts (e.g. the inter variable-transform
+    // size context, which dav1d resets to TX_64X64 once per superblock row).
+    private protected virtual void OnSuperblockRowStart()
+    {
+    }
+
     private protected static void Fill(byte[] context, int start, int count, byte value)
     {
         for (int i = 0; i < count && start + i < context.Length; i++)
@@ -1609,7 +1617,7 @@ internal class Av1TileDecoder
         }
     }
 
-    private static void Fill(sbyte[] context, int start, int count, sbyte value)
+    private protected static void Fill(sbyte[] context, int start, int count, sbyte value)
     {
         for (int i = 0; i < count && start + i < context.Length; i++)
         {
