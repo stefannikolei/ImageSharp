@@ -170,13 +170,15 @@ internal static class Av1DecoderCore
         {
             Av1BitStreamReader reader = new(payload);
             frameHeader = ObuFrameHeader.ParseInter(ref reader, sequenceHeader, referenceStore.GetOrderHints());
-            Av1ReferenceFrame? reference = referenceStore[frameHeader.ReferenceFrameIndices[0]];
-            if (reference is null)
+
+            // Resolve each reference name (LAST .. ALTREF) to its frame via the header's slot mapping.
+            Av1ReferenceFrame?[] references = new Av1ReferenceFrame?[7];
+            for (int i = 0; i < references.Length; i++)
             {
-                throw new InvalidDataException("Inter frame references an empty reference slot.");
+                references[i] = referenceStore[frameHeader.ReferenceFrameIndices[i]];
             }
 
-            tileDecoder = new Av1InterTileDecoder(sequenceHeader, frameHeader, reference);
+            tileDecoder = new Av1InterTileDecoder(sequenceHeader, frameHeader, references);
         }
 
         int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;

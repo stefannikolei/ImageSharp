@@ -20,9 +20,8 @@ namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 /// </summary>
 internal sealed class Av1InterTileDecoder : Av1TileDecoder
 {
-    private readonly Av1Plane referenceLuma;
-    private readonly Av1Plane? referenceChromaU;
-    private readonly Av1Plane? referenceChromaV;
+    // The reference frames, indexed by the zero-based reference name (LAST .. ALTREF).
+    private readonly Av1ReferenceFrame?[] references;
 
     private readonly Av1InterModeCdfContext interCdf = Av1InterModeCdfContext.CreateDefault();
     private readonly Av1MotionVectorCdfContext mvCdf = Av1MotionVectorCdfContext.CreateDefault();
@@ -49,11 +48,21 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // substitutes the motion-compensated samples instead of an intra prediction.
     private bool currentBlockIsInter;
 
+    /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class with a single
+    /// reference frame used for every reference name (two-frame clips, where all slots hold the key frame).</summary>
+    /// <param name="sequenceHeader">The sequence header.</param>
+    /// <param name="frameHeader">The inter frame header.</param>
+    /// <param name="reference">The reference frame used for every reference name.</param>
+    public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame reference)
+        : this(sequenceHeader, frameHeader, CreateUniformReferences(reference))
+    {
+    }
+
     /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class.</summary>
     /// <param name="sequenceHeader">The sequence header.</param>
     /// <param name="frameHeader">The inter frame header.</param>
-    /// <param name="reference">The single reference frame (used for every reference slot in this subset).</param>
-    public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame reference)
+    /// <param name="references">The reference frames, indexed by the zero-based reference name (LAST .. ALTREF).</param>
+    public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame?[] references)
         : base(sequenceHeader, frameHeader)
     {
         if (frameHeader.PrimaryRefFrame != 7)
@@ -71,9 +80,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             throw new NotSupportedException("Compound (two-reference) prediction is not supported yet.");
         }
 
-        this.referenceLuma = reference.Luma;
-        this.referenceChromaU = reference.ChromaU;
-        this.referenceChromaV = reference.ChromaV;
+        this.references = references;
         this.interpolationFilter = frameHeader.InterpolationFilter;
 
         int columns4 = frameHeader.ModeInfoColumns;
@@ -99,6 +106,17 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             globalMvIsTranslation: false,
             signBias: new int[7]);
     }
+
+    private static Av1ReferenceFrame?[] CreateUniformReferences(Av1ReferenceFrame reference)
+    {
+        Av1ReferenceFrame?[] references = new Av1ReferenceFrame?[7];
+        Array.Fill(references, reference);
+        return references;
+    }
+
+    // Resolves a zero-based reference name (LAST .. ALTREF) to its frame, rejecting empty slots.
+    private Av1ReferenceFrame GetReference(int reference)
+        => this.references[reference] ?? throw new InvalidDataException($"Inter block references the empty reference slot {reference}.");
 
     private protected override void OnSuperblockRowStart() => Array.Fill(this.interLeftTx, (sbyte)4);
 
@@ -185,12 +203,13 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             throw new NotSupportedException("OBMC and warped motion compensation are not supported yet.");
         }
 
-        // Motion-compensate every plane from the reference frame into the output planes.
-        this.MotionCompensate(this.luma, this.referenceLuma, row, col, width4, height4, info, 0, 0);
+        // Motion-compensate every plane from the block's reference frame into the output planes.
+        Av1ReferenceFrame blockReference = this.GetReference(info.Reference);
+        this.MotionCompensate(this.luma, blockReference.Luma, row, col, width4, height4, info, 0, 0);
         bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
                          (height4 > this.subsamplingY || (row & 1) != 0);
-        if (hasChroma && this.referenceChromaU is not null && this.referenceChromaV is not null)
+        if (hasChroma && blockReference.ChromaU is not null && blockReference.ChromaV is not null)
         {
             this.MotionCompensateChroma(row, col, width4, height4, info, leftNeighbour, aboveNeighbour);
         }
@@ -272,7 +291,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             int alignedRow = row & ~this.subsamplingY;
             int mcWidth4 = subWidth ? width4 << 1 : width4;
             int mcHeight4 = subHeight ? height4 << 1 : height4;
-            this.ChromaMcPiece(alignedCol, alignedRow, mcWidth4, mcHeight4, info.MotionVector, info.Filter0, info.Filter1, baseX, baseY);
+            this.ChromaMcPiece(info.Reference, alignedCol, alignedRow, mcWidth4, mcHeight4, info.MotionVector, info.Filter0, info.Filter1, baseX, baseY);
             return;
         }
 
@@ -282,7 +301,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         {
             Av1RefMvsBlock topLeft = this.grid[row - 1, col - 1];
             (int f0, int f1) = this.TopLeft4x4Filter;
-            this.ChromaMcPiece(col - 1, row - 1, width4, height4, topLeft.MotionVector0, f0, f1, baseX, baseY);
+            this.ChromaMcPiece(topLeft.Reference0 - 1, col - 1, row - 1, width4, height4, topLeft.MotionVector0, f0, f1, baseX, baseY);
             hOff = 2;
             vOff = 2;
         }
@@ -290,27 +309,28 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         if (subWidth)
         {
             Av1RefMvsBlock left = this.grid[row, col - 1];
-            this.ChromaMcPiece(col - 1, row, width4, height4, left.MotionVector0, leftNeighbour.Filter0, leftNeighbour.Filter1, baseX, baseY + vOff);
+            this.ChromaMcPiece(left.Reference0 - 1, col - 1, row, width4, height4, left.MotionVector0, leftNeighbour.Filter0, leftNeighbour.Filter1, baseX, baseY + vOff);
             hOff = 2;
         }
 
         if (subHeight)
         {
             Av1RefMvsBlock top = this.grid[row - 1, col];
-            this.ChromaMcPiece(col, row - 1, width4, height4, top.MotionVector0, aboveNeighbour.Filter0, aboveNeighbour.Filter1, baseX + hOff, baseY);
+            this.ChromaMcPiece(top.Reference0 - 1, col, row - 1, width4, height4, top.MotionVector0, aboveNeighbour.Filter0, aboveNeighbour.Filter1, baseX + hOff, baseY);
             vOff = 2;
         }
 
-        this.ChromaMcPiece(col, row, width4, height4, info.MotionVector, info.Filter0, info.Filter1, baseX + hOff, baseY + vOff);
+        this.ChromaMcPiece(info.Reference, col, row, width4, height4, info.MotionVector, info.Filter0, info.Filter1, baseX + hOff, baseY + vOff);
     }
 
-    // Motion-compensates one chroma piece of both planes: the source position derives from the piece's
-    // own luma 4x4 position and motion vector, the destination is an explicit chroma-plane position (for
-    // sub-8x8 pieces the quadrant inside the shared chroma unit).
-    private void ChromaMcPiece(int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)
+    // Motion-compensates one chroma piece of both planes from the piece's own reference frame: the
+    // source position derives from the piece's luma 4x4 position and motion vector, the destination is
+    // an explicit chroma-plane position (for sub-8x8 pieces the quadrant inside the shared chroma unit).
+    private void ChromaMcPiece(int reference, int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)
     {
-        this.ChromaMcPlane(this.chromaU, this.referenceChromaU!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
-        this.ChromaMcPlane(this.chromaV, this.referenceChromaV!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
+        Av1ReferenceFrame referenceFrame = this.GetReference(reference);
+        this.ChromaMcPlane(this.chromaU, referenceFrame.ChromaU!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
+        this.ChromaMcPlane(this.chromaV, referenceFrame.ChromaV!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
     }
 
     private void ChromaMcPlane(Av1Plane destination, Av1Plane reference, int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)
