@@ -35,6 +35,10 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // the size in 4x4 units) and is reset to TX_64X64 (category 4) at the frame top and each superblock row.
     private readonly sbyte[] interAboveTx;
     private readonly sbyte[] interLeftTx;
+
+    // The per-4x4 luma transform type, recorded while the luma residual is decoded and read back when an
+    // inter block's chroma transform type is inferred from the co-located luma type (dav1d's txtp_map).
+    private readonly Av1TransformType[] lumaTransformTypes;
     private readonly Av1MotionVectorGrid grid;
     private readonly Av1InterNeighbourContext interNeighbours;
     private readonly Av1InterModeInfoOptions options;
@@ -77,6 +81,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         this.interLeftTx = new sbyte[rows4];
         Array.Fill(this.interAboveTx, (sbyte)4);
         Array.Fill(this.interLeftTx, (sbyte)4);
+        this.lumaTransformTypes = new Av1TransformType[columns4 * rows4];
         this.grid = new Av1MotionVectorGrid(columns4, rows4);
         this.interNeighbours = new Av1InterNeighbourContext(columns4, rows4);
         this.options = new Av1InterModeInfoOptions(
@@ -96,7 +101,32 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
 
     private protected override void OnSuperblockRowStart() => Array.Fill(this.interLeftTx, (sbyte)4);
 
-    private protected override void DecodeBlock(int row, int col, Av1BlockSize bsize)
+    private protected override void RecordLumaTransformType(int txCol, int txRow, int txWidth4, int txHeight4, Av1TransformType txType)
+    {
+        for (int my = 0; my < txHeight4 && txRow + my < this.miRows; my++)
+        {
+            int rowBase = (txRow + my) * this.miColumns;
+            for (int mx = 0; mx < txWidth4 && txCol + mx < this.miColumns; mx++)
+            {
+                this.lumaTransformTypes[rowBase + txCol + mx] = txType;
+            }
+        }
+    }
+
+    // Infers an inter chroma transform block's type from the co-located luma type (dav1d's get_uv_inter_txtp).
+    // The luma position is the block's own (untruncated) row/col plus the chroma transform's offset from
+    // the block's chroma origin, scaled back to luma units: for a block at an odd row/column (the shared-
+    // chroma half of a sub-8x8 partition) simply left-shifting the chroma-plane coordinate would recover
+    // the wrong (rounded-down) luma row/column, since right-shift-then-left-shift loses the odd bit.
+    private Av1TransformType InterChromaTransformType(int row, int col, int chromaRow, int chromaCol, Av1TransformSize chromaTx, int chromaTxCol, int chromaTxRow)
+    {
+        int lumaCol = col + ((chromaTxCol - chromaCol) << this.subsamplingX);
+        int lumaRow = row + ((chromaTxRow - chromaRow) << this.subsamplingY);
+        Av1TransformType lumaType = this.lumaTransformTypes[(lumaRow * this.miColumns) + lumaCol];
+        return Av1ChromaTransformType.FromInter(chromaTx, lumaType);
+    }
+
+    private protected override void DecodeBlock(int row, int col, Av1BlockSize bsize, bool topRightAvailable)
     {
         int width4 = bsize.GetWidth4();
         int height4 = bsize.GetHeight4();
@@ -133,7 +163,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             this.options,
             haveTop,
             haveLeft,
-            topRightAvailable: false,
+            topRightAvailable,
             readMotionMode,
             allowWarp: false,
             skipMode: false);
@@ -178,8 +208,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
             int chromaRow = row >> this.subsamplingY;
             int chromaCol = col >> this.subsamplingX;
-            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip);
-            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip);
+            Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => this.InterChromaTransformType(row, col, chromaRow, chromaCol, t, tc, tr);
+            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip, chromaTransformTypeProvider: ChromaTxtp);
+            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip, chromaTransformTypeProvider: ChromaTxtp);
         }
 
         this.currentBlockIsInter = false;

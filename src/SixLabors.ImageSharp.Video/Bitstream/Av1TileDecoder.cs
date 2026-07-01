@@ -239,7 +239,7 @@ internal class Av1TileDecoder
             for (int col = 0; col < this.frameHeader.ModeInfoColumns; col += superblock4)
             {
                 this.ReadRestorationUnits(row, col);
-                this.DecodePartition(row, col, superblock);
+                this.DecodePartition(row, col, superblock, topRightAvailable: true);
             }
         }
 
@@ -810,7 +810,14 @@ internal class Av1TileDecoder
         return src[(cy * stride) + cx];
     }
 
-    private void DecodePartition(int row, int col, Av1BlockSize bsize)
+    // Propagates the "top-right neighbour already decoded" flag through the partition recursion, a port of
+    // dav1d's precomputed intra_edge_tree (restricted to the single I444 top-has-right bit, the only one
+    // any consumer currently needs). The rule is uniform across every partition depth: a quad split's
+    // top-left and bottom-left children always have it, the bottom-right child never does, and the
+    // top-right child (and any single "wide" side of a 2-way split on the same edge) inherits the parent's
+    // value unchanged. A block gains it unconditionally the moment its right edge sits at a horizontal
+    // split boundary (the classic "left half of a vertical split" / "first strip of a 4-way split" case).
+    private void DecodePartition(int row, int col, Av1BlockSize bsize, bool topRightAvailable)
     {
         if (row >= this.frameHeader.ModeInfoRows || col >= this.frameHeader.ModeInfoColumns)
         {
@@ -841,61 +848,61 @@ internal class Av1TileDecoder
         switch (partition)
         {
             case Av1Partition.None:
-                this.DecodeBlock(row, col, bsize);
+                this.DecodeBlock(row, col, bsize, topRightAvailable);
                 break;
             case Av1Partition.Split:
                 if (bsize == Av1BlockSize.Block8x8)
                 {
                     // The four 4x4 leaves are decoded directly; dav1d does not recurse to a 4x4 level.
-                    this.DecodeBlock(row, col, sub);
-                    this.DecodeBlock(row, col + half, sub);
-                    this.DecodeBlock(row + half, col, sub);
-                    this.DecodeBlock(row + half, col + half, sub);
+                    this.DecodeBlock(row, col, sub, topRightAvailable: true);
+                    this.DecodeBlock(row, col + half, sub, topRightAvailable);
+                    this.DecodeBlock(row + half, col, sub, topRightAvailable: true);
+                    this.DecodeBlock(row + half, col + half, sub, topRightAvailable: false);
                 }
                 else
                 {
-                    this.DecodePartition(row, col, sub);
-                    this.DecodePartition(row, col + half, sub);
-                    this.DecodePartition(row + half, col, sub);
-                    this.DecodePartition(row + half, col + half, sub);
+                    this.DecodePartition(row, col, sub, topRightAvailable: true);
+                    this.DecodePartition(row, col + half, sub, topRightAvailable);
+                    this.DecodePartition(row + half, col, sub, topRightAvailable: true);
+                    this.DecodePartition(row + half, col + half, sub, topRightAvailable: false);
                 }
 
                 break;
             case Av1Partition.Horizontal:
-                this.DecodeBlock(row, col, horz);
+                this.DecodeBlock(row, col, horz, topRightAvailable);
                 if (hasRows)
                 {
-                    this.DecodeBlock(row + half, col, horz);
+                    this.DecodeBlock(row + half, col, horz, topRightAvailable: false);
                 }
 
                 break;
             case Av1Partition.Vertical:
-                this.DecodeBlock(row, col, vert);
+                this.DecodeBlock(row, col, vert, topRightAvailable: true);
                 if (hasCols)
                 {
-                    this.DecodeBlock(row, col + half, vert);
+                    this.DecodeBlock(row, col + half, vert, topRightAvailable);
                 }
 
                 break;
             case Av1Partition.HorizontalA: // split top, wide bottom.
-                this.DecodeBlock(row, col, sub);
-                this.DecodeBlock(row, col + half, sub);
-                this.DecodeBlock(row + half, col, horz);
+                this.DecodeBlock(row, col, sub, topRightAvailable: true);
+                this.DecodeBlock(row, col + half, sub, topRightAvailable);
+                this.DecodeBlock(row + half, col, horz, topRightAvailable: false);
                 break;
             case Av1Partition.HorizontalB: // wide top, split bottom.
-                this.DecodeBlock(row, col, horz);
-                this.DecodeBlock(row + half, col, sub);
-                this.DecodeBlock(row + half, col + half, sub);
+                this.DecodeBlock(row, col, horz, topRightAvailable);
+                this.DecodeBlock(row + half, col, sub, topRightAvailable: true);
+                this.DecodeBlock(row + half, col + half, sub, topRightAvailable: false);
                 break;
             case Av1Partition.VerticalA: // split left, tall right.
-                this.DecodeBlock(row, col, sub);
-                this.DecodeBlock(row + half, col, sub);
-                this.DecodeBlock(row, col + half, vert);
+                this.DecodeBlock(row, col, sub, topRightAvailable: true);
+                this.DecodeBlock(row + half, col, sub, topRightAvailable: false);
+                this.DecodeBlock(row, col + half, vert, topRightAvailable);
                 break;
             case Av1Partition.VerticalB: // tall left, split right.
-                this.DecodeBlock(row, col, vert);
-                this.DecodeBlock(row, col + half, sub);
-                this.DecodeBlock(row + half, col + half, sub);
+                this.DecodeBlock(row, col, vert, topRightAvailable: true);
+                this.DecodeBlock(row, col + half, sub, topRightAvailable);
+                this.DecodeBlock(row + half, col + half, sub, topRightAvailable: false);
                 break;
             case Av1Partition.Horizontal4:
                 Av1BlockSize h4 = Av1BlockSizeExtensions.FromDimensions(side, quarter);
@@ -904,7 +911,7 @@ internal class Av1TileDecoder
                     int r = row + (i * quarter);
                     if (r < this.frameHeader.ModeInfoRows)
                     {
-                        this.DecodeBlock(r, col, h4);
+                        this.DecodeBlock(r, col, h4, topRightAvailable: i == 0 && topRightAvailable);
                     }
                 }
 
@@ -916,7 +923,7 @@ internal class Av1TileDecoder
                     int c = col + (i * quarter);
                     if (c < this.frameHeader.ModeInfoColumns)
                     {
-                        this.DecodeBlock(row, c, v4);
+                        this.DecodeBlock(row, c, v4, topRightAvailable: i < 3 || topRightAvailable);
                     }
                 }
 
@@ -992,7 +999,7 @@ internal class Av1TileDecoder
         return skip;
     }
 
-    private protected virtual void DecodeBlock(int row, int col, Av1BlockSize bsize)
+    private protected virtual void DecodeBlock(int row, int col, Av1BlockSize bsize, bool topRightAvailable)
     {
         int width4 = bsize.GetWidth4();
         int height4 = bsize.GetHeight4();
@@ -1000,10 +1007,23 @@ internal class Av1TileDecoder
         // skip flag, plus the shared cdef-index and non-skip recording.
         int skip = this.ReadSkipFlag(row, col, width4, height4);
 
-        // luma intra mode.
+        // luma intra mode (key-frame path: coded with the above/left neighbour-mode context).
         int aboveModeContext = IntraModeContext[this.aboveMode[col]];
         int leftModeContext = IntraModeContext[this.leftMode[row]];
         int yMode = this.decoder.ReadSymbol(this.modeCdf.KeyFrameYMode[aboveModeContext][leftModeContext]);
+
+        this.DecodeIntraBlockBody(row, col, bsize, skip, yMode);
+    }
+
+    // Decodes the body of an intra block once its luma mode is known: the luma angle delta, chroma mode,
+    // filter-intra, transform size, the luma and chroma residual + reconstruction, and the neighbour-context
+    // updates. Shared by the key-frame path and the intra-block-in-inter-frame path (which read the luma
+    // mode differently).
+    private protected void DecodeIntraBlockBody(int row, int col, Av1BlockSize bsize, int skip, int yMode)
+    {
+        int width4 = bsize.GetWidth4();
+        int height4 = bsize.GetHeight4();
+
         EnsureSupportedMode(yMode);
         int yAngleDelta = this.ReadAngleDelta(yMode, bsize);
 
@@ -1060,8 +1080,10 @@ internal class Av1TileDecoder
             Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
             int chromaRow = row >> this.subsamplingY;
             int chromaCol = col >> this.subsamplingX;
-            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1, cflAlphaU);
-            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1, cflAlphaV);
+            int uvModeForTxtp = uvMode;
+            Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => Av1ChromaTransformType.FromIntra(t, uvModeForTxtp);
+            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1, cflAlphaU, chromaTransformTypeProvider: ChromaTxtp);
+            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1, cflAlphaV, chromaTransformTypeProvider: ChromaTxtp);
         }
 
         // record block-level neighbour contexts.
@@ -1103,7 +1125,7 @@ internal class Av1TileDecoder
         return tx;
     }
 
-    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, bool skip = false, Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader = null)
+    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, bool skip = false, Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader = null, Func<Av1TransformSize, int, int, Av1TransformType>? chromaTransformTypeProvider = null)
     {
         int blockWidth4 = planeIndex == 0 ? bsize.GetWidth4() : (bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX;
         int blockHeight4 = planeIndex == 0 ? bsize.GetHeight4() : (bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY;
@@ -1117,7 +1139,7 @@ internal class Av1TileDecoder
             {
                 this.DecodeTransformBlock(
                     plane, levels, planeIndex, miCol + dx, miRow + dy, bsize, tx, blockEqualsTx,
-                    intraMode, angleDelta, filterIntraMode, cflAlpha, skip, interTransformTypeReader);
+                    intraMode, angleDelta, filterIntraMode, cflAlpha, skip, interTransformTypeReader, chromaTransformTypeProvider);
             }
         }
     }
@@ -1139,7 +1161,8 @@ internal class Av1TileDecoder
         int filterIntraMode,
         int cflAlpha,
         bool skip,
-        Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader)
+        Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader,
+        Func<Av1TransformSize, int, int, Av1TransformType>? chromaTransformTypeProvider = null)
     {
         int txWidth4 = tx.GetWidth() >> 2;
         int txHeight4 = tx.GetHeight() >> 2;
@@ -1157,6 +1180,14 @@ internal class Av1TileDecoder
             : this.ChromaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, bsize, tx);
         int dcSignContext = DcSignContext(levels, txCol, txRow, txWidth4, txHeight4);
 
+        // Chroma never codes its transform type: it is derived (from the chroma mode for an intra block,
+        // or the co-located luma type for an inter block). Luma reads it inside ReadCoefficients.
+        Av1TransformType chromaType = Av1TransformType.DctDct;
+        if (planeIndex != 0 && chromaTransformTypeProvider is not null)
+        {
+            chromaType = chromaTransformTypeProvider(tx, txCol, txRow);
+        }
+
         int[] coefficientLevels = new int[Math.Min(tx.GetWidth(), 32) * Math.Min(tx.GetHeight(), 32)];
         int eob;
         Av1TransformType txType;
@@ -1173,7 +1204,7 @@ internal class Av1TileDecoder
                 this.decoder,
                 this.coefficientCdf,
                 tx,
-                Av1TransformType.DctDct,
+                chromaType,
                 planeIndex,
                 skipContext,
                 dcSignContext,
@@ -1183,6 +1214,11 @@ internal class Av1TileDecoder
                 this.frameHeader.ReducedTxSet,
                 out txType,
                 planeIndex == 0 ? interTransformTypeReader : null);
+        }
+
+        if (planeIndex == 0)
+        {
+            this.RecordLumaTransformType(txCol, txRow, txWidth4, txHeight4, txType);
         }
 
         this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);
@@ -1606,6 +1642,12 @@ internal class Av1TileDecoder
     // Subclasses override this to reset their own per-row left contexts (e.g. the inter variable-transform
     // size context, which dav1d resets to TX_64X64 once per superblock row).
     private protected virtual void OnSuperblockRowStart()
+    {
+    }
+
+    // Called after each luma transform block's transform type is known. The inter decoder overrides this
+    // to record the type into its per-4x4 map, from which co-located chroma transform types are inferred.
+    private protected virtual void RecordLumaTransformType(int txCol, int txRow, int txWidth4, int txHeight4, Av1TransformType txType)
     {
     }
 
