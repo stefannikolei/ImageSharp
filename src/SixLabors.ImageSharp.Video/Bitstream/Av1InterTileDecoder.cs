@@ -12,10 +12,11 @@ namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 /// flag and is-inter flag; inter blocks then decode the reference, motion vector and filters
 /// (<see cref="Av1InterModeInfoDecoder"/>), motion-compensate from the reference frame
 /// (<see cref="Av1InterPredictor"/>) and add the residual through the shared transform-block loop, which
-/// supports both the uniform transform mode and the <c>TX_MODE_SELECT</c> variable-transform tree. The
-/// implemented subset is single-reference, error-resilient frames (default CDFs, no temporal motion
-/// vectors) with translation-only motion; compound prediction, warped/overlapped motion and intra blocks
-/// inside inter frames raise <see cref="NotSupportedException"/>.
+/// supports both the uniform transform mode and the <c>TX_MODE_SELECT</c> variable-transform tree.
+/// Intra blocks inside the inter frame read their luma mode from the inter-frame y_mode CDF and reuse
+/// the shared intra body. The implemented subset is single-reference, error-resilient frames (default
+/// CDFs, no temporal motion vectors) with translation-only motion; compound prediction and
+/// warped/overlapped motion raise <see cref="NotSupportedException"/>.
 /// </summary>
 internal sealed class Av1InterTileDecoder : Av1TileDecoder
 {
@@ -140,7 +141,13 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         bool isInter = Av1IsInterReader.ReadIsInter(this.decoder, this.interCdf, intraContext);
         if (!isInter)
         {
-            throw new NotSupportedException("Intra blocks inside inter frames are not supported yet.");
+            // An intra block inside an inter frame: the luma mode is read from the inter-frame y_mode
+            // CDF (indexed only by a block-size group, no neighbour-mode context) rather than the
+            // key-frame CDF; the rest of the intra body is shared with the key-frame path.
+            int sizeGroup = Math.Min(3, System.Numerics.BitOperations.Log2((uint)Math.Min(width4, height4)));
+            int yMode = this.decoder.ReadSymbol(this.modeCdf.YMode[sizeGroup]);
+            this.DecodeIntraBlockBody(row, col, bsize, skip, yMode);
+            return;
         }
 
         // Motion mode is coded for blocks at least 8x8 that have an overlappable (inter) neighbour. Warped
@@ -148,6 +155,11 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         bool readMotionMode = this.frameHeader.IsMotionModeSwitchable
             && Math.Min(width4, height4) >= 2
             && this.HasOverlappableNeighbour(row, col, width4, height4, haveTop, haveLeft);
+
+        // The sub-8x8 chroma prediction needs the left and top neighbours' interpolation filters; capture
+        // them before the mode-info decode overwrites the neighbour contexts with this block's own values.
+        Av1ReferenceNeighbour leftNeighbour = this.interNeighbours.GetLeft(row);
+        Av1ReferenceNeighbour aboveNeighbour = this.interNeighbours.GetAbove(col);
 
         Av1InterBlockInfo info = Av1InterModeInfoDecoder.Decode(
             this.decoder,
@@ -180,8 +192,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                          (height4 > this.subsamplingY || (row & 1) != 0);
         if (hasChroma && this.referenceChromaU is not null && this.referenceChromaV is not null)
         {
-            this.MotionCompensate(this.chromaU, this.referenceChromaU, row, col, width4, height4, info, this.subsamplingX, this.subsamplingY);
-            this.MotionCompensate(this.chromaV, this.referenceChromaV, row, col, width4, height4, info, this.subsamplingX, this.subsamplingY);
+            this.MotionCompensateChroma(row, col, width4, height4, info, leftNeighbour, aboveNeighbour);
         }
 
         // Add the residual through the shared transform-block loop, substituting the motion-compensated
@@ -215,9 +226,126 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
 
         this.currentBlockIsInter = false;
 
-        // Record the shared skip neighbour context for the next block's skip flag.
+        // Record the shared skip neighbour context for the next block's skip flag, and the intra-side
+        // contexts (tx_intra with block-dimension categories, mode/uv-mode resets) an inter block
+        // contributes for later intra blocks.
         Fill(this.aboveSkip, col, width4, (byte)skip);
         Fill(this.leftSkip, row, height4, (byte)skip);
+        this.RecordInterBlockIntraContexts(row, col, bsize, hasChroma);
+        this.TopLeft4x4Filter = (info.Filter0, info.Filter1);
+    }
+
+    private protected override (int F0, int F1) TopLeft4x4Filter { get; set; }
+
+    // Motion-compensates the chroma planes of an inter block. Blocks of at least 8x8 luma samples map
+    // 1:1 onto a chroma block. A sub-8x8 block shares its chroma unit with its group neighbours: when
+    // all covering neighbours are themselves inter, each 2x2 chroma quadrant is predicted with the
+    // corresponding luma block's own motion vector and filter (dav1d's is_sub8x8 piecewise path, reading
+    // the neighbours back from the motion-vector grid); if any of them is intra, the whole chroma unit
+    // is instead predicted once, 8x8-aligned, with this block's motion vector.
+    private void MotionCompensateChroma(int row, int col, int width4, int height4, in Av1InterBlockInfo info, in Av1ReferenceNeighbour leftNeighbour, in Av1ReferenceNeighbour aboveNeighbour)
+    {
+        bool subWidth = width4 == this.subsamplingX;
+        bool subHeight = height4 == this.subsamplingY;
+        bool isSub8x8 = subWidth || subHeight;
+        if (subWidth)
+        {
+            isSub8x8 &= this.grid[row, col - 1].Reference0 > 0;
+        }
+
+        if (subHeight)
+        {
+            isSub8x8 &= this.grid[row - 1, col].Reference0 > 0;
+        }
+
+        if (subWidth && subHeight)
+        {
+            isSub8x8 &= this.grid[row - 1, col - 1].Reference0 > 0;
+        }
+
+        int baseX = (col >> this.subsamplingX) * 4;
+        int baseY = (row >> this.subsamplingY) * 4;
+        if (!isSub8x8)
+        {
+            // Predict the whole (8x8-aligned) chroma unit with this block's motion vector.
+            int alignedCol = col & ~this.subsamplingX;
+            int alignedRow = row & ~this.subsamplingY;
+            int mcWidth4 = subWidth ? width4 << 1 : width4;
+            int mcHeight4 = subHeight ? height4 << 1 : height4;
+            this.ChromaMcPiece(alignedCol, alignedRow, mcWidth4, mcHeight4, info.MotionVector, info.Filter0, info.Filter1, baseX, baseY);
+            return;
+        }
+
+        int hOff = 0;
+        int vOff = 0;
+        if (subWidth && subHeight)
+        {
+            Av1RefMvsBlock topLeft = this.grid[row - 1, col - 1];
+            (int f0, int f1) = this.TopLeft4x4Filter;
+            this.ChromaMcPiece(col - 1, row - 1, width4, height4, topLeft.MotionVector0, f0, f1, baseX, baseY);
+            hOff = 2;
+            vOff = 2;
+        }
+
+        if (subWidth)
+        {
+            Av1RefMvsBlock left = this.grid[row, col - 1];
+            this.ChromaMcPiece(col - 1, row, width4, height4, left.MotionVector0, leftNeighbour.Filter0, leftNeighbour.Filter1, baseX, baseY + vOff);
+            hOff = 2;
+        }
+
+        if (subHeight)
+        {
+            Av1RefMvsBlock top = this.grid[row - 1, col];
+            this.ChromaMcPiece(col, row - 1, width4, height4, top.MotionVector0, aboveNeighbour.Filter0, aboveNeighbour.Filter1, baseX + hOff, baseY);
+            vOff = 2;
+        }
+
+        this.ChromaMcPiece(col, row, width4, height4, info.MotionVector, info.Filter0, info.Filter1, baseX + hOff, baseY + vOff);
+    }
+
+    // Motion-compensates one chroma piece of both planes: the source position derives from the piece's
+    // own luma 4x4 position and motion vector, the destination is an explicit chroma-plane position (for
+    // sub-8x8 pieces the quadrant inside the shared chroma unit).
+    private void ChromaMcPiece(int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)
+    {
+        this.ChromaMcPlane(this.chromaU, this.referenceChromaU!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
+        this.ChromaMcPlane(this.chromaV, this.referenceChromaV!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
+    }
+
+    private void ChromaMcPlane(Av1Plane destination, Av1Plane reference, int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)
+        => Av1InterPredictor.Predict(
+            destination.Samples,
+            (dstY * destination.Width) + dstX,
+            destination.Width,
+            reference.Samples,
+            reference.Width,
+            reference.Height,
+            reference.Width,
+            pieceCol,
+            pieceRow,
+            width4,
+            height4,
+            motionVector,
+            filter0,
+            filter1,
+            this.subsamplingX,
+            this.subsamplingY);
+
+    private protected override void OnIntraBlockDecoded(int row, int col, Av1BlockSize bsize, int skip, int yMode, Av1TransformSize lumaTx)
+    {
+        int width4 = bsize.GetWidth4();
+        int height4 = bsize.GetHeight4();
+
+        // An intra block contributes no motion vector or reference; record it as intra in every
+        // inter-specific neighbour context a later inter block reads (dav1d's splat_intraref plus the
+        // shared set_ctx: comp_type=none, ref=-1, filter=unset), and in the inter var-tx size context.
+        const int filterUnset = 3;
+        this.interNeighbours.Write(row, col, width4, height4, isIntra: true, reference0: -1, reference1: -1, isCompound: false, filterUnset, filterUnset, skipMode: false);
+        Av1RefMvsBlock gridBlock = new(default, default, 0, -1, bsize, isNewMv: false, isGlobalMv: false, isIntra: true);
+        this.grid.Fill(row, col, width4, height4, gridBlock);
+        Fill(this.interAboveTx, col, width4, (sbyte)(lumaTx.GetWidthLog2() - 2));
+        Fill(this.interLeftTx, row, height4, (sbyte)(lumaTx.GetHeightLog2() - 2));
     }
 
     private protected override void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, byte[] prediction)

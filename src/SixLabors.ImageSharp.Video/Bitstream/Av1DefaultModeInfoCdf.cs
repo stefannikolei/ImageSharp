@@ -92,6 +92,19 @@ internal static class Av1DefaultModeInfoCdf
         ],
     ];
 
+    /// <summary>
+    /// The inter-frame luma intra-mode CDFs (dav1d <c>m.y_mode</c>), indexed by the block-size group.
+    /// Used when an intra block appears inside an inter frame, where the luma mode is coded without the
+    /// key-frame neighbour-mode context.
+    /// </summary>
+    public static readonly ushort[][] YMode =
+    [
+        [9967, 9279, 8475, 8012, 7167, 6645, 6162, 5350, 4823, 3540, 3083, 2419, 0, 0],
+        [14095, 12923, 10137, 9450, 8818, 8119, 7241, 5404, 4616, 3067, 2784, 1916, 0, 0],
+        [12998, 11789, 9372, 8829, 8527, 8114, 7632, 5695, 4938, 3408, 3038, 2109, 0, 0],
+        [12613, 11467, 9930, 9590, 9507, 9235, 9065, 7964, 7416, 6193, 5752, 4719, 0, 0],
+    ];
+
     /// <summary>The chroma intra-mode CDFs, indexed by cfl-allowed then luma mode.</summary>
     public static readonly ushort[][][] UvMode =
     [

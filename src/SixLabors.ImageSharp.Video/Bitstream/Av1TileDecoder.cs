@@ -854,9 +854,13 @@ internal class Av1TileDecoder
                 if (bsize == Av1BlockSize.Block8x8)
                 {
                     // The four 4x4 leaves are decoded directly; dav1d does not recurse to a 4x4 level.
+                    // The top-left leaf's interpolation filter is saved and restored before the
+                    // bottom-right leaf, whose sub-8x8 chroma prediction needs it (dav1d tl_4x4_filter).
                     this.DecodeBlock(row, col, sub, topRightAvailable: true);
+                    (int F0, int F1) topLeftFilter = this.TopLeft4x4Filter;
                     this.DecodeBlock(row, col + half, sub, topRightAvailable);
                     this.DecodeBlock(row + half, col, sub, topRightAvailable: true);
+                    this.TopLeft4x4Filter = topLeftFilter;
                     this.DecodeBlock(row + half, col + half, sub, topRightAvailable: false);
                 }
                 else
@@ -1098,6 +1102,45 @@ internal class Av1TileDecoder
         }
         Fill(this.aboveTx, col, width4, (sbyte)(lumaTx.GetWidthLog2() - 2));
         Fill(this.leftTx, row, height4, (sbyte)(lumaTx.GetHeightLog2() - 2));
+
+        this.OnIntraBlockDecoded(row, col, bsize, skip, yMode, lumaTx);
+    }
+
+    // Called after an intra block is fully decoded. The inter decoder overrides this to record the
+    // inter-specific neighbour state (intra flag, transform-size context and motion-vector grid) that an
+    // intra block contributes when it appears inside an inter frame.
+    private protected virtual void OnIntraBlockDecoded(int row, int col, Av1BlockSize bsize, int skip, int yMode, Av1TransformSize lumaTx)
+    {
+    }
+
+    // The interpolation filter of the most recently decoded inter block (dav1d's tl_4x4_filter). The
+    // partition recursion saves it after the top-left leaf of an 8x8 split and restores it before the
+    // bottom-right leaf, where the inter decoder's sub-8x8 chroma prediction reads it as the top-left
+    // quadrant's filter. The intra-only base decoder has no such state.
+    private protected virtual (int F0, int F1) TopLeft4x4Filter
+    {
+        get => default;
+        set { }
+    }
+
+    // Records the intra-side neighbour contexts an INTER block contributes, matching dav1d's inter-branch
+    // set_ctx: the tx_intra context takes the block-dimension categories (log2 of width/height in 4x4
+    // units, NOT the transform size), the mode context takes the inter mode (numerically 0..3, never one
+    // of the smooth intra modes, so zero is written) and the chroma-mode context resets to DC_PRED. These
+    // feed the transform-depth context and the smooth-edge filter flags of later intra blocks.
+    private protected void RecordInterBlockIntraContexts(int row, int col, Av1BlockSize bsize, bool hasChroma)
+    {
+        int width4 = bsize.GetWidth4();
+        int height4 = bsize.GetHeight4();
+        Fill(this.aboveTx, col, width4, (sbyte)bsize.GetWidthLog2());
+        Fill(this.leftTx, row, height4, (sbyte)bsize.GetHeightLog2());
+        Fill(this.aboveMode, col, width4, 0);
+        Fill(this.leftMode, row, height4, 0);
+        if (hasChroma)
+        {
+            Fill(this.aboveUvMode, col, width4, 0);
+            Fill(this.leftUvMode, row, height4, 0);
+        }
     }
 
     private Av1TransformSize ReadTransformSize(int row, int col, Av1BlockSize bsize)

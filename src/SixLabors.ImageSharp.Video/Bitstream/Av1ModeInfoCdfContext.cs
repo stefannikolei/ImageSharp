@@ -23,6 +23,9 @@ internal sealed class Av1ModeInfoCdfContext
     /// <summary>Gets the key-frame luma intra-mode CDFs, indexed by above then left mode context.</summary>
     public ushort[][][] KeyFrameYMode { get; private set; } = default!;
 
+    /// <summary>Gets the inter-frame luma intra-mode CDFs, indexed by the block-size group.</summary>
+    public ushort[][] YMode { get; private set; } = default!;
+
     /// <summary>Gets the chroma intra-mode CDFs, indexed by cfl-allowed then luma mode.</summary>
     public ushort[][][] UvMode { get; private set; } = default!;
 
@@ -68,6 +71,7 @@ internal sealed class Av1ModeInfoCdfContext
         Skip = Clone(Av1DefaultModeInfoCdf.Skip),
         Partition = Clone(Av1DefaultModeInfoCdf.Partition),
         KeyFrameYMode = Clone(Av1DefaultModeInfoCdf.KeyFrameYMode),
+        YMode = Clone(Av1DefaultModeInfoCdf.YMode),
         UvMode = Clone(Av1DefaultModeInfoCdf.UvMode),
         UseFilterIntra = Clone(Av1DefaultModeInfoCdf.UseFilterIntra),
         FilterIntraMode = (ushort[])Av1DefaultModeInfoCdf.FilterIntraMode.Clone(),
