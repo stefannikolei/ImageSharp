@@ -69,4 +69,13 @@ internal sealed class Av1InterTransformTypeCdfContext
         Set2 = (ushort[])DefaultSet2.Clone(),
         Set3 = [(ushort[])DefaultSet3[0].Clone(), (ushort[])DefaultSet3[1].Clone(), (ushort[])DefaultSet3[2].Clone(), (ushort[])DefaultSet3[3].Clone()],
     };
+
+    /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
+    /// <returns>An independent copy.</returns>
+    public Av1InterTransformTypeCdfContext Clone() => new()
+    {
+        Set1 = Av1CdfTables.Copy(this.Set1),
+        Set2 = Av1CdfTables.Copy(this.Set2),
+        Set3 = Av1CdfTables.Copy(this.Set3),
+    };
 }

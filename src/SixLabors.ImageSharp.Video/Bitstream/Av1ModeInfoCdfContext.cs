@@ -86,6 +86,28 @@ internal sealed class Av1ModeInfoCdfContext
         RestoreSwitchable = (ushort[])Av1DefaultModeInfoCdf.RestoreSwitchable.Clone(),
     };
 
+    /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
+    /// <returns>An independent copy.</returns>
+    public Av1ModeInfoCdfContext Clone() => new()
+    {
+        Skip = Clone(this.Skip),
+        Partition = Clone(this.Partition),
+        KeyFrameYMode = Clone(this.KeyFrameYMode),
+        YMode = Clone(this.YMode),
+        UvMode = Clone(this.UvMode),
+        UseFilterIntra = Clone(this.UseFilterIntra),
+        FilterIntraMode = (ushort[])this.FilterIntraMode.Clone(),
+        TransformDepth = Clone(this.TransformDepth),
+        TransformTypeIntra1 = Clone(this.TransformTypeIntra1),
+        TransformTypeIntra2 = Clone(this.TransformTypeIntra2),
+        AngleDelta = Clone(this.AngleDelta),
+        CflSign = (ushort[])this.CflSign.Clone(),
+        CflAlpha = Clone(this.CflAlpha),
+        RestoreWiener = (ushort[])this.RestoreWiener.Clone(),
+        RestoreSgrProj = (ushort[])this.RestoreSgrProj.Clone(),
+        RestoreSwitchable = (ushort[])this.RestoreSwitchable.Clone(),
+    };
+
     private static ushort[][] Clone(ushort[][] group)
     {
         ushort[][] result = new ushort[group.Length][];

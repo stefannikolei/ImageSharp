@@ -30,6 +30,14 @@ internal sealed class Av1MotionVectorCdfContext
         Components = [Component.CreateDefault(), Component.CreateDefault()],
     };
 
+    /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
+    /// <returns>An independent copy.</returns>
+    public Av1MotionVectorCdfContext Clone() => new()
+    {
+        Joint = (ushort[])this.Joint.Clone(),
+        Components = [this.Components[0].Clone(), this.Components[1].Clone()],
+    };
+
     /// <summary>
     /// The adaptive CDFs for a single motion-vector component (row or column).
     /// </summary>
@@ -75,6 +83,20 @@ internal sealed class Av1MotionVectorCdfContext
             ClassNFp = (ushort[])Av1DefaultMotionVectorCdf.ClassNFp.Clone(),
             Class0Hp = (ushort[])Av1DefaultMotionVectorCdf.Class0Hp.Clone(),
             ClassNHp = (ushort[])Av1DefaultMotionVectorCdf.ClassNHp.Clone(),
+        };
+
+        /// <summary>Creates a deep copy of this component (used to inherit a frame's adapted state).</summary>
+        /// <returns>An independent copy.</returns>
+        public Component Clone() => new()
+        {
+            Sign = (ushort[])this.Sign.Clone(),
+            Classes = (ushort[])this.Classes.Clone(),
+            Class0 = (ushort[])this.Class0.Clone(),
+            ClassN = Clone(this.ClassN),
+            Class0Fp = Clone(this.Class0Fp),
+            ClassNFp = (ushort[])this.ClassNFp.Clone(),
+            Class0Hp = (ushort[])this.Class0Hp.Clone(),
+            ClassNHp = (ushort[])this.ClassNHp.Clone(),
         };
 
         private static ushort[][] Clone(ushort[][] group)

@@ -58,4 +58,8 @@ internal sealed class Av1InterpolationFilterCdfContext
 
         return new Av1InterpolationFilterCdfContext { Filter = filter };
     }
+
+    /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
+    /// <returns>An independent copy.</returns>
+    public Av1InterpolationFilterCdfContext Clone() => new() { Filter = Av1CdfTables.Copy(this.Filter) };
 }

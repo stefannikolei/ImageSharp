@@ -52,6 +52,20 @@ internal sealed class Av1InterModeCdfContext
         SingleReference = Clone(Av1DefaultInterModeCdf.SingleReference),
     };
 
+    /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
+    /// <returns>An independent copy.</returns>
+    public Av1InterModeCdfContext Clone() => new()
+    {
+        IsInter = Clone(this.IsInter),
+        SkipMode = Clone(this.SkipMode),
+        NewMv = Clone(this.NewMv),
+        GlobalMv = Clone(this.GlobalMv),
+        RefMv = Clone(this.RefMv),
+        DrlBit = Clone(this.DrlBit),
+        Compound = Clone(this.Compound),
+        SingleReference = Clone(this.SingleReference),
+    };
+
     private static ushort[][] Clone(ushort[][] group)
     {
         ushort[][] result = new ushort[group.Length][];

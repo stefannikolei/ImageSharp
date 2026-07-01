@@ -147,10 +147,9 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
         {
             if (header.Type == ObuType.Frame)
             {
-                Av1TileDecoder decoded = Av1DecoderCore.DecodeFrame(payload, this.sequenceHeader, this.referenceStore, out ObuFrameHeader frameHeader);
-                Av1ReferenceFrame reference = new(frameHeader.OrderHint, decoded.Luma, decoded.ChromaU, decoded.ChromaV);
-                this.referenceStore.Update(reference, frameHeader.RefreshFrameFlags);
-                return decoded;
+                // DecodeFrame also publishes the frame (with its frame-end CDF and header state) into
+                // the reference slots it refreshes.
+                return Av1DecoderCore.DecodeFrame(payload, this.sequenceHeader, this.referenceStore, out _);
             }
         }
 

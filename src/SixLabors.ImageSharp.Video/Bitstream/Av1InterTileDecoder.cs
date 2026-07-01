@@ -23,12 +23,12 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // The reference frames, indexed by the zero-based reference name (LAST .. ALTREF).
     private readonly Av1ReferenceFrame?[] references;
 
-    private readonly Av1InterModeCdfContext interCdf = Av1InterModeCdfContext.CreateDefault();
-    private readonly Av1MotionVectorCdfContext mvCdf = Av1MotionVectorCdfContext.CreateDefault();
-    private readonly Av1InterpolationFilterCdfContext filterCdf = Av1InterpolationFilterCdfContext.CreateDefault();
-    private readonly Av1MotionModeCdfContext motionModeCdf = Av1MotionModeCdfContext.CreateDefault();
-    private readonly Av1InterTransformTypeCdfContext interTransformTypeCdf = Av1InterTransformTypeCdfContext.CreateDefault();
-    private readonly ushort[][][] transformPartitionCdf = CloneTransformPartitionCdf();
+    private readonly Av1InterModeCdfContext interCdf;
+    private readonly Av1MotionVectorCdfContext mvCdf;
+    private readonly Av1InterpolationFilterCdfContext filterCdf;
+    private readonly Av1MotionModeCdfContext motionModeCdf;
+    private readonly Av1InterTransformTypeCdfContext interTransformTypeCdf;
+    private readonly ushort[][][] transformPartitionCdf;
 
     // The inter variable-transform size neighbour context (dav1d's BlockContext.tx, distinct from the
     // intra tx_intra context in the base class). It stores the transform width/height category (log2 of
@@ -58,18 +58,24 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     {
     }
 
-    /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class.</summary>
+    /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class starting from
+    /// the default CDF tables (frames with <c>primary_ref_frame</c> set to NONE).</summary>
     /// <param name="sequenceHeader">The sequence header.</param>
     /// <param name="frameHeader">The inter frame header.</param>
     /// <param name="references">The reference frames, indexed by the zero-based reference name (LAST .. ALTREF).</param>
     public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame?[] references)
-        : base(sequenceHeader, frameHeader)
+        : this(sequenceHeader, frameHeader, references, Av1FrameCdfSet.CreateDefault(frameHeader.BaseQIndex))
     {
-        if (frameHeader.PrimaryRefFrame != 7)
-        {
-            throw new NotSupportedException("Inter frames with a primary reference frame are not supported yet.");
-        }
+    }
 
+    /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class.</summary>
+    /// <param name="sequenceHeader">The sequence header.</param>
+    /// <param name="frameHeader">The inter frame header.</param>
+    /// <param name="references">The reference frames, indexed by the zero-based reference name (LAST .. ALTREF).</param>
+    /// <param name="cdfs">The initial CDF state (defaults, or a copy of the primary reference's saved state).</param>
+    public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame?[] references, Av1FrameCdfSet cdfs)
+        : base(sequenceHeader, frameHeader, cdfs)
+    {
         if (frameHeader.AllowWarpedMotion)
         {
             throw new NotSupportedException("Warped motion is not supported yet.");
@@ -80,6 +86,12 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             throw new NotSupportedException("Compound (two-reference) prediction is not supported yet.");
         }
 
+        this.interCdf = cdfs.InterMode;
+        this.mvCdf = cdfs.MotionVector;
+        this.filterCdf = cdfs.Filter;
+        this.motionModeCdf = cdfs.MotionMode;
+        this.interTransformTypeCdf = cdfs.InterTransformType;
+        this.transformPartitionCdf = cdfs.TransformPartition;
         this.references = references;
         this.interpolationFilter = frameHeader.InterpolationFilter;
 
@@ -487,21 +499,6 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         }
     }
 
-    private static ushort[][][] CloneTransformPartitionCdf()
-    {
-        ushort[][][] source = Av1DefaultTransformPartitionCdf.Split;
-        ushort[][][] result = new ushort[source.Length][][];
-        for (int i = 0; i < source.Length; i++)
-        {
-            result[i] = new ushort[source[i].Length][];
-            for (int j = 0; j < source[i].Length; j++)
-            {
-                result[i][j] = (ushort[])source[i][j].Clone();
-            }
-        }
-
-        return result;
-    }
 
     // Reads the luma transform type of an inter transform block. A 64x64 transform or a lossless
     // (zero-quantizer) block implies DCT_DCT and codes no transform type.

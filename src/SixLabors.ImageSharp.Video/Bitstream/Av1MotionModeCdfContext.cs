@@ -27,6 +27,14 @@ internal sealed class Av1MotionModeCdfContext
         Obmc = Clone(Av1DefaultMotionModeCdf.Obmc),
     };
 
+    /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
+    /// <returns>An independent copy.</returns>
+    public Av1MotionModeCdfContext Clone() => new()
+    {
+        MotionMode = Clone(this.MotionMode),
+        Obmc = Clone(this.Obmc),
+    };
+
     private static ushort[]?[] Clone(ushort[]?[] group)
     {
         ushort[]?[] result = new ushort[group.Length][];

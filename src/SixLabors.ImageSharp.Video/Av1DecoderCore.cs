@@ -136,12 +136,8 @@ internal static class Av1DecoderCore
                         throw new InvalidDataException("Encountered a frame OBU before any sequence header.");
                     }
 
-                    Av1TileDecoder tileDecoder = DecodeFrame(payload, sequenceHeader, referenceStore, out ObuFrameHeader frameHeader);
+                    Av1TileDecoder tileDecoder = DecodeFrame(payload, sequenceHeader, referenceStore, out _);
                     frames.Add(tileDecoder);
-
-                    // Publish the reconstructed frame into the reference slots it refreshes.
-                    Av1ReferenceFrame decoded = new(frameHeader.OrderHint, tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV);
-                    referenceStore.Update(decoded, frameHeader.RefreshFrameFlags);
                 }
             }
         }
@@ -154,8 +150,10 @@ internal static class Av1DecoderCore
         return frames;
     }
 
-    // Parses a frame OBU header (dispatching between the intra and inter parsers) and decodes its single
-    // tile, predicting inter frames from the reference store.
+    // Parses a frame OBU header (dispatching between the intra and inter parsers), decodes its single
+    // tile (predicting inter frames from the reference store, loading the primary reference's CDF and
+    // header state when the frame has one) and publishes the reconstructed frame with its frame-end
+    // context into the reference slots it refreshes.
     internal static Av1TileDecoder DecodeFrame(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader, Av1ReferenceFrameStore referenceStore, out ObuFrameHeader frameHeader)
     {
         Av1FrameType frameType = PeekFrameType(payload, sequenceHeader);
@@ -169,7 +167,7 @@ internal static class Av1DecoderCore
         else
         {
             Av1BitStreamReader reader = new(payload);
-            frameHeader = ObuFrameHeader.ParseInter(ref reader, sequenceHeader, referenceStore.GetOrderHints());
+            frameHeader = ObuFrameHeader.ParseInter(ref reader, sequenceHeader, referenceStore.GetOrderHints(), referenceStore.GetHeaderStates());
 
             // Resolve each reference name (LAST .. ALTREF) to its frame via the header's slot mapping.
             Av1ReferenceFrame?[] references = new Av1ReferenceFrame?[7];
@@ -178,8 +176,19 @@ internal static class Av1DecoderCore
                 references[i] = referenceStore[frameHeader.ReferenceFrameIndices[i]];
             }
 
-            tileDecoder = new Av1InterTileDecoder(sequenceHeader, frameHeader, references);
+            // A frame with a primary reference starts from a copy of that reference's saved CDF state
+            // instead of the defaults.
+            Av1FrameCdfSet cdfs = frameHeader.PrimaryRefFrame != ObuFrameHeader.PrimaryReferenceNone
+                && references[frameHeader.PrimaryRefFrame]?.Cdfs is { } saved
+                ? saved.Clone()
+                : Av1FrameCdfSet.CreateDefault(frameHeader.BaseQIndex);
+
+            tileDecoder = new Av1InterTileDecoder(sequenceHeader, frameHeader, references, cdfs);
         }
+
+        // With disable_frame_end_update_cdf the state saved at the frame end is the initial state, not
+        // the adaptation the decode performs; snapshot it before decoding.
+        Av1FrameCdfSet frameEndCdfs = frameHeader.DisableFrameEndUpdateCdf ? tileDecoder.Cdfs.Clone() : tileDecoder.Cdfs;
 
         int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
         ObuTileGroup tileGroup = ObuTileGroup.Parse(payload[tileGroupStart..], frameHeader);
@@ -187,6 +196,20 @@ internal static class Av1DecoderCore
         byte[] tileData = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
 
         tileDecoder.DecodeTile(tileData);
+
+        // The save zeroes every CDF's adaptation counter (dav1d's cdf_thread_update); a frame inheriting
+        // the state keeps the adapted probabilities but restarts adaptation at the initial rate.
+        frameEndCdfs.ResetCounters();
+
+        ObuFrameHeader.LoopFilter lf = frameHeader.LoopFilterParameters;
+        Av1ReferenceFrame decoded = new(
+            frameHeader.OrderHint,
+            tileDecoder.Luma,
+            tileDecoder.ChromaU,
+            tileDecoder.ChromaV,
+            frameEndCdfs,
+            new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas));
+        referenceStore.Update(decoded, frameHeader.RefreshFrameFlags);
         return tileDecoder;
     }
 

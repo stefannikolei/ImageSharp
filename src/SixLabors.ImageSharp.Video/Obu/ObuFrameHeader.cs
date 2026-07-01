@@ -27,6 +27,12 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets a value indicating whether CDF updates are disabled for this frame.</summary>
     public bool DisableCdfUpdate { get; init; }
 
+    /// <summary>
+    /// Gets a value indicating whether the frame-end CDF state reverts to the frame's initial state
+    /// instead of keeping the in-frame adaptation (<c>disable_frame_end_update_cdf</c>).
+    /// </summary>
+    public bool DisableFrameEndUpdateCdf { get; init; }
+
     /// <summary>Gets a value indicating whether screen-content tools are allowed.</summary>
     public bool AllowScreenContentTools { get; init; }
 
@@ -257,11 +263,7 @@ internal readonly struct ObuFrameHeader
             allowIntraBlockCopy = reader.ReadBoolean();
         }
 
-        // disable_frame_end_update_cdf.
-        if (!sequenceHeader.ReducedStillPictureHeader && !disableCdfUpdate)
-        {
-            reader.ReadBoolean();
-        }
+        bool disableFrameEndUpdateCdf = sequenceHeader.ReducedStillPictureHeader || disableCdfUpdate || reader.ReadBoolean();
 
         int modeInfoColumns = 2 * ((frameWidth + 7) >> 3);
         int modeInfoRows = 2 * ((frameHeight + 7) >> 3);
@@ -322,6 +324,7 @@ internal readonly struct ObuFrameHeader
             FrameType = frameType,
             ShowFrame = showFrame,
             DisableCdfUpdate = disableCdfUpdate,
+            DisableFrameEndUpdateCdf = disableFrameEndUpdateCdf,
             AllowScreenContentTools = allowScreenContentTools,
             AllowIntraBlockCopy = allowIntraBlockCopy,
             FrameWidth = frameWidth,
@@ -366,7 +369,7 @@ internal readonly struct ObuFrameHeader
     /// <param name="sequenceHeader">The active sequence header.</param>
     /// <param name="referenceOrderHints">The order hints of the eight reference slots.</param>
     /// <returns>The parsed inter frame header.</returns>
-    public static ObuFrameHeader ParseInter(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, int[] referenceOrderHints)
+    public static ObuFrameHeader ParseInter(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, int[] referenceOrderHints, ObuPrimaryReferenceState?[]? slotStates = null)
     {
         bool showExistingFrame = !sequenceHeader.ReducedStillPictureHeader && reader.ReadBoolean();
         if (showExistingFrame)
@@ -406,10 +409,6 @@ internal readonly struct ObuFrameHeader
         bool frameSizeOverride = frameType == Av1FrameType.Switch || reader.ReadBoolean();
         int orderHint = (int)reader.ReadLiteral(sequenceHeader.OrderHintBits);
         int primaryRefFrame = errorResilientMode ? 7 : (int)reader.ReadLiteral(3);
-        if (primaryRefFrame != 7)
-        {
-            throw new NotSupportedException("Inter frames with a primary reference frame are not supported yet.");
-        }
 
         int refreshFrameFlags = frameType == Av1FrameType.Switch ? 0xFF : (int)reader.ReadLiteral(8);
         if (errorResilientMode && sequenceHeader.EnableOrderHint)
@@ -444,10 +443,7 @@ internal readonly struct ObuFrameHeader
         bool useReferenceFrameMotionVectors = !errorResilientMode && sequenceHeader.EnableReferenceFrameMotionVectors
             && sequenceHeader.EnableOrderHint && reader.ReadBoolean();
 
-        if (!sequenceHeader.ReducedStillPictureHeader && !disableCdfUpdate)
-        {
-            reader.ReadBoolean(); // disable_frame_end_update_cdf
-        }
+        bool disableFrameEndUpdateCdf = sequenceHeader.ReducedStillPictureHeader || disableCdfUpdate || reader.ReadBoolean();
 
         int modeInfoColumns = 2 * ((size.FrameWidth + 7) >> 3);
         int modeInfoRows = 2 * ((size.FrameHeight + 7) >> 3);
@@ -482,7 +478,13 @@ internal readonly struct ObuFrameHeader
         bool codedLossless = q.BaseQIndex == 0 && q.DeltaQYDc == 0 &&
             q.DeltaQUDc == 0 && q.DeltaQUAc == 0 && q.DeltaQVDc == 0 && q.DeltaQVAc == 0;
 
-        LoopFilter loopFilter = ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, false);
+        // With a primary reference the loop-filter deltas start from the reference's saved state
+        // (load_previous) instead of the setup_past_independence defaults.
+        ObuPrimaryReferenceState inherited = primaryRefFrame != PrimaryReferenceNone && slotStates?[refFrameIndices[primaryRefFrame]] is { } saved
+            ? saved
+            : ObuPrimaryReferenceState.CreateDefault();
+
+        LoopFilter loopFilter = ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, false, inherited);
         Cdef cdef = ReadCdefParams(ref reader, sequenceHeader, codedLossless, false);
         LoopRestoration loopRestoration = ReadLoopRestorationParams(ref reader, sequenceHeader, codedLossless, false);
 
@@ -515,6 +517,7 @@ internal readonly struct ObuFrameHeader
             FrameType = frameType,
             ShowFrame = showFrame,
             DisableCdfUpdate = disableCdfUpdate,
+            DisableFrameEndUpdateCdf = disableFrameEndUpdateCdf,
             AllowScreenContentTools = allowScreenContentTools,
             FrameWidth = size.FrameWidth,
             FrameHeight = size.FrameHeight,
@@ -861,11 +864,13 @@ internal readonly struct ObuFrameHeader
         return segmentationEnabled;
     }
 
-    private static LoopFilter ReadLoopFilterParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy)
+    private static LoopFilter ReadLoopFilterParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy, ObuPrimaryReferenceState? inherited = null)
     {
-        // Spec defaults established by setup_past_independence for a key frame.
-        int[] refDeltas = [1, 0, 0, 0, -1, 0, -1, -1];
-        int[] modeDeltas = [0, 0];
+        // The deltas start from the primary reference's saved state when there is one, otherwise from
+        // the spec defaults established by setup_past_independence.
+        inherited ??= ObuPrimaryReferenceState.CreateDefault();
+        int[] refDeltas = (int[])inherited.LoopFilterRefDeltas.Clone();
+        int[] modeDeltas = (int[])inherited.LoopFilterModeDeltas.Clone();
 
         if (codedLossless || allowIntraBlockCopy)
         {

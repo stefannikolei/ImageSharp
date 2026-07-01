@@ -1,6 +1,8 @@
 // Copyright (c) Six Labors.
 // Licensed under the Six Labors Split License.
 
+using SixLabors.ImageSharp.Formats.Av1.Obu;
+
 namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 
 /// <summary>
@@ -30,6 +32,19 @@ internal sealed class Av1ReferenceFrameStore
         }
 
         return hints;
+    }
+
+    /// <summary>Gets the saved header inheritance states of all eight slots (null for empty slots).</summary>
+    /// <returns>The eight states, indexed by slot.</returns>
+    public ObuPrimaryReferenceState?[] GetHeaderStates()
+    {
+        ObuPrimaryReferenceState?[] states = new ObuPrimaryReferenceState?[SlotCount];
+        for (int i = 0; i < SlotCount; i++)
+        {
+            states[i] = this.slots[i]?.HeaderState;
+        }
+
+        return states;
     }
 
     /// <summary>Writes a decoded frame into every slot selected by the refresh mask.</summary>

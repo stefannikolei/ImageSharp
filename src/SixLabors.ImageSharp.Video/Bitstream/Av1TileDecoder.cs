@@ -128,11 +128,17 @@ internal class Av1TileDecoder
     private protected Av1SymbolDecoder decoder = default!;
 
     public Av1TileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader)
+        : this(sequenceHeader, frameHeader, Av1FrameCdfSet.CreateDefault(frameHeader.BaseQIndex))
+    {
+    }
+
+    public Av1TileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1FrameCdfSet cdfs)
     {
         this.sequenceHeader = sequenceHeader;
         this.frameHeader = frameHeader;
-        this.modeCdf = Av1ModeInfoCdfContext.CreateDefault();
-        this.coefficientCdf = Av1CoefficientCdfContext.CreateDefault(GetQuantizerContext(frameHeader.BaseQIndex));
+        this.Cdfs = cdfs;
+        this.modeCdf = cdfs.ModeInfo;
+        this.coefficientCdf = cdfs.Coefficient;
 
         this.subsamplingX = sequenceHeader.SubsamplingX;
         this.subsamplingY = sequenceHeader.SubsamplingY;
@@ -187,6 +193,12 @@ internal class Av1TileDecoder
         this.chromaEdgeV = new bool[chromaCells];
         this.chromaEdgeH = new bool[chromaCells];
     }
+
+    /// <summary>
+    /// Gets the frame's CDF set: the initial state passed in (defaults or a primary reference's saved
+    /// state) that the decode adapts in place, becoming the state saved at the frame end.
+    /// </summary>
+    public Av1FrameCdfSet Cdfs { get; }
 
     /// <summary>Gets the reconstructed luma plane.</summary>
     public Av1Plane Luma => this.luma;
@@ -1713,9 +1725,6 @@ internal class Av1TileDecoder
     // Whether a neighbour intra mode is one of the smooth predictors (SMOOTH/SMOOTH_V/SMOOTH_H),
     // matching dav1d's sm_flag; such neighbours reduce the directional edge-filter strength.
     private static bool IsSmoothMode(int mode) => mode is 9 or 10 or 11;
-
-    private static int GetQuantizerContext(int baseQIndex)
-        => baseQIndex <= 20 ? 0 : baseQIndex <= 60 ? 1 : baseQIndex <= 120 ? 2 : 3;
 
     /// <summary>
     /// The coefficient level-context bytes for one plane: an 'above' row spanning the frame width and a
