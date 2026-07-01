@@ -112,6 +112,11 @@ internal class Av1TileDecoder
     // (above-right / below-left samples are replicated when their source has not been decoded yet).
     private readonly bool[] lumaDecoded;
 
+    // Per-4x4 deblocking filter levels (dav1d's lf.level): four bytes per luma-grid cell — luma vertical,
+    // luma horizontal, chroma U and chroma V — filled per block from the frame level and the block's
+    // reference/mode deltas. Chroma values live at the chroma-subsampled cell positions in the same grid.
+    private readonly byte[] lfLevels;
+
     // Per-4x4 deblocking metadata: the transform-size log2 (in 4-unit width/height) covering each cell and
     // whether the cell begins a transform block (a vertical/horizontal filter edge), for luma and chroma.
     private readonly byte[] lumaTxLw;
@@ -180,6 +185,7 @@ internal class Av1TileDecoder
         this.cdefIndices = new int[this.cdefColumns64 * ((miRows + 15) >> 4)];
         Array.Fill(this.cdefIndices, -1);
         this.lumaDecoded = new bool[miCols * miRows];
+        this.lfLevels = new byte[miCols * miRows * 4];
 
         this.lumaTxLw = new byte[miCols * miRows];
         this.lumaTxLh = new byte[miCols * miRows];
@@ -560,88 +566,152 @@ internal class Av1TileDecoder
             blimit[level] = (2 * (level + 2)) + lim;
         }
 
-        int levelYv = DeriveFilterLevel(lf, lf.Levels[0]);
-        int levelYh = DeriveFilterLevel(lf, lf.Levels[1]);
-        this.DeblockPlane(this.luma, this.miColumns, this.miRows, this.lumaTxLw, this.lumaTxLh, this.lumaEdgeV, this.lumaEdgeH, levelYv, levelYh, true, limit, blimit);
+        this.DeblockPlane(this.luma, this.miColumns, this.miRows, this.lumaTxLw, this.lumaTxLh, this.lumaEdgeV, this.lumaEdgeH, 0, 1, true, limit, blimit);
 
         if (this.sequenceHeader.NumPlanes > 1)
         {
-            int levelU = DeriveFilterLevel(lf, lf.Levels[2]);
-            int levelV = DeriveFilterLevel(lf, lf.Levels[3]);
-            this.DeblockPlane(this.chromaU, this.chromaStride4, this.chromaRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, levelU, levelU, false, limit, blimit);
-            this.DeblockPlane(this.chromaV, this.chromaStride4, this.chromaRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, levelV, levelV, false, limit, blimit);
+            this.DeblockPlane(this.chromaU, this.chromaStride4, this.chromaRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, 2, 2, false, limit, blimit);
+            this.DeblockPlane(this.chromaV, this.chromaStride4, this.chromaRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, 3, 3, false, limit, blimit);
         }
     }
 
-    // dav1d calc_lf_value for the intra (INTRA_FRAME) reference, no segmentation or delta_lf. When the
-    // mode/ref deltas are enabled the intra ref delta is applied even to a zero base level (dav1d does
-    // not short-circuit on base == 0), so a nominal level of 0 can still produce a non-zero filter.
-    private static int DeriveFilterLevel(in ObuFrameHeader.LoopFilter lf, int baseLevel)
+    // Records a block's four deblocking filter levels (luma vertical/horizontal, chroma U/V) into the
+    // per-4x4 level cache, a port of the level fill in dav1d's create_lf_mask_intra/inter driven by
+    // calc_lf_values. The reference index is 0 for an intra block and the block's reference plus one for
+    // an inter block; the mode index selects mode_deltas[0] for GLOBALMV and mode_deltas[1] otherwise.
+    private protected void RecordLoopFilterLevels(int row, int col, Av1BlockSize bsize, bool hasChroma, int reference, int modeIndex)
     {
+        ObuFrameHeader.LoopFilter lf = this.frameHeader.LoopFilterParameters;
+        if (lf.Levels is null || (lf.Levels[0] == 0 && lf.Levels[1] == 0))
+        {
+            return;
+        }
+
+        byte lumaV = (byte)this.CalcLfLevel(lf.Levels[0], reference, modeIndex, isChroma: false);
+        byte lumaH = (byte)this.CalcLfLevel(lf.Levels[1], reference, modeIndex, isChroma: false);
+        int width4 = Math.Min(bsize.GetWidth4(), this.miColumns - col);
+        int height4 = Math.Min(bsize.GetHeight4(), this.miRows - row);
+        for (int y = 0; y < height4; y++)
+        {
+            int cell = (((row + y) * this.miColumns) + col) * 4;
+            for (int x = 0; x < width4; x++, cell += 4)
+            {
+                this.lfLevels[cell] = lumaV;
+                this.lfLevels[cell + 1] = lumaH;
+            }
+        }
+
+        if (!hasChroma || this.sequenceHeader.NumPlanes == 1)
+        {
+            return;
+        }
+
+        byte chromaU = (byte)this.CalcLfLevel(lf.Levels[2], reference, modeIndex, isChroma: true);
+        byte chromaV = (byte)this.CalcLfLevel(lf.Levels[3], reference, modeIndex, isChroma: true);
+        int chromaCol = col >> this.subsamplingX;
+        int chromaRow = row >> this.subsamplingY;
+        int chromaWidth4 = Math.Min((bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX, this.chromaStride4 - chromaCol);
+        int chromaHeight4 = Math.Min((bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY, this.chromaRows4 - chromaRow);
+        for (int y = 0; y < chromaHeight4; y++)
+        {
+            int cell = (((chromaRow + y) * this.miColumns) + chromaCol) * 4;
+            for (int x = 0; x < chromaWidth4; x++, cell += 4)
+            {
+                this.lfLevels[cell + 2] = chromaU;
+                this.lfLevels[cell + 3] = chromaV;
+            }
+        }
+    }
+
+    // dav1d calc_lf_value (no segmentation or delta_lf in this subset): the block's filter level is the
+    // frame level adjusted by the reference and mode deltas. A zero chroma base level is never adjusted.
+    private int CalcLfLevel(int baseLevel, int reference, int modeIndex, bool isChroma)
+    {
+        if (isChroma && baseLevel == 0)
+        {
+            return 0;
+        }
+
+        ObuFrameHeader.LoopFilter lf = this.frameHeader.LoopFilterParameters;
         if (!lf.DeltaEnabled)
         {
             return baseLevel;
         }
 
         int shift = baseLevel >= 32 ? 1 : 0;
-        return Math.Clamp(baseLevel + (lf.RefDeltas[0] * (1 << shift)), 0, 63);
+        int delta = reference == 0 ? lf.RefDeltas[0] : lf.ModeDeltas[modeIndex] + lf.RefDeltas[reference];
+        return Math.Clamp(baseLevel + (delta * (1 << shift)), 0, 63);
     }
 
-    private void DeblockPlane(Av1Plane plane, int stride4, int rows4, byte[] txLw, byte[] txLh, bool[] edgeV, bool[] edgeH, int levelVert, int levelHoriz, bool isLuma, int[] limit, int[] blimit)
+    private void DeblockPlane(Av1Plane plane, int stride4, int rows4, byte[] txLw, byte[] txLh, bool[] edgeV, bool[] edgeH, int levelOffsetV, int levelOffsetH, bool isLuma, int[] limit, int[] blimit)
     {
         int stride = plane.Width;
         int maxIdx = isLuma ? 2 : 1;
 
-        if (levelVert > 0)
+        for (int r4 = 0; r4 < rows4; r4++)
         {
-            int e = blimit[levelVert];
-            int i = limit[levelVert];
-            int h = levelVert >> 4;
-            for (int r4 = 0; r4 < rows4; r4++)
+            for (int c4 = 1; c4 < stride4; c4++)
             {
-                for (int c4 = 1; c4 < stride4; c4++)
+                int mi = (r4 * stride4) + c4;
+                if (!edgeV[mi])
                 {
-                    int mi = (r4 * stride4) + c4;
-                    if (!edgeV[mi])
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    int idx = Math.Min(maxIdx, Math.Min(txLw[mi], txLw[mi - 1]));
-                    int wd = isLuma ? 4 << idx : 4 + (2 * idx);
-                    int px = c4 * 4;
-                    int py = r4 * 4;
-                    if (px < plane.Width && py < plane.Height)
-                    {
-                        Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, stride, 1, e, i, h, wd);
-                    }
+                // The edge filters with the current cell's level, falling back to the left neighbour's
+                // when it is zero (dav1d: L = l[0] ? l[0] : l[-1]); zero on both sides means no filter.
+                int cell = ((r4 * this.miColumns) + c4) * 4;
+                int level = this.lfLevels[cell + levelOffsetV];
+                if (level == 0)
+                {
+                    level = this.lfLevels[cell - 4 + levelOffsetV];
+                }
+
+                if (level == 0)
+                {
+                    continue;
+                }
+
+                int idx = Math.Min(maxIdx, Math.Min(txLw[mi], txLw[mi - 1]));
+                int wd = isLuma ? 4 << idx : 4 + (2 * idx);
+                int px = c4 * 4;
+                int py = r4 * 4;
+                if (px < plane.Width && py < plane.Height)
+                {
+                    Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, stride, 1, blimit[level], limit[level], level >> 4, wd);
                 }
             }
         }
 
-        if (levelHoriz > 0)
+        for (int r4 = 1; r4 < rows4; r4++)
         {
-            int e = blimit[levelHoriz];
-            int i = limit[levelHoriz];
-            int h = levelHoriz >> 4;
-            for (int r4 = 1; r4 < rows4; r4++)
+            for (int c4 = 0; c4 < stride4; c4++)
             {
-                for (int c4 = 0; c4 < stride4; c4++)
+                int mi = (r4 * stride4) + c4;
+                if (!edgeH[mi])
                 {
-                    int mi = (r4 * stride4) + c4;
-                    if (!edgeH[mi])
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    int idx = Math.Min(maxIdx, Math.Min(txLh[mi], txLh[mi - stride4]));
-                    int wd = isLuma ? 4 << idx : 4 + (2 * idx);
-                    int px = c4 * 4;
-                    int py = r4 * 4;
-                    if (px < plane.Width && py < plane.Height)
-                    {
-                        Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, 1, stride, e, i, h, wd);
-                    }
+                int cell = ((r4 * this.miColumns) + c4) * 4;
+                int level = this.lfLevels[cell + levelOffsetH];
+                if (level == 0)
+                {
+                    level = this.lfLevels[cell - (this.miColumns * 4) + levelOffsetH];
+                }
+
+                if (level == 0)
+                {
+                    continue;
+                }
+
+                int idx = Math.Min(maxIdx, Math.Min(txLh[mi], txLh[mi - stride4]));
+                int wd = isLuma ? 4 << idx : 4 + (2 * idx);
+                int px = c4 * 4;
+                int py = r4 * 4;
+                if (px < plane.Width && py < plane.Height)
+                {
+                    Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, 1, stride, blimit[level], limit[level], level >> 4, wd);
                 }
             }
         }
@@ -1115,6 +1185,7 @@ internal class Av1TileDecoder
         Fill(this.aboveTx, col, width4, (sbyte)(lumaTx.GetWidthLog2() - 2));
         Fill(this.leftTx, row, height4, (sbyte)(lumaTx.GetHeightLog2() - 2));
 
+        this.RecordLoopFilterLevels(row, col, bsize, hasChroma, reference: 0, modeIndex: 0);
         this.OnIntraBlockDecoded(row, col, bsize, skip, yMode, lumaTx);
     }
 

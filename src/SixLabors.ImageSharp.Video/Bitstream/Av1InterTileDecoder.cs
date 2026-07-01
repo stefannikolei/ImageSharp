@@ -263,6 +263,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         Fill(this.aboveSkip, col, width4, (byte)skip);
         Fill(this.leftSkip, row, height4, (byte)skip);
         this.RecordInterBlockIntraContexts(row, col, bsize, hasChroma);
+        this.RecordLoopFilterLevels(row, col, bsize, hasChroma, info.Reference + 1, info.Mode == Av1InterPredictionMode.GlobalMv ? 0 : 1);
         this.TopLeft4x4Filter = (info.Filter0, info.Filter1);
     }
 
