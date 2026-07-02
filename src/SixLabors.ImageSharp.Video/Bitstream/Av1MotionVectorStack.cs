@@ -298,6 +298,31 @@ internal sealed class Av1MotionVectorStack
     }
 
     /// <summary>
+    /// Adds a projected temporal motion vector, merging by equality with weight 2, matching the
+    /// single-reference arm of <c>add_temporal_candidate</c>.
+    /// </summary>
+    /// <param name="motionVector">The projected, precision-fixed motion vector.</param>
+    public void AddTemporalCandidate(Av1MotionVector motionVector)
+    {
+        for (int n = 0; n < this.Count; n++)
+        {
+            if (this.mvY[n] == motionVector.Y && this.mvX[n] == motionVector.X)
+            {
+                this.weight[n] += 2;
+                return;
+            }
+        }
+
+        if (this.Count < MaxCandidates)
+        {
+            this.mvY[this.Count] = motionVector.Y;
+            this.mvX[this.Count] = motionVector.X;
+            this.weight[this.Count] = 2;
+            this.Count++;
+        }
+    }
+
+    /// <summary>
     /// Sorts the first <paramref name="nearestCount"/> candidates and the remaining candidates each by
     /// descending weight using the reference decoder's stable bubble sort.
     /// </summary>

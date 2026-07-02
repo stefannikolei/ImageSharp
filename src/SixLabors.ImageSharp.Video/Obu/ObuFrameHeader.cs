@@ -138,6 +138,9 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets a value indicating whether motion vectors use eighth-pel (high) precision.</summary>
     public bool AllowHighPrecisionMv { get; init; }
 
+    /// <summary>Gets a value indicating whether motion vectors are forced to whole pels.</summary>
+    public bool ForceIntegerMv { get; init; }
+
     /// <summary>Gets the interpolation filter selection (0-2 fixed, 4 = switchable).</summary>
     public int InterpolationFilter { get; init; }
 
@@ -551,6 +554,7 @@ internal readonly struct ObuFrameHeader
             PrimaryRefFrame = primaryRefFrame,
             ReferenceFrameIndices = refFrameIndices,
             AllowHighPrecisionMv = allowHighPrecisionMv,
+            ForceIntegerMv = forceIntegerMv,
             InterpolationFilter = interpolationFilter,
             IsMotionModeSwitchable = isMotionModeSwitchable,
             UseReferenceFrameMotionVectors = useReferenceFrameMotionVectors,

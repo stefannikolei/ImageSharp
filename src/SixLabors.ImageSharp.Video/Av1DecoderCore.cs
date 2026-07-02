@@ -201,6 +201,25 @@ internal static class Av1DecoderCore
         // the state keeps the adapted probabilities but restarts adaptation at the initial rate.
         frameEndCdfs.ResetCounters();
 
+        // An inter frame saves its motion field (save_tmvs) and its own reference order hints so a later
+        // frame's temporal motion-vector prediction can project them.
+        Av1TemporalMvs? temporalMvs = null;
+        int[]? referenceOrderHints = null;
+        if (tileDecoder is Av1InterTileDecoder interDecoder)
+        {
+            int[] storeHints = referenceStore.GetOrderHints();
+            referenceOrderHints = new int[7];
+            for (int i = 0; i < 7; i++)
+            {
+                referenceOrderHints[i] = storeHints[frameHeader.ReferenceFrameIndices[i]];
+            }
+
+            if (sequenceHeader.EnableReferenceFrameMotionVectors && sequenceHeader.OrderHintBits > 0)
+            {
+                temporalMvs = Av1TemporalMvs.Save(interDecoder.MotionVectorGrid, sequenceHeader.OrderHintBits, frameHeader.OrderHint, referenceOrderHints);
+            }
+        }
+
         ObuFrameHeader.LoopFilter lf = frameHeader.LoopFilterParameters;
         Av1ReferenceFrame decoded = new(
             frameHeader.OrderHint,
@@ -208,7 +227,9 @@ internal static class Av1DecoderCore
             tileDecoder.ChromaU,
             tileDecoder.ChromaV,
             frameEndCdfs,
-            new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas));
+            new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas),
+            temporalMvs,
+            referenceOrderHints);
         referenceStore.Update(decoded, frameHeader.RefreshFrameFlags);
         return tileDecoder;
     }

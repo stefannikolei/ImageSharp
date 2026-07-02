@@ -23,6 +23,7 @@ internal readonly struct Av1InterModeInfoOptions
     /// <param name="globalMvSubstitution">Whether neighbours substitute the global-motion vector.</param>
     /// <param name="globalMvIsTranslation">Whether the global-motion model is translational.</param>
     /// <param name="signBias">The per-reference sign bias, indexed by zero-based reference.</param>
+    /// <param name="temporal">The temporal motion-vector prediction state, or <see langword="null"/>.</param>
     public Av1InterModeInfoOptions(
         Av1TileBounds bounds,
         int imageWidth4,
@@ -35,7 +36,8 @@ internal readonly struct Av1InterModeInfoOptions
         Av1MotionVector globalMv,
         bool globalMvSubstitution,
         bool globalMvIsTranslation,
-        int[] signBias)
+        int[] signBias,
+        Av1TemporalMvContext? temporal = null)
     {
         this.Bounds = bounds;
         this.ImageWidth4 = imageWidth4;
@@ -49,6 +51,7 @@ internal readonly struct Av1InterModeInfoOptions
         this.GlobalMvSubstitution = globalMvSubstitution;
         this.GlobalMvIsTranslation = globalMvIsTranslation;
         this.SignBias = signBias;
+        this.Temporal = temporal;
     }
 
     /// <summary>Gets the tile bounds in 4x4 units.</summary>
@@ -86,4 +89,7 @@ internal readonly struct Av1InterModeInfoOptions
 
     /// <summary>Gets the per-reference sign bias, indexed by zero-based reference.</summary>
     public int[] SignBias { get; }
+
+    /// <summary>Gets the temporal motion-vector prediction state, or <see langword="null"/>.</summary>
+    public Av1TemporalMvContext? Temporal { get; }
 }

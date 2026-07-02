@@ -21,7 +21,11 @@ internal sealed class Av1ReferenceFrame
     /// case a primary reference to this slot falls back to the defaults).</param>
     /// <param name="headerState">The frame-end header inheritance state (or <see langword="null"/> for
     /// the specification defaults).</param>
-    public Av1ReferenceFrame(int orderHint, Av1Plane luma, Av1Plane? chromaU, Av1Plane? chromaV, Av1FrameCdfSet? cdfs = null, ObuPrimaryReferenceState? headerState = null)
+    /// <param name="temporalMvs">The frame's saved temporal motion field (or <see langword="null"/> for
+    /// intra frames, which save none).</param>
+    /// <param name="referenceOrderHints">The order hints of the frame's own seven references, by name
+    /// (all zero for intra frames).</param>
+    public Av1ReferenceFrame(int orderHint, Av1Plane luma, Av1Plane? chromaU, Av1Plane? chromaV, Av1FrameCdfSet? cdfs = null, ObuPrimaryReferenceState? headerState = null, Av1TemporalMvs? temporalMvs = null, int[]? referenceOrderHints = null)
     {
         this.OrderHint = orderHint;
         this.Luma = luma;
@@ -29,6 +33,8 @@ internal sealed class Av1ReferenceFrame
         this.ChromaV = chromaV;
         this.Cdfs = cdfs;
         this.HeaderState = headerState;
+        this.TemporalMvs = temporalMvs;
+        this.ReferenceOrderHints = referenceOrderHints ?? new int[7];
     }
 
     /// <summary>Gets the frame's order hint.</summary>
@@ -48,4 +54,10 @@ internal sealed class Av1ReferenceFrame
 
     /// <summary>Gets the frame-end header inheritance state, or <see langword="null"/> for the defaults.</summary>
     public ObuPrimaryReferenceState? HeaderState { get; }
+
+    /// <summary>Gets the frame's saved temporal motion field, or <see langword="null"/> for intra frames.</summary>
+    public Av1TemporalMvs? TemporalMvs { get; }
+
+    /// <summary>Gets the order hints of the frame's own seven references, by name.</summary>
+    public int[] ReferenceOrderHints { get; }
 }

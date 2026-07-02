@@ -69,7 +69,7 @@ internal static class Av1InterModeInfoDecoder
         Av1MotionVectorStack stack = new();
         (int candidateCount, int modeContext) = Av1MotionVectorFinder.Find(
             grid, stack, bx4, by4, blockSize, reference + 1, options.Bounds, topRightAvailable,
-            options.ImageWidth4, options.ImageHeight4, options.GlobalMv, options.GlobalMvSubstitution, options.SignBias);
+            options.ImageWidth4, options.ImageHeight4, options.GlobalMv, options.GlobalMvSubstitution, options.SignBias, options.Temporal);
 
         Span<Av1MotionVectorCandidate> candidates = stackalloc Av1MotionVectorCandidate[8];
         stack.CopyTo(candidates);

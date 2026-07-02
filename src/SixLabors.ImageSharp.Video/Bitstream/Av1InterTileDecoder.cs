@@ -14,9 +14,10 @@ namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 /// (<see cref="Av1InterPredictor"/>) and add the residual through the shared transform-block loop, which
 /// supports both the uniform transform mode and the <c>TX_MODE_SELECT</c> variable-transform tree.
 /// Intra blocks inside the inter frame read their luma mode from the inter-frame y_mode CDF and reuse
-/// the shared intra body. The implemented subset is single-reference, error-resilient frames (default
-/// CDFs, no temporal motion vectors) with translation-only motion; compound prediction and
-/// warped/overlapped motion raise <see cref="NotSupportedException"/>.
+/// the shared intra body. Frames may inherit their CDF state via <c>primary_ref_frame</c> and predict
+/// motion vectors temporally via <c>use_ref_frame_mvs</c>. The implemented subset is single-reference
+/// prediction with translation-only motion; compound prediction and warped/overlapped motion raise
+/// <see cref="NotSupportedException"/>.
 /// </summary>
 internal sealed class Av1InterTileDecoder : Av1TileDecoder
 {
@@ -104,20 +105,37 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         this.lumaTransformTypes = new Av1TransformType[columns4 * rows4];
         this.grid = new Av1MotionVectorGrid(columns4, rows4);
         this.interNeighbours = new Av1InterNeighbourContext(columns4, rows4);
+
+        // Sign bias: whether each reference lies in the future of the current frame.
+        int[] signBias = new int[7];
+        int orderHintBits = sequenceHeader.OrderHintBits;
+        if (orderHintBits > 0)
+        {
+            for (int i = 0; i < 7; i++)
+            {
+                int refHint = references[i]?.OrderHint ?? 0;
+                signBias[i] = Av1TemporalMvs.GetOrderHintDifference(orderHintBits, refHint, frameHeader.OrderHint) > 0 ? 1 : 0;
+            }
+        }
+
         this.options = new Av1InterModeInfoOptions(
             new Av1TileBounds(0, columns4, 0, rows4),
             columns4,
             rows4,
             allowHighPrecisionMv: frameHeader.AllowHighPrecisionMv,
-            forceIntegerMv: false,
+            forceIntegerMv: frameHeader.ForceIntegerMv,
             filterSwitchable: frameHeader.InterpolationFilter == 4,
             dualFilter: sequenceHeader.EnableDualFilter,
             fixedFilter: frameHeader.InterpolationFilter == 4 ? 0 : frameHeader.InterpolationFilter,
             globalMv: default,
             globalMvSubstitution: false,
             globalMvIsTranslation: false,
-            signBias: new int[7]);
+            signBias,
+            Av1TemporalMvContext.Create(sequenceHeader, frameHeader, references));
     }
+
+    /// <summary>Gets the frame's 4x4 motion-vector grid (sampled at the frame end into the temporal field).</summary>
+    public Av1MotionVectorGrid MotionVectorGrid => this.grid;
 
     private static Av1ReferenceFrame?[] CreateUniformReferences(Av1ReferenceFrame reference)
     {
