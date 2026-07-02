@@ -73,6 +73,19 @@ internal sealed class Av1SymbolDecoder
     }
 
     /// <summary>
+    /// Decodes a boolean with the given fixed Q15 probability without adaptation, matching
+    /// <c>dav1d_msac_decode_bool</c> (a two-symbol decode over an inverse CDF is arithmetically
+    /// identical).
+    /// </summary>
+    /// <param name="probability">The Q15 probability of decoding one.</param>
+    /// <returns>The decoded bit.</returns>
+    public int ReadBool(uint probability)
+    {
+        ReadOnlySpan<ushort> cdf = [(ushort)probability, 0, 0];
+        return this.ReadSymbolNoUpdate(cdf);
+    }
+
+    /// <summary>
     /// Decodes <paramref name="numBits"/> equiprobable bits, most significant bit first.
     /// </summary>
     /// <param name="numBits">The number of bits to read.</param>

@@ -1029,16 +1029,63 @@ internal class Av1TileDecoder
 
     private Av1Partition ReadPartition(int row, int col, Av1BlockSize bsize, bool hasRows, bool hasCols)
     {
-        if (!hasRows || !hasCols)
-        {
-            throw new NotSupportedException("Partition signalling at the frame edge is not supported yet.");
-        }
-
         int blockLevel = bsize.GetPartitionLevel();
         int shift = 4 - blockLevel;
         int above = (this.abovePartition[col >> 1] >> shift) & 1;
         int left = (this.leftPartition[row >> 1] >> shift) & 1;
-        return (Av1Partition)this.decoder.ReadSymbol(this.modeCdf.Partition[blockLevel][above + (left << 1)]);
+        ushort[] cdf = this.modeCdf.Partition[blockLevel][above + (left << 1)];
+
+        if (hasRows && hasCols)
+        {
+            return (Av1Partition)this.decoder.ReadSymbol(cdf);
+        }
+
+        if (!hasRows && !hasCols)
+        {
+            // Neither half fits: an implicit split, no bits are coded.
+            return Av1Partition.Split;
+        }
+
+        // Only one direction fits (a frame edge): a single non-adaptive boolean chooses between a split
+        // and the sole partition whose blocks lie inside the frame, decoded with a probability gathered
+        // from the full partition CDF (dav1d gather_top/left_partition_prob). The edge cases only occur
+        // above the 8x8 level, where the frame's even 4x4 dimensions guarantee both halves fit.
+        if (!hasRows)
+        {
+            uint probability = GatherTopSplitProbability(cdf, blockLevel);
+            return this.decoder.ReadBool(probability) != 0 ? Av1Partition.Split : Av1Partition.Horizontal;
+        }
+
+        uint probabilityLeft = GatherLeftSplitProbability(cdf, blockLevel);
+        return this.decoder.ReadBool(probabilityLeft) != 0 ? Av1Partition.Split : Av1Partition.Vertical;
+    }
+
+    // dav1d gather_top_partition_prob: the summed probability of every partition with a vertical split
+    // boundary (V, SPLIT, T_TOP, T_LEFT, T_RIGHT, V4), read from the inverse-CDF boundaries.
+    private static uint GatherTopSplitProbability(ushort[] cdf, int blockLevel)
+    {
+        uint result = (uint)(cdf[(int)Av1Partition.Vertical - 1] - cdf[(int)Av1Partition.HorizontalA]);
+        result += cdf[(int)Av1Partition.VerticalA - 1];
+        if (blockLevel != 0)
+        {
+            result += (uint)(cdf[(int)Av1Partition.Vertical4 - 1] - cdf[(int)Av1Partition.VerticalB]);
+        }
+
+        return result;
+    }
+
+    // dav1d gather_left_partition_prob: the summed probability of every partition with a horizontal
+    // split boundary (H, SPLIT, T_TOP, T_BOTTOM, T_LEFT, H4).
+    private static uint GatherLeftSplitProbability(ushort[] cdf, int blockLevel)
+    {
+        uint result = (uint)(cdf[(int)Av1Partition.Horizontal - 1] - cdf[(int)Av1Partition.Horizontal]);
+        result += (uint)(cdf[(int)Av1Partition.Split - 1] - cdf[(int)Av1Partition.VerticalA]);
+        if (blockLevel != 0)
+        {
+            result += (uint)(cdf[(int)Av1Partition.Horizontal4 - 1] - cdf[(int)Av1Partition.Horizontal4]);
+        }
+
+        return result;
     }
 
     /// <summary>
