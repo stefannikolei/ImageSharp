@@ -159,6 +159,9 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets a value indicating whether warped motion is allowed.</summary>
     public bool AllowWarpedMotion { get; init; }
 
+    /// <summary>Gets the seven per-reference global-motion models (identity for intra frames).</summary>
+    public Av1WarpedMotionParams[] GlobalMotionParams { get; init; }
+
     /// <summary>
     /// Parses an uncompressed frame header for the intra path (specification section 5.9.2).
     /// </summary>
@@ -359,6 +362,7 @@ internal readonly struct ObuFrameHeader
             LoopRestorationParameters = loopRestoration,
             OrderHint = orderHintIntra,
             RefreshFrameFlags = refreshFrameFlagsIntra,
+            GlobalMotionParams = [Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity],
             EndBitPosition = reader.BitPosition,
         };
     }
@@ -501,13 +505,12 @@ internal readonly struct ObuFrameHeader
         bool allowWarpedMotion = !errorResilientMode && sequenceHeader.EnableWarpedMotion && reader.ReadBoolean();
         bool reducedTxSet = reader.ReadBoolean();
 
-        // global_motion_params(): identity for every reference (each contributes one is_global bit).
+        // global_motion_params(): one model per reference, with parameter deltas coded against the
+        // primary reference's saved models (identity when there is none).
+        Av1WarpedMotionParams[] globalMotion = new Av1WarpedMotionParams[7];
         for (int i = 0; i < 7; i++)
         {
-            if (reader.ReadBoolean())
-            {
-                throw new NotSupportedException("Non-identity global motion is not supported yet.");
-            }
+            globalMotion[i] = ReadGlobalMotionParams(ref reader, inherited.GlobalMotion[i], allowHighPrecisionMv);
         }
 
         if (sequenceHeader.FilmGrainParamsPresent && (showFrame || showableFrame))
@@ -561,6 +564,7 @@ internal readonly struct ObuFrameHeader
             ReferenceSelect = referenceSelect,
             SkipModeEnabled = skipModeEnabled,
             AllowWarpedMotion = allowWarpedMotion,
+            GlobalMotionParams = globalMotion,
             EndBitPosition = reader.BitPosition,
         };
     }
@@ -866,6 +870,54 @@ internal readonly struct ObuFrameHeader
         }
 
         return segmentationEnabled;
+    }
+
+    // global_motion_params() for one reference (dav1d obu.c): the model type as up to three flag bits,
+    // then the matrix entries as sub-exponential deltas against the primary reference's saved model.
+    // The inner 2x2 codes in Q13 around identity (scaled to Q16 by the *2), the translation in units
+    // that depend on the model type and the motion-vector precision.
+    private static Av1WarpedMotionParams ReadGlobalMotionParams(ref Av1BitStreamReader reader, Av1WarpedMotionParams reference, bool allowHighPrecisionMv)
+    {
+        Av1WarpModelType type = !reader.ReadBoolean() ? Av1WarpModelType.Identity :
+            reader.ReadBoolean() ? Av1WarpModelType.RotZoom :
+            reader.ReadBoolean() ? Av1WarpModelType.Translation : Av1WarpModelType.Affine;
+
+        if (type == Av1WarpModelType.Identity)
+        {
+            return Av1WarpedMotionParams.Identity;
+        }
+
+        int[] matrix = [0, 0, 1 << 16, 0, 0, 1 << 16];
+        int[] referenceMatrix = reference.Matrix;
+        int bits;
+        int shift;
+        if (type >= Av1WarpModelType.RotZoom)
+        {
+            matrix[2] = (1 << 16) + (2 * reader.ReadSubExponential((referenceMatrix[2] - (1 << 16)) >> 1, 12));
+            matrix[3] = 2 * reader.ReadSubExponential(referenceMatrix[3] >> 1, 12);
+            bits = 12;
+            shift = 10;
+        }
+        else
+        {
+            bits = allowHighPrecisionMv ? 9 : 8;
+            shift = allowHighPrecisionMv ? 13 : 14;
+        }
+
+        if (type == Av1WarpModelType.Affine)
+        {
+            matrix[4] = 2 * reader.ReadSubExponential(referenceMatrix[4] >> 1, 12);
+            matrix[5] = (1 << 16) + (2 * reader.ReadSubExponential((referenceMatrix[5] - (1 << 16)) >> 1, 12));
+        }
+        else
+        {
+            matrix[4] = -matrix[3];
+            matrix[5] = matrix[2];
+        }
+
+        matrix[0] = reader.ReadSubExponential(referenceMatrix[0] >> shift, bits) * (1 << shift);
+        matrix[1] = reader.ReadSubExponential(referenceMatrix[1] >> shift, bits) * (1 << shift);
+        return new Av1WarpedMotionParams(type, matrix);
     }
 
     private static LoopFilter ReadLoopFilterParams(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool codedLossless, bool allowIntraBlockCopy, ObuPrimaryReferenceState? inherited = null)

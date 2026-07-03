@@ -149,6 +149,59 @@ internal ref struct Av1BitStreamReader
     }
 
     /// <summary>
+    /// Reads a sub-exponentially coded value recentred around a reference (dav1d
+    /// <c>get_bits_subexp</c>, the specification's <c>decode_signed_subexp_with_ref</c> for the range
+    /// [-(1 &lt;&lt; n), 1 &lt;&lt; n]). Used by the global-motion parameter deltas.
+    /// </summary>
+    /// <param name="reference">The prediction the coded value is recentred around.</param>
+    /// <param name="n">The magnitude bit count.</param>
+    /// <returns>The decoded signed value.</returns>
+    public int ReadSubExponential(int reference, int n)
+    {
+        uint unsignedReference = (uint)(reference + (1 << n));
+        uint range = 2u << n;
+
+        uint v = 0;
+        for (int i = 0; ; i++)
+        {
+            int b = i != 0 ? 3 + i - 1 : 3;
+            if (range < v + (3u << b))
+            {
+                v += this.ReadNonSymmetric(range - v + 1);
+                break;
+            }
+
+            if (!this.ReadBoolean())
+            {
+                v += this.ReadLiteral(b);
+                break;
+            }
+
+            v += 1u << b;
+        }
+
+        uint recentred = unsignedReference * 2 <= range
+            ? InverseRecentre(unsignedReference, v)
+            : range - InverseRecentre(range - unsignedReference, v);
+        return (int)recentred - (1 << n);
+    }
+
+    private static uint InverseRecentre(uint reference, uint v)
+    {
+        if (v > reference * 2)
+        {
+            return v;
+        }
+
+        if ((v & 1) == 0)
+        {
+            return (v >> 1) + reference;
+        }
+
+        return reference - ((v + 1) >> 1);
+    }
+
+    /// <summary>
     /// Reads <paramref name="n"/> bytes as a little-endian unsigned integer.
     /// Corresponds to <c>le(n)</c> in the specification; the reader must be byte-aligned.
     /// </summary>

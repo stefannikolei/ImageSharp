@@ -65,11 +65,19 @@ internal static class Av1InterModeInfoDecoder
         int[] referenceContexts = Av1ReferenceContext.ComputeSingleReferenceContexts(above, left, haveTop, haveLeft);
         int reference = Av1ReferenceFrameReader.ReadSingleReference(decoder, interCdf, referenceContexts);
 
+        // The block's global-motion vector for its reference (dav1d tgmv): the predictor list fills
+        // towards it, GLOBALMV blocks resolve to it, and neighbours coded as GLOBALMV substitute it when
+        // the model is non-translational.
+        Obu.Av1WarpedMotionParams globalModel = options.GlobalMotion[reference];
+        Av1MotionVector globalMv = Prediction.Av1WarpedMotion.GetGlobalMv(
+            globalModel, bx4, by4, bw4, bh4, options.AllowHighPrecisionMv, options.ForceIntegerMv);
+        bool globalMvSubstitution = globalModel.Type > Obu.Av1WarpModelType.Translation;
+
         // Motion-vector candidate list and mode context.
         Av1MotionVectorStack stack = new();
         (int candidateCount, int modeContext) = Av1MotionVectorFinder.Find(
             grid, stack, bx4, by4, blockSize, reference + 1, options.Bounds, topRightAvailable,
-            options.ImageWidth4, options.ImageHeight4, options.GlobalMv, options.GlobalMvSubstitution, options.SignBias, options.Temporal);
+            options.ImageWidth4, options.ImageHeight4, globalMv, globalMvSubstitution, options.SignBias, options.Temporal);
 
         Span<Av1MotionVectorCandidate> candidates = stackalloc Av1MotionVectorCandidate[8];
         stack.CopyTo(candidates);
@@ -79,16 +87,20 @@ internal static class Av1InterModeInfoDecoder
 
         // Resolve the motion vector.
         Av1MotionVector motionVector = ResolveMotionVector(
-            decoder, mvCdf, stack, candidateCount, mode, drlIndex, options);
+            decoder, mvCdf, stack, candidateCount, mode, drlIndex, globalMv, options);
 
-        // has_subpel_filter: always set unless this is a translational/identity global-motion block.
+        // has_subpel_filter: always set unless this is a non-translation global-motion block.
         bool hasSubpelFilter = mode != Av1InterPredictionMode.GlobalMv
             || Math.Min(bw4, bh4) == 1
-            || options.GlobalMvIsTranslation;
+            || globalModel.Type == Obu.Av1WarpModelType.Translation;
 
-        // Motion mode (read before the subpel filter so a warp block can clear it).
+        // Motion mode (read before the subpel filter so a warp block can clear it). A GLOBALMV block
+        // predicted by a warped (non-translational) global model carries no coded motion mode.
         Av1MotionMode motionMode = Av1MotionMode.Translation;
-        if (readMotionMode)
+        bool isWarpedGlobalMv = mode == Av1InterPredictionMode.GlobalMv
+            && !options.ForceIntegerMv
+            && globalModel.Type > Obu.Av1WarpModelType.Translation;
+        if (readMotionMode && !isWarpedGlobalMv)
         {
             motionMode = Av1MotionModeReader.ReadMotionMode(decoder, motionModeCdf, blockSize, allowWarp);
             if (motionMode == Av1MotionMode.Warp)
@@ -131,12 +143,13 @@ internal static class Av1InterModeInfoDecoder
         int candidateCount,
         Av1InterPredictionMode mode,
         int drlIndex,
+        Av1MotionVector globalMv,
         in Av1InterModeInfoOptions options)
     {
         switch (mode)
         {
             case Av1InterPredictionMode.GlobalMv:
-                return options.GlobalMv;
+                return globalMv;
 
             case Av1InterPredictionMode.NewMv:
             {

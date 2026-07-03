@@ -26,10 +26,15 @@ public class Av1InterModeInfoDecoderTests
         filterSwitchable: true,
         dualFilter: false,
         fixedFilter: 0,
-        globalMv: default,
-        globalMvSubstitution: false,
-        globalMvIsTranslation: false,
+        globalMotion: CreateIdentityGlobalMotion(),
         signBias: new int[7]);
+
+    private static Formats.Av1.Obu.Av1WarpedMotionParams[] CreateIdentityGlobalMotion()
+    {
+        Formats.Av1.Obu.Av1WarpedMotionParams[] models = new Formats.Av1.Obu.Av1WarpedMotionParams[7];
+        Array.Fill(models, Formats.Av1.Obu.Av1WarpedMotionParams.Identity);
+        return models;
+    }
 
     private static (Av1MotionVectorGrid Grid, Av1InterNeighbourContext Neighbours) BuildScene()
     {
@@ -60,7 +65,7 @@ public class Av1InterModeInfoDecoderTests
         Av1MotionVectorStack planStack = new();
         (int count, int modeContext) = Av1MotionVectorFinder.Find(
             grid, planStack, Bx4, By4, Av1BlockSize.Block8x8, referenceFrame: 1, options.Bounds,
-            topRightAvailable: false, options.ImageWidth4, options.ImageHeight4, options.GlobalMv, options.GlobalMvSubstitution, options.SignBias);
+            topRightAvailable: false, options.ImageWidth4, options.ImageHeight4, globalMv: default, globalMvSubstitution: false, options.SignBias);
         int horizontalContext = Av1ReferenceContext.ComputeFilterContext(above, left, isCompound: false, direction: 0, reference: 0);
 
         Av1MotionVector predictor = planStack[0].MotionVector; // count == 1, no precision change for these values

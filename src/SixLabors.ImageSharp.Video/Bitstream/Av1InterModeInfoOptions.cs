@@ -19,9 +19,7 @@ internal readonly struct Av1InterModeInfoOptions
     /// <param name="filterSwitchable">Whether the interpolation filter is coded per block.</param>
     /// <param name="dualFilter">Whether horizontal/vertical filters are coded independently.</param>
     /// <param name="fixedFilter">The fixed interpolation filter (used when not switchable).</param>
-    /// <param name="globalMv">The global-motion (predictor) vector.</param>
-    /// <param name="globalMvSubstitution">Whether neighbours substitute the global-motion vector.</param>
-    /// <param name="globalMvIsTranslation">Whether the global-motion model is translational.</param>
+    /// <param name="globalMotion">The seven per-reference global-motion models.</param>
     /// <param name="signBias">The per-reference sign bias, indexed by zero-based reference.</param>
     /// <param name="temporal">The temporal motion-vector prediction state, or <see langword="null"/>.</param>
     public Av1InterModeInfoOptions(
@@ -33,9 +31,7 @@ internal readonly struct Av1InterModeInfoOptions
         bool filterSwitchable,
         bool dualFilter,
         int fixedFilter,
-        Av1MotionVector globalMv,
-        bool globalMvSubstitution,
-        bool globalMvIsTranslation,
+        Obu.Av1WarpedMotionParams[] globalMotion,
         int[] signBias,
         Av1TemporalMvContext? temporal = null)
     {
@@ -47,9 +43,7 @@ internal readonly struct Av1InterModeInfoOptions
         this.FilterSwitchable = filterSwitchable;
         this.DualFilter = dualFilter;
         this.FixedFilter = fixedFilter;
-        this.GlobalMv = globalMv;
-        this.GlobalMvSubstitution = globalMvSubstitution;
-        this.GlobalMvIsTranslation = globalMvIsTranslation;
+        this.GlobalMotion = globalMotion;
         this.SignBias = signBias;
         this.Temporal = temporal;
     }
@@ -78,14 +72,8 @@ internal readonly struct Av1InterModeInfoOptions
     /// <summary>Gets the fixed interpolation filter (used when not switchable).</summary>
     public int FixedFilter { get; }
 
-    /// <summary>Gets the global-motion (predictor) vector.</summary>
-    public Av1MotionVector GlobalMv { get; }
-
-    /// <summary>Gets a value indicating whether neighbours substitute the global-motion vector.</summary>
-    public bool GlobalMvSubstitution { get; }
-
-    /// <summary>Gets a value indicating whether the global-motion model is translational.</summary>
-    public bool GlobalMvIsTranslation { get; }
+    /// <summary>Gets the seven per-reference global-motion models.</summary>
+    public Obu.Av1WarpedMotionParams[] GlobalMotion { get; }
 
     /// <summary>Gets the per-reference sign bias, indexed by zero-based reference.</summary>
     public int[] SignBias { get; }

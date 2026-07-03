@@ -49,6 +49,10 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // substitutes the motion-compensated samples instead of an intra prediction.
     private bool currentBlockIsInter;
 
+    // Per reference: the derived shear parameters of an applicable global-motion warp model, or null
+    // when the reference's model is identity/translation or too sheared to warp.
+    private readonly short[]?[] globalWarpShear = new short[7][];
+
     /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class with a single
     /// reference frame used for every reference name (two-frame clips, where all slots hold the key frame).</summary>
     /// <param name="sequenceHeader">The sequence header.</param>
@@ -127,11 +131,24 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             filterSwitchable: frameHeader.InterpolationFilter == 4,
             dualFilter: sequenceHeader.EnableDualFilter,
             fixedFilter: frameHeader.InterpolationFilter == 4 ? 0 : frameHeader.InterpolationFilter,
-            globalMv: default,
-            globalMvSubstitution: false,
-            globalMvIsTranslation: false,
+            frameHeader.GlobalMotionParams,
             signBias,
             Av1TemporalMvContext.Create(sequenceHeader, frameHeader, references));
+
+        // Whether each reference's global-motion model can be applied as a warp (dav1d
+        // gmv_warp_allowed): a non-translation model whose shear parameters are within limits.
+        for (int i = 0; i < 7; i++)
+        {
+            Av1WarpedMotionParams model = frameHeader.GlobalMotionParams[i];
+            if (!frameHeader.ForceIntegerMv && model.Type > Av1WarpModelType.Translation)
+            {
+                short[] shear = new short[4];
+                if (!Prediction.Av1WarpedMotion.TryGetShearParams(model.Matrix, shear))
+                {
+                    this.globalWarpShear[i] = shear;
+                }
+            }
+        }
     }
 
     /// <summary>Gets the frame's 4x4 motion-vector grid (sampled at the frame end into the temporal field).</summary>
@@ -233,9 +250,23 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             throw new NotSupportedException("OBMC and warped motion compensation are not supported yet.");
         }
 
-        // Motion-compensate every plane from the block's reference frame into the output planes.
+        // Motion-compensate every plane from the block's reference frame into the output planes. A
+        // GLOBALMV block whose reference has a warpable (non-translational, shearable) global model is
+        // predicted with the affine warp kernel instead of translational MC (dav1d's warp_affine path).
         Av1ReferenceFrame blockReference = this.GetReference(info.Reference);
-        this.MotionCompensate(this.luma, blockReference.Luma, row, col, width4, height4, info, 0, 0);
+        short[]? warpShear = info.Mode == Av1InterPredictionMode.GlobalMv && Math.Min(width4, height4) > 1
+            ? this.globalWarpShear[info.Reference]
+            : null;
+        if (warpShear is not null)
+        {
+            Prediction.Av1WarpedMotion.WarpPlane(
+                this.luma, blockReference.Luma, col, row, width4, height4,
+                this.frameHeader.GlobalMotionParams[info.Reference].Matrix, warpShear, 0, 0);
+        }
+        else
+        {
+            this.MotionCompensate(this.luma, blockReference.Luma, row, col, width4, height4, info, 0, 0);
+        }
         bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
                          (height4 > this.subsamplingY || (row & 1) != 0);
@@ -317,6 +348,24 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         int baseY = (row >> this.subsamplingY) * 4;
         if (!isSub8x8)
         {
+            // A chroma unit of more than one 4x4 cell per dimension follows the luma warp when the
+            // block is GLOBALMV with a warpable model; a smaller unit (or any non-warp block) is
+            // predicted translationally with this block's motion vector.
+            int cbw4 = (width4 + this.subsamplingX) >> this.subsamplingX;
+            int cbh4 = (height4 + this.subsamplingY) >> this.subsamplingY;
+            if (Math.Min(cbw4, cbh4) > 1
+                && info.Mode == Av1InterPredictionMode.GlobalMv
+                && this.globalWarpShear[info.Reference] is { } warpShear)
+            {
+                Av1ReferenceFrame referenceFrame = this.GetReference(info.Reference);
+                int[] matrix = this.frameHeader.GlobalMotionParams[info.Reference].Matrix;
+                Prediction.Av1WarpedMotion.WarpPlane(
+                    this.chromaU, referenceFrame.ChromaU!, col, row, width4, height4, matrix, warpShear, this.subsamplingX, this.subsamplingY);
+                Prediction.Av1WarpedMotion.WarpPlane(
+                    this.chromaV, referenceFrame.ChromaV!, col, row, width4, height4, matrix, warpShear, this.subsamplingX, this.subsamplingY);
+                return;
+            }
+
             // Predict the whole (8x8-aligned) chroma unit with this block's motion vector.
             int alignedCol = col & ~this.subsamplingX;
             int alignedRow = row & ~this.subsamplingY;
