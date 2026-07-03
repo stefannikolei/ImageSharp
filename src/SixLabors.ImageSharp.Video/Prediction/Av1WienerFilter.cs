@@ -109,7 +109,7 @@ internal static class Av1WienerFilter
     /// <param name="dst">The destination plane samples (initially the CDEF output), modified in place.</param>
     /// <param name="cdef">A read-only snapshot of the CDEF-filtered plane.</param>
     /// <param name="deblock">A read-only snapshot of the deblocked, pre-CDEF plane.</param>
-    /// <param name="planeWidth">The plane width in samples.</param>
+    /// <param name="stride">The plane row stride in samples.</param>
     /// <param name="x0">The unit's left column.</param>
     /// <param name="unitWidth">The unit width in samples.</param>
     /// <param name="stripeTop">The first row of the stripe.</param>
@@ -121,7 +121,7 @@ internal static class Av1WienerFilter
     /// <param name="filterH">The three coded horizontal taps.</param>
     /// <param name="filterV">The three coded vertical taps.</param>
     public static void Stripe(
-        byte[] dst, byte[] cdef, byte[] deblock, int planeWidth,
+        byte[] dst, byte[] cdef, byte[] deblock, int stride,
         int x0, int unitWidth, int stripeTop, int stripeEnd,
         bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int[] filterH, int[] filterV)
     {
@@ -174,11 +174,11 @@ internal static class Av1WienerFilter
             byte[] left = [];
             if (haveLeft)
             {
-                left = [0, buf[(row * planeWidth) + x0 - 3], buf[(row * planeWidth) + x0 - 2], buf[(row * planeWidth) + x0 - 1]];
+                left = [0, buf[(row * stride) + x0 - 3], buf[(row * stride) + x0 - 2], buf[(row * stride) + x0 - 1]];
             }
 
             ushort[] hr = new ushort[unitWidth];
-            FilterHorizontal(hr, buf, (row * planeWidth) + x0, left, fh, unitWidth, edges);
+            FilterHorizontal(hr, buf, (row * stride) + x0, left, fh, unitWidth, edges);
             hor[ri - rowTop] = hr;
         }
 
@@ -190,7 +190,7 @@ internal static class Av1WienerFilter
                 rows7[k] = hor[r - 3 + k - rowTop];
             }
 
-            FilterVertical(dst, (r * planeWidth) + x0, rows7, fv, unitWidth);
+            FilterVertical(dst, (r * stride) + x0, rows7, fv, unitWidth);
         }
     }
 }

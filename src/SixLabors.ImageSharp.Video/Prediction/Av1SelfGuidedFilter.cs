@@ -40,7 +40,8 @@ internal static class Av1SelfGuidedFilter
     /// <param name="dst">The destination plane samples (initially the CDEF output), modified in place.</param>
     /// <param name="cdef">A read-only snapshot of the CDEF-filtered plane (interior source rows).</param>
     /// <param name="deblock">A read-only snapshot of the deblocked, pre-CDEF plane (stripe-boundary rows).</param>
-    /// <param name="planeWidth">The plane width in samples.</param>
+    /// <param name="planeWidth">The visible plane width in samples (bounds edge replication).</param>
+    /// <param name="stride">The plane row stride in samples.</param>
     /// <param name="x0">The unit's left column.</param>
     /// <param name="unitWidth">The unit width in samples.</param>
     /// <param name="stripeTop">The first row of the stripe.</param>
@@ -54,7 +55,7 @@ internal static class Av1SelfGuidedFilter
     /// <param name="w0">The radius-2 projection weight.</param>
     /// <param name="w1">The radius-1 projection weight.</param>
     public static void Stripe(
-        byte[] dst, byte[] cdef, byte[] deblock, int planeWidth,
+        byte[] dst, byte[] cdef, byte[] deblock, int planeWidth, int stride,
         int x0, int unitWidth, int stripeTop, int stripeEnd,
         bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int s0, int s1, int w0, int w1)
     {
@@ -118,7 +119,7 @@ internal static class Av1SelfGuidedFilter
                 ax = planeWidth - 1;
             }
 
-            return buf[(row * planeWidth) + ax];
+            return buf[(row * stride) + ax];
         }
 
         int rowTop = stripeTop - 3;
@@ -242,7 +243,7 @@ internal static class Av1SelfGuidedFilter
 
         for (int r = stripeTop; r < stripeEnd; r++)
         {
-            int rowBase = r * planeWidth;
+            int rowBase = r * stride;
             for (int x = x0; x < x0 + unitWidth; x++)
             {
                 int j = x - x0 + 1;

@@ -130,6 +130,13 @@ internal class Av1TileDecoder
     private readonly int chromaStride4;
     private readonly int chromaRows4;
 
+    // Deblocking iteration bounds in 4x4 units, derived from the visible (crop) size: the overhanging
+    // reconstruction area is never filtered (dav1d filters up to f->w4/h4).
+    private readonly int lumaCropCols4;
+    private readonly int lumaCropRows4;
+    private readonly int chromaCropCols4;
+    private readonly int chromaCropRows4;
+
     private protected Av1SymbolDecoder decoder = default!;
 
     public Av1TileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader)
@@ -154,9 +161,18 @@ internal class Av1TileDecoder
         int chromaWidth = (width + this.subsamplingX) >> this.subsamplingX;
         int chromaHeight = (height + this.subsamplingY) >> this.subsamplingY;
 
-        this.luma = new Av1Plane(width, height);
-        this.chromaU = new Av1Plane(chromaWidth, chromaHeight);
-        this.chromaV = new Av1Plane(chromaWidth, chromaHeight);
+        // The planes cover the frame rounded up to whole superblocks so blocks and transform blocks that
+        // overhang the visible frame reconstruct fully (the reference decoder pads its picture buffers the
+        // same way; chroma-from-luma reads those samples at frame edges). The crop dimensions carry the
+        // visible size, which also bounds motion-compensation edge replication.
+        int superblockSize = sequenceHeader.Use128x128Superblock ? 128 : 64;
+        int alignedWidth = (width + superblockSize - 1) & ~(superblockSize - 1);
+        int alignedHeight = (height + superblockSize - 1) & ~(superblockSize - 1);
+        int alignedChromaWidth = alignedWidth >> this.subsamplingX;
+        int alignedChromaHeight = alignedHeight >> this.subsamplingY;
+        this.luma = new Av1Plane(alignedWidth, alignedHeight, width, height);
+        this.chromaU = new Av1Plane(alignedChromaWidth, alignedChromaHeight, chromaWidth, chromaHeight);
+        this.chromaV = new Av1Plane(alignedChromaWidth, alignedChromaHeight, chromaWidth, chromaHeight);
 
         int miCols = frameHeader.ModeInfoColumns;
         int miRows = frameHeader.ModeInfoRows;
@@ -191,8 +207,12 @@ internal class Av1TileDecoder
         this.lumaTxLh = new byte[miCols * miRows];
         this.lumaEdgeV = new bool[miCols * miRows];
         this.lumaEdgeH = new bool[miCols * miRows];
-        this.chromaStride4 = (chromaWidth + 3) >> 2;
-        this.chromaRows4 = (chromaHeight + 3) >> 2;
+        this.chromaStride4 = alignedChromaWidth >> 2;
+        this.chromaRows4 = alignedChromaHeight >> 2;
+        this.lumaCropCols4 = (width + 3) >> 2;
+        this.lumaCropRows4 = (height + 3) >> 2;
+        this.chromaCropCols4 = (chromaWidth + 3) >> 2;
+        this.chromaCropRows4 = (chromaHeight + 3) >> 2;
         int chromaCells = Math.Max(1, this.chromaStride4 * this.chromaRows4);
         this.chromaTxLw = new byte[chromaCells];
         this.chromaTxLh = new byte[chromaCells];
@@ -311,8 +331,9 @@ internal class Av1TileDecoder
             byte[] dst = plane.Samples;
             byte[] cdef = (byte[])dst.Clone();
             byte[] deblock = this.deblockSnapshot[p]!;
-            int width = plane.Width;
-            int height = plane.Height;
+            int width = plane.CropWidth;
+            int height = plane.CropHeight;
+            int stride = plane.Width;
             int ssVer = p != 0 ? this.subsamplingY : 0;
             int ssHor = p != 0 ? this.subsamplingX : 0;
             int unitSize = 1 << lr.UnitSizeLog2[p != 0 ? 1 : 0];
@@ -344,7 +365,7 @@ internal class Av1TileDecoder
                 {
                     bool haveTop = y > 0;
                     bool haveBottom = notLast || (y + stripeH != rowH);
-                    this.RestoreStripeColumns(p, dst, cdef, deblock, width, unitSize, maxUnit, alignedY, y, y + stripeH, haveTop, haveBottom);
+                    this.RestoreStripeColumns(p, dst, cdef, deblock, width, stride, unitSize, maxUnit, alignedY, y, y + stripeH, haveTop, haveBottom);
 
                     y += stripeH;
                     stripeH = Math.Min(stripeStep, rowH - y);
@@ -354,7 +375,7 @@ internal class Av1TileDecoder
     }
 
     // Filters every restoration unit column intersecting one stripe.
-    private void RestoreStripeColumns(int plane, byte[] dst, byte[] cdef, byte[] deblock, int width, int unitSize, int maxUnit, int alignedY, int stripeTop, int stripeEnd, bool haveTop, bool haveBottom)
+    private void RestoreStripeColumns(int plane, byte[] dst, byte[] cdef, byte[] deblock, int width, int stride, int unitSize, int maxUnit, int alignedY, int stripeTop, int stripeEnd, bool haveTop, bool haveBottom)
     {
         int x = 0;
         while (true)
@@ -368,11 +389,11 @@ internal class Av1TileDecoder
             {
                 if (unit.Type == 2)
                 {
-                    Av1WienerFilter.Stripe(dst, cdef, deblock, width, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, unit.FilterH, unit.FilterV);
+                    Av1WienerFilter.Stripe(dst, cdef, deblock, stride, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, unit.FilterH, unit.FilterV);
                 }
                 else
                 {
-                    Av1SelfGuidedFilter.Stripe(dst, cdef, deblock, width, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, SgrParams[unit.SgrIdx][0], SgrParams[unit.SgrIdx][1], unit.SgrW0, unit.SgrW1);
+                    Av1SelfGuidedFilter.Stripe(dst, cdef, deblock, width, stride, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, SgrParams[unit.SgrIdx][0], SgrParams[unit.SgrIdx][1], unit.SgrW0, unit.SgrW1);
                 }
             }
 
@@ -566,12 +587,12 @@ internal class Av1TileDecoder
             blimit[level] = (2 * (level + 2)) + lim;
         }
 
-        this.DeblockPlane(this.luma, this.miColumns, this.miRows, this.lumaTxLw, this.lumaTxLh, this.lumaEdgeV, this.lumaEdgeH, 0, 1, true, limit, blimit);
+        this.DeblockPlane(this.luma, this.miColumns, this.lumaCropCols4, this.lumaCropRows4, this.lumaTxLw, this.lumaTxLh, this.lumaEdgeV, this.lumaEdgeH, 0, 1, true, limit, blimit);
 
         if (this.sequenceHeader.NumPlanes > 1)
         {
-            this.DeblockPlane(this.chromaU, this.chromaStride4, this.chromaRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, 2, 2, false, limit, blimit);
-            this.DeblockPlane(this.chromaV, this.chromaStride4, this.chromaRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, 3, 3, false, limit, blimit);
+            this.DeblockPlane(this.chromaU, this.chromaStride4, this.chromaCropCols4, this.chromaCropRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, 2, 2, false, limit, blimit);
+            this.DeblockPlane(this.chromaV, this.chromaStride4, this.chromaCropCols4, this.chromaCropRows4, this.chromaTxLw, this.chromaTxLh, this.chromaEdgeV, this.chromaEdgeH, 3, 3, false, limit, blimit);
         }
     }
 
@@ -643,14 +664,14 @@ internal class Av1TileDecoder
         return Math.Clamp(baseLevel + (delta * (1 << shift)), 0, 63);
     }
 
-    private void DeblockPlane(Av1Plane plane, int stride4, int rows4, byte[] txLw, byte[] txLh, bool[] edgeV, bool[] edgeH, int levelOffsetV, int levelOffsetH, bool isLuma, int[] limit, int[] blimit)
+    private void DeblockPlane(Av1Plane plane, int stride4, int cols4, int rows4, byte[] txLw, byte[] txLh, bool[] edgeV, bool[] edgeH, int levelOffsetV, int levelOffsetH, bool isLuma, int[] limit, int[] blimit)
     {
         int stride = plane.Width;
         int maxIdx = isLuma ? 2 : 1;
 
         for (int r4 = 0; r4 < rows4; r4++)
         {
-            for (int c4 = 1; c4 < stride4; c4++)
+            for (int c4 = 1; c4 < cols4; c4++)
             {
                 int mi = (r4 * stride4) + c4;
                 if (!edgeV[mi])
@@ -685,7 +706,7 @@ internal class Av1TileDecoder
 
         for (int r4 = 1; r4 < rows4; r4++)
         {
-            for (int c4 = 0; c4 < stride4; c4++)
+            for (int c4 = 0; c4 < cols4; c4++)
             {
                 int mi = (r4 * stride4) + c4;
                 if (!edgeH[mi])

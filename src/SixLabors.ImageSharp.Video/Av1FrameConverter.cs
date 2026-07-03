@@ -28,12 +28,12 @@ internal static class Av1FrameConverter
         Av1Plane luma = frame.Luma;
         Av1Plane chromaU = frame.ChromaU;
         Av1Plane chromaV = frame.ChromaV;
-        int width = luma.Width;
-        int height = luma.Height;
+        int width = luma.CropWidth;
+        int height = luma.CropHeight;
 
         // Chroma subsampling ratios inferred from the plane dimensions (4:2:0, 4:2:2 or 4:4:4).
-        int subsampleX = width > chromaU.Width ? 1 : 0;
-        int subsampleY = height > chromaU.Height ? 1 : 0;
+        int subsampleX = luma.Width > chromaU.Width ? 1 : 0;
+        int subsampleY = luma.Height > chromaU.Height ? 1 : 0;
 
         Image<TPixel> image = new(configuration, width, height);
         Buffer2D<TPixel> buffer = image.Frames.RootFrame.PixelBuffer;
