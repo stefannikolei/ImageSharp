@@ -18,6 +18,9 @@ internal readonly struct Av1InterBlockInfo
     /// <param name="filter0">The horizontal interpolation filter.</param>
     /// <param name="filter1">The vertical interpolation filter.</param>
     /// <param name="motionMode">The motion mode.</param>
+    /// <param name="warpMatrix">The derived local warp matrix (WARP motion mode with a successful
+    /// derivation), or <see langword="null"/>.</param>
+    /// <param name="warpShear">The derived local warp shear parameters, or <see langword="null"/>.</param>
     public Av1InterBlockInfo(
         int reference,
         Av1InterPredictionMode mode,
@@ -25,7 +28,9 @@ internal readonly struct Av1InterBlockInfo
         Av1MotionVector motionVector,
         int filter0,
         int filter1,
-        Av1MotionMode motionMode)
+        Av1MotionMode motionMode,
+        int[]? warpMatrix = null,
+        short[]? warpShear = null)
     {
         this.Reference = reference;
         this.Mode = mode;
@@ -34,6 +39,8 @@ internal readonly struct Av1InterBlockInfo
         this.Filter0 = filter0;
         this.Filter1 = filter1;
         this.MotionMode = motionMode;
+        this.WarpMatrix = warpMatrix;
+        this.WarpShear = warpShear;
     }
 
     /// <summary>Gets the zero-based reference frame index.</summary>
@@ -56,4 +63,11 @@ internal readonly struct Av1InterBlockInfo
 
     /// <summary>Gets the motion mode.</summary>
     public Av1MotionMode MotionMode { get; }
+
+    /// <summary>Gets the derived local warp matrix, or <see langword="null"/> when the block is not
+    /// warped (or the derivation degenerated and the block falls back to translation).</summary>
+    public int[]? WarpMatrix { get; }
+
+    /// <summary>Gets the derived local warp shear parameters, or <see langword="null"/>.</summary>
+    public short[]? WarpShear { get; }
 }

@@ -105,7 +105,7 @@ public class Av1InterModeInfoDecoderTests
             decoder, decInterCdf, decMvCdf, decFilterCdf, decMotionCdf, grid, neighbours,
             Bx4, By4, Av1BlockSize.Block8x8, options,
             haveTop: true, haveLeft: true, topRightAvailable: false,
-            readMotionMode: false, allowWarp: false, skipMode: false);
+            readMotionMode: false, skipMode: false);
 
         Assert.Equal(0, info.Reference);
         Assert.Equal(Av1InterPredictionMode.NewMv, info.Mode);

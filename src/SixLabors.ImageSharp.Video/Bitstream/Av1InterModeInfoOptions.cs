@@ -21,6 +21,7 @@ internal readonly struct Av1InterModeInfoOptions
     /// <param name="fixedFilter">The fixed interpolation filter (used when not switchable).</param>
     /// <param name="globalMotion">The seven per-reference global-motion models.</param>
     /// <param name="signBias">The per-reference sign bias, indexed by zero-based reference.</param>
+    /// <param name="allowWarpedMotion">Whether local warped motion is enabled for the frame.</param>
     /// <param name="temporal">The temporal motion-vector prediction state, or <see langword="null"/>.</param>
     public Av1InterModeInfoOptions(
         Av1TileBounds bounds,
@@ -33,8 +34,10 @@ internal readonly struct Av1InterModeInfoOptions
         int fixedFilter,
         Obu.Av1WarpedMotionParams[] globalMotion,
         int[] signBias,
+        bool allowWarpedMotion = false,
         Av1TemporalMvContext? temporal = null)
     {
+        this.AllowWarpedMotion = allowWarpedMotion;
         this.Bounds = bounds;
         this.ImageWidth4 = imageWidth4;
         this.ImageHeight4 = imageHeight4;
@@ -71,6 +74,9 @@ internal readonly struct Av1InterModeInfoOptions
 
     /// <summary>Gets the fixed interpolation filter (used when not switchable).</summary>
     public int FixedFilter { get; }
+
+    /// <summary>Gets a value indicating whether local warped motion is enabled for the frame.</summary>
+    public bool AllowWarpedMotion { get; }
 
     /// <summary>Gets the seven per-reference global-motion models.</summary>
     public Obu.Av1WarpedMotionParams[] GlobalMotion { get; }

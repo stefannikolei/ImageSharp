@@ -81,14 +81,14 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame?[] references, Av1FrameCdfSet cdfs)
         : base(sequenceHeader, frameHeader, cdfs)
     {
-        if (frameHeader.AllowWarpedMotion)
-        {
-            throw new NotSupportedException("Warped motion is not supported yet.");
-        }
-
         if (frameHeader.ReferenceSelect)
         {
             throw new NotSupportedException("Compound (two-reference) prediction is not supported yet.");
+        }
+
+        if (sequenceHeader.EnableInterIntraCompound)
+        {
+            throw new NotSupportedException("Inter-intra compound prediction is not supported yet.");
         }
 
         this.interCdf = cdfs.InterMode;
@@ -133,6 +133,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             fixedFilter: frameHeader.InterpolationFilter == 4 ? 0 : frameHeader.InterpolationFilter,
             frameHeader.GlobalMotionParams,
             signBias,
+            frameHeader.AllowWarpedMotion,
             Av1TemporalMvContext.Create(sequenceHeader, frameHeader, references));
 
         // Whether each reference's global-motion model can be applied as a warp (dav1d
@@ -215,8 +216,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             return;
         }
 
-        // Motion mode is coded for blocks at least 8x8 that have an overlappable (inter) neighbour. Warped
-        // motion is rejected at construction, so only the binary OBMC flag is read (allowWarp is false).
+        // Motion mode is coded for blocks at least 8x8 that have an overlappable (inter) neighbour.
         bool readMotionMode = this.frameHeader.IsMotionModeSwitchable
             && Math.Min(width4, height4) >= 2
             && this.HasOverlappableNeighbour(row, col, width4, height4, haveTop, haveLeft);
@@ -225,6 +225,29 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         // them before the mode-info decode overwrites the neighbour contexts with this block's own values.
         Av1ReferenceNeighbour leftNeighbour = this.interNeighbours.GetLeft(row);
         Av1ReferenceNeighbour aboveNeighbour = this.interNeighbours.GetAbove(col);
+
+        // Overlapped prediction reads the above/left neighbours' filters at odd offsets inside the
+        // block's span; capture them too before the mode-info decode overwrites those contexts.
+        (int F0, int F1)[]? obmcAboveFilters = null;
+        (int F0, int F1)[]? obmcLeftFilters = null;
+        if (readMotionMode)
+        {
+            int w4 = Math.Min(width4, this.miColumns - col);
+            int h4 = Math.Min(height4, this.miRows - row);
+            obmcAboveFilters = new (int, int)[w4];
+            for (int x = 0; x < w4 && col + 1 + x < this.miColumns; x++)
+            {
+                Av1ReferenceNeighbour n = this.interNeighbours.GetAbove(col + 1 + x);
+                obmcAboveFilters[x] = (n.Filter0, n.Filter1);
+            }
+
+            obmcLeftFilters = new (int, int)[h4];
+            for (int y = 0; y < h4 && row + 1 + y < this.miRows; y++)
+            {
+                Av1ReferenceNeighbour n = this.interNeighbours.GetLeft(row + 1 + y);
+                obmcLeftFilters[y] = (n.Filter0, n.Filter1);
+            }
+        }
 
         Av1InterBlockInfo info = Av1InterModeInfoDecoder.Decode(
             this.decoder,
@@ -242,37 +265,49 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             haveLeft,
             topRightAvailable,
             readMotionMode,
-            allowWarp: false,
             skipMode: false);
 
-        if (info.MotionMode != Av1MotionMode.Translation)
+        // Motion-compensate every plane from the block's reference frame into the output planes. A
+        // GLOBALMV block whose reference has a warpable (non-translational, shearable) global model,
+        // or a WARP motion-mode block whose derived local model is affine, is predicted with the
+        // affine warp kernel instead of translational MC (dav1d's warp_affine path); an OBMC block
+        // blends overlapped predictions from its inter neighbours over the translational prediction.
+        Av1ReferenceFrame blockReference = this.GetReference(info.Reference);
+        int[]? warpMatrix = null;
+        short[]? warpShear = null;
+        if (Math.Min(width4, height4) > 1)
         {
-            throw new NotSupportedException("OBMC and warped motion compensation are not supported yet.");
+            if (info.Mode == Av1InterPredictionMode.GlobalMv && this.globalWarpShear[info.Reference] is { } globalShear)
+            {
+                warpMatrix = this.frameHeader.GlobalMotionParams[info.Reference].Matrix;
+                warpShear = globalShear;
+            }
+            else if (info.MotionMode == Av1MotionMode.Warp && info.WarpShear is not null)
+            {
+                warpMatrix = info.WarpMatrix;
+                warpShear = info.WarpShear;
+            }
         }
 
-        // Motion-compensate every plane from the block's reference frame into the output planes. A
-        // GLOBALMV block whose reference has a warpable (non-translational, shearable) global model is
-        // predicted with the affine warp kernel instead of translational MC (dav1d's warp_affine path).
-        Av1ReferenceFrame blockReference = this.GetReference(info.Reference);
-        short[]? warpShear = info.Mode == Av1InterPredictionMode.GlobalMv && Math.Min(width4, height4) > 1
-            ? this.globalWarpShear[info.Reference]
-            : null;
         if (warpShear is not null)
         {
             Prediction.Av1WarpedMotion.WarpPlane(
-                this.luma, blockReference.Luma, col, row, width4, height4,
-                this.frameHeader.GlobalMotionParams[info.Reference].Matrix, warpShear, 0, 0);
+                this.luma, blockReference.Luma, col, row, width4, height4, warpMatrix, warpShear, 0, 0);
         }
         else
         {
             this.MotionCompensate(this.luma, blockReference.Luma, row, col, width4, height4, info, 0, 0);
+            if (info.MotionMode == Av1MotionMode.Obmc)
+            {
+                this.OverlappedPrediction(this.luma, 0, row, col, width4, height4, obmcAboveFilters!, obmcLeftFilters!);
+            }
         }
         bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
                          (height4 > this.subsamplingY || (row & 1) != 0);
         if (hasChroma && blockReference.ChromaU is not null && blockReference.ChromaV is not null)
         {
-            this.MotionCompensateChroma(row, col, width4, height4, info, leftNeighbour, aboveNeighbour);
+            this.MotionCompensateChroma(row, col, width4, height4, info, leftNeighbour, aboveNeighbour, warpMatrix, warpShear, obmcAboveFilters, obmcLeftFilters);
         }
 
         // Add the residual through the shared transform-block loop, substituting the motion-compensated
@@ -324,7 +359,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // corresponding luma block's own motion vector and filter (dav1d's is_sub8x8 piecewise path, reading
     // the neighbours back from the motion-vector grid); if any of them is intra, the whole chroma unit
     // is instead predicted once, 8x8-aligned, with this block's motion vector.
-    private void MotionCompensateChroma(int row, int col, int width4, int height4, in Av1InterBlockInfo info, in Av1ReferenceNeighbour leftNeighbour, in Av1ReferenceNeighbour aboveNeighbour)
+    private void MotionCompensateChroma(int row, int col, int width4, int height4, in Av1InterBlockInfo info, in Av1ReferenceNeighbour leftNeighbour, in Av1ReferenceNeighbour aboveNeighbour, int[]? warpMatrix, short[]? warpShear, (int F0, int F1)[]? obmcAboveFilters, (int F0, int F1)[]? obmcLeftFilters)
     {
         bool subWidth = width4 == this.subsamplingX;
         bool subHeight = height4 == this.subsamplingY;
@@ -349,20 +384,17 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         if (!isSub8x8)
         {
             // A chroma unit of more than one 4x4 cell per dimension follows the luma warp when the
-            // block is GLOBALMV with a warpable model; a smaller unit (or any non-warp block) is
-            // predicted translationally with this block's motion vector.
+            // block is warped (global or local); a smaller unit (or any non-warp block) is predicted
+            // translationally with this block's motion vector, plus overlapped blending for OBMC.
             int cbw4 = (width4 + this.subsamplingX) >> this.subsamplingX;
             int cbh4 = (height4 + this.subsamplingY) >> this.subsamplingY;
-            if (Math.Min(cbw4, cbh4) > 1
-                && info.Mode == Av1InterPredictionMode.GlobalMv
-                && this.globalWarpShear[info.Reference] is { } warpShear)
+            if (Math.Min(cbw4, cbh4) > 1 && warpShear is not null)
             {
                 Av1ReferenceFrame referenceFrame = this.GetReference(info.Reference);
-                int[] matrix = this.frameHeader.GlobalMotionParams[info.Reference].Matrix;
                 Prediction.Av1WarpedMotion.WarpPlane(
-                    this.chromaU, referenceFrame.ChromaU!, col, row, width4, height4, matrix, warpShear, this.subsamplingX, this.subsamplingY);
+                    this.chromaU, referenceFrame.ChromaU!, col, row, width4, height4, warpMatrix, warpShear, this.subsamplingX, this.subsamplingY);
                 Prediction.Av1WarpedMotion.WarpPlane(
-                    this.chromaV, referenceFrame.ChromaV!, col, row, width4, height4, matrix, warpShear, this.subsamplingX, this.subsamplingY);
+                    this.chromaV, referenceFrame.ChromaV!, col, row, width4, height4, warpMatrix, warpShear, this.subsamplingX, this.subsamplingY);
                 return;
             }
 
@@ -372,6 +404,12 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             int mcWidth4 = subWidth ? width4 << 1 : width4;
             int mcHeight4 = subHeight ? height4 << 1 : height4;
             this.ChromaMcPiece(info.Reference, alignedCol, alignedRow, mcWidth4, mcHeight4, info.MotionVector, info.Filter0, info.Filter1, baseX, baseY);
+            if (info.MotionMode == Av1MotionMode.Obmc)
+            {
+                this.OverlappedPrediction(this.chromaU, 1, row, col, width4, height4, obmcAboveFilters!, obmcLeftFilters!);
+                this.OverlappedPrediction(this.chromaV, 2, row, col, width4, height4, obmcAboveFilters!, obmcLeftFilters!);
+            }
+
             return;
         }
 
@@ -411,6 +449,137 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         Av1ReferenceFrame referenceFrame = this.GetReference(reference);
         this.ChromaMcPlane(this.chromaU, referenceFrame.ChromaU!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
         this.ChromaMcPlane(this.chromaV, referenceFrame.ChromaV!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
+    }
+
+    // dav1d obmc_masks: the overlapped-prediction blend weights, indexed by the blend dimension.
+    private static readonly byte[] ObmcMasks =
+    [
+        0, 0,
+        19, 0,
+        25, 14, 5, 0,
+        28, 22, 16, 11, 7, 3, 0, 0,
+        30, 27, 24, 21, 18, 15, 12, 10, 8, 6, 4, 3, 0, 0, 0, 0,
+        31, 29, 28, 26, 24, 23, 21, 20, 19, 17, 16, 14, 13, 12, 11, 9,
+        8, 7, 6, 5, 4, 4, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+
+    // Scratch buffer for the overlapped neighbour predictions (dav1d t->scratch.lap).
+    private readonly byte[] obmcLap = new byte[64 * 32];
+
+    // Overlapped block motion compensation for one plane (dav1d's obmc): the top quarter-to-half of
+    // the block is re-predicted from up to four above neighbours' motion vectors and blended in, then
+    // the left part from up to four left neighbours. Only inter neighbours at odd 4x4 offsets
+    // contribute; chroma planes participate only for blocks whose summed chroma dimensions reach 16.
+    private void OverlappedPrediction(Av1Plane destination, int plane, int row, int col, int bw4, int bh4, (int F0, int F1)[] aboveFilters, (int F0, int F1)[] leftFilters)
+    {
+        int ssX = plane == 0 ? 0 : this.subsamplingX;
+        int ssY = plane == 0 ? 0 : this.subsamplingY;
+        int hMul = 4 >> ssX;
+        int vMul = 4 >> ssY;
+        int w4 = Math.Min(bw4, this.miColumns - col);
+        int h4 = Math.Min(bh4, this.miRows - row);
+        byte[] lap = this.obmcLap;
+        int dstBase = ((row >> ssY) * 4 * destination.Width) + ((col >> ssX) * 4);
+
+        // The chroma minimum-size condition gates only the above pass (dav1d obmc); the left pass
+        // runs for every plane.
+        if (row > 0 && (plane == 0 || (bw4 * hMul) + (bh4 * vMul) >= 16))
+        {
+            int maxNeighbours = Math.Min(System.Numerics.BitOperations.Log2((uint)bw4), 4);
+            for (int i = 0, x = 0; x < w4 && i < maxNeighbours;)
+            {
+                if (col + x + 1 >= this.miColumns)
+                {
+                    break;
+                }
+
+                Av1RefMvsBlock aboveBlock = this.grid[row - 1, col + x + 1];
+                int step4 = Math.Clamp(aboveBlock.BlockSize.GetWidth4(), 2, 16);
+                if (aboveBlock.Reference0 > 0)
+                {
+                    int ow4 = Math.Min(step4, bw4);
+                    int oh4 = Math.Min(bh4, 16) >> 1;
+                    (int f0, int f1) = aboveFilters[x];
+                    Av1Plane referencePlane = this.GetReferencePlane(aboveBlock.Reference0 - 1, plane);
+                    Av1InterPredictor.Predict(
+                        lap, 0, ow4 * hMul, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
+                        col + x, row, ow4, ((oh4 * 3) + 3) >> 2, aboveBlock.MotionVector0, f0, f1, ssX, ssY);
+                    BlendFromAbove(destination, dstBase + (x * hMul), lap, ow4 * hMul, oh4 * vMul);
+                    i++;
+                }
+
+                x += step4;
+            }
+        }
+
+        if (col > 0)
+        {
+            int maxNeighbours = Math.Min(System.Numerics.BitOperations.Log2((uint)bh4), 4);
+            for (int i = 0, y = 0; y < h4 && i < maxNeighbours;)
+            {
+                if (row + y + 1 >= this.miRows)
+                {
+                    break;
+                }
+
+                Av1RefMvsBlock leftBlock = this.grid[row + y + 1, col - 1];
+                int step4 = Math.Clamp(leftBlock.BlockSize.GetHeight4(), 2, 16);
+                if (leftBlock.Reference0 > 0)
+                {
+                    int ow4 = Math.Min(bw4, 16) >> 1;
+                    int oh4 = Math.Min(step4, bh4);
+                    (int f0, int f1) = leftFilters[y];
+                    Av1Plane referencePlane = this.GetReferencePlane(leftBlock.Reference0 - 1, plane);
+                    Av1InterPredictor.Predict(
+                        lap, 0, ow4 * hMul, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
+                        col, row + y, ow4, oh4, leftBlock.MotionVector0, f0, f1, ssX, ssY);
+                    BlendFromLeft(destination, dstBase + (y * vMul * destination.Width), lap, ow4 * hMul, oh4 * vMul);
+                    i++;
+                }
+
+                y += step4;
+            }
+        }
+    }
+
+    // Resolves one plane of a zero-based reference frame.
+    private Av1Plane GetReferencePlane(int reference, int plane)
+    {
+        Av1ReferenceFrame frame = this.GetReference(reference);
+        return plane == 0 ? frame.Luma : plane == 1 ? frame.ChromaU! : frame.ChromaV!;
+    }
+
+    // dav1d blend_h: blends the neighbour prediction over the top (3/4 of height) rows, the weight
+    // decreasing with the distance from the shared edge.
+    private static void BlendFromAbove(Av1Plane destination, int offset, byte[] overlap, int width, int height)
+    {
+        byte[] samples = destination.Samples;
+        int rows = (height * 3) >> 2;
+        for (int y = 0; y < rows; y++)
+        {
+            int m = ObmcMasks[height + y];
+            int rowOffset = offset + (y * destination.Width);
+            for (int x = 0; x < width; x++)
+            {
+                samples[rowOffset + x] = (byte)(((samples[rowOffset + x] * (64 - m)) + (overlap[(y * width) + x] * m) + 32) >> 6);
+            }
+        }
+    }
+
+    // dav1d blend_v: blends the neighbour prediction over the left (3/4 of width) columns.
+    private static void BlendFromLeft(Av1Plane destination, int offset, byte[] overlap, int width, int height)
+    {
+        byte[] samples = destination.Samples;
+        int columns = (width * 3) >> 2;
+        for (int y = 0; y < height; y++)
+        {
+            int rowOffset = offset + (y * destination.Width);
+            for (int x = 0; x < columns; x++)
+            {
+                int m = ObmcMasks[width + x];
+                samples[rowOffset + x] = (byte)(((samples[rowOffset + x] * (64 - m)) + (overlap[(y * width) + x] * m) + 32) >> 6);
+            }
+        }
     }
 
     private void ChromaMcPlane(Av1Plane destination, Av1Plane reference, int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)

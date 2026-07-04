@@ -270,6 +270,78 @@ internal static class Av1WarpedMotion
     }
 
     /// <summary>
+    /// Solves an integer least-squares affine model from a block's projected neighbour samples
+    /// (dav1d <c>dav1d_find_affine_int</c>): the normal equations are accumulated from the sample
+    /// deltas relative to the block centre, solved via the divisor table, clamped to the
+    /// warp-parameter ranges, and the translation terms derived so the model maps the block centre
+    /// by the block's own motion vector.
+    /// </summary>
+    /// <param name="pts">The candidate samples, four values each: input x, input y, output x, output y.</param>
+    /// <param name="np">The number of samples.</param>
+    /// <param name="bw4">The block width in 4x4 units.</param>
+    /// <param name="bh4">The block height in 4x4 units.</param>
+    /// <param name="mv">The block's motion vector.</param>
+    /// <param name="matrix">Receives the six-entry warp matrix.</param>
+    /// <param name="bx4">The block column in 4x4 units.</param>
+    /// <param name="by4">The block row in 4x4 units.</param>
+    /// <returns><see langword="true"/> when a model was found (dav1d returning zero).</returns>
+    public static bool FindAffineInt(ReadOnlySpan<int> pts, int np, int bw4, int bh4, Av1MotionVector mv, Span<int> matrix, int bx4, int by4)
+    {
+        Span<int> a = stackalloc int[3];
+        Span<int> bx = stackalloc int[2];
+        Span<int> by = stackalloc int[2];
+        int rsuy = (2 * bh4) - 1;
+        int rsux = (2 * bw4) - 1;
+        int suy = rsuy * 8;
+        int sux = rsux * 8;
+        int duy = suy + mv.Y;
+        int dux = sux + mv.X;
+        int isuy = (by4 * 4) + rsuy;
+        int isux = (bx4 * 4) + rsux;
+
+        for (int i = 0; i < np; i++)
+        {
+            int dx = pts[(i * 4) + 2] - dux;
+            int dy = pts[(i * 4) + 3] - duy;
+            int sx = pts[i * 4] - sux;
+            int sy = pts[(i * 4) + 1] - suy;
+            if (Math.Abs(sx - dx) < 256 && Math.Abs(sy - dy) < 256)
+            {
+                a[0] += ((sx * sx) >> 2) + (sx * 2) + 8;
+                a[1] += ((sx * sy) >> 2) + sx + sy + 4;
+                a[2] += ((sy * sy) >> 2) + (sy * 2) + 8;
+                bx[0] += ((sx * dx) >> 2) + sx + dx + 8;
+                bx[1] += ((sy * dx) >> 2) + sy + dx + 4;
+                by[0] += ((sx * dy) >> 2) + sx + dy + 4;
+                by[1] += ((sy * dy) >> 2) + sy + dy + 8;
+            }
+        }
+
+        long det = ((long)a[0] * a[2]) - ((long)a[1] * a[1]);
+        if (det == 0)
+        {
+            return false;
+        }
+
+        int idet = ApplySign64(ResolveDivisor64((ulong)Math.Abs(det), out int shift), det);
+        shift -= 16;
+        if (shift < 0)
+        {
+            idet <<= -shift;
+            shift = 0;
+        }
+
+        matrix[2] = GetMultShiftDiagonal(((long)a[2] * bx[0]) - ((long)a[1] * bx[1]), idet, shift);
+        matrix[3] = GetMultShiftOffDiagonal(((long)a[0] * bx[1]) - ((long)a[1] * bx[0]), idet, shift);
+        matrix[4] = GetMultShiftOffDiagonal(((long)a[2] * by[0]) - ((long)a[1] * by[1]), idet, shift);
+        matrix[5] = GetMultShiftDiagonal(((long)a[0] * by[1]) - ((long)a[1] * by[0]), idet, shift);
+
+        matrix[0] = Math.Clamp((mv.X * 0x2000) - ((isux * (matrix[2] - 0x10000)) + (isuy * matrix[3])), -0x800000, 0x7fffff);
+        matrix[1] = Math.Clamp((mv.Y * 0x2000) - ((isux * matrix[4]) + (isuy * (matrix[5] - 0x10000))), -0x800000, 0x7fffff);
+        return true;
+    }
+
+    /// <summary>
     /// Computes the motion vector a global-motion model implies at a block's centre
     /// (dav1d <c>get_gmv_2d</c> for the non-translation types; translation reads the matrix directly).
     /// </summary>
@@ -426,4 +498,30 @@ internal static class Av1WarpedMotion
     private static int ApplySign(int value, int sign) => sign < 0 ? -value : value;
 
     private static int ApplySign64(int value, long sign) => sign < 0 ? -value : value;
+
+    // dav1d resolve_divisor_64.
+    private static int ResolveDivisor64(ulong d, out int shift)
+    {
+        shift = 63 - System.Numerics.BitOperations.LeadingZeroCount(d);
+        long e = (long)(d - (1UL << shift));
+        long f = shift > 8 ? (e + (1L << (shift - 9))) >> (shift - 8) : e << (8 - shift);
+        shift += 14;
+        return DivLut[f];
+    }
+
+    // dav1d get_mult_shift_diag.
+    private static int GetMultShiftDiagonal(long px, int idet, int shift)
+    {
+        long v1 = px * idet;
+        int v2 = ApplySign64((int)((Math.Abs(v1) + ((1L << shift) >> 1)) >> shift), v1);
+        return Math.Clamp(v2, 0xe001, 0x11fff);
+    }
+
+    // dav1d get_mult_shift_ndiag.
+    private static int GetMultShiftOffDiagonal(long px, int idet, int shift)
+    {
+        long v1 = px * idet;
+        int v2 = ApplySign64((int)((Math.Abs(v1) + ((1L << shift) >> 1)) >> shift), v1);
+        return Math.Clamp(v2, -0x1fff, 0x1fff);
+    }
 }

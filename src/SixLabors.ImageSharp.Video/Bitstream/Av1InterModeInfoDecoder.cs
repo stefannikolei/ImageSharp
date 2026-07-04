@@ -33,7 +33,6 @@ internal static class Av1InterModeInfoDecoder
     /// <param name="haveLeft">Whether a left neighbour is available.</param>
     /// <param name="topRightAvailable">Whether the top-right neighbour is available.</param>
     /// <param name="readMotionMode">Whether the block carries a coded motion mode.</param>
-    /// <param name="allowWarp">Whether warped motion is allowed (selects the motion-mode CDF).</param>
     /// <param name="skipMode">Whether the block uses skip mode (recorded for neighbours).</param>
     /// <returns>The decoded inter block info.</returns>
     public static Av1InterBlockInfo Decode(
@@ -52,7 +51,6 @@ internal static class Av1InterModeInfoDecoder
         bool haveLeft,
         bool topRightAvailable,
         bool readMotionMode,
-        bool allowWarp,
         bool skipMode)
     {
         int bw4 = blockSize.GetWidth4();
@@ -95,17 +93,39 @@ internal static class Av1InterModeInfoDecoder
             || globalModel.Type == Obu.Av1WarpModelType.Translation;
 
         // Motion mode (read before the subpel filter so a warp block can clear it). A GLOBALMV block
-        // predicted by a warped (non-translational) global model carries no coded motion mode.
+        // predicted by a warped (non-translational) global model carries no coded motion mode. The
+        // WARP choice is only offered when a same-reference neighbour exists on the block edges; a
+        // warp block then derives its local model from those neighbours (falling back to translation
+        // when the fit degenerates or shears too strongly).
         Av1MotionMode motionMode = Av1MotionMode.Translation;
+        int[]? warpMatrix = null;
+        short[]? warpShear = null;
         bool isWarpedGlobalMv = mode == Av1InterPredictionMode.GlobalMv
             && !options.ForceIntegerMv
             && globalModel.Type > Obu.Av1WarpModelType.Translation;
         if (readMotionMode && !isWarpedGlobalMv)
         {
+            int w4 = Math.Min(bw4, options.ImageWidth4 - bx4);
+            int h4 = Math.Min(bh4, options.ImageHeight4 - by4);
+            Span<ulong> masks = stackalloc ulong[2];
+            Av1WarpDerivation.FindMatchingRef(
+                grid, bx4, by4, bw4, bh4, w4, h4, haveLeft, haveTop, topRightAvailable,
+                options.Bounds.ColumnEnd, reference, masks);
+            bool allowWarp = !options.ForceIntegerMv
+                && options.AllowWarpedMotion
+                && (masks[0] | masks[1]) != 0;
+
             motionMode = Av1MotionModeReader.ReadMotionMode(decoder, motionModeCdf, blockSize, allowWarp);
             if (motionMode == Av1MotionMode.Warp)
             {
                 hasSubpelFilter = false;
+                int[] localMatrix = new int[6];
+                short[] localShear = new short[4];
+                if (Av1WarpDerivation.TryDeriveWarpMv(grid, bx4, by4, bw4, bh4, masks, motionVector, localMatrix, localShear))
+                {
+                    warpMatrix = localMatrix;
+                    warpShear = localShear;
+                }
             }
         }
 
@@ -133,7 +153,7 @@ internal static class Av1InterModeInfoDecoder
         grid.Fill(by4, bx4, bw4, bh4, gridBlock);
         neighbours.Write(by4, bx4, bw4, bh4, isIntra: false, reference, -1, isCompound: false, filter0, filter1, skipMode);
 
-        return new Av1InterBlockInfo(reference, mode, drlIndex, motionVector, filter0, filter1, motionMode);
+        return new Av1InterBlockInfo(reference, mode, drlIndex, motionVector, filter0, filter1, motionMode, warpMatrix, warpShear);
     }
 
     private static Av1MotionVector ResolveMotionVector(
