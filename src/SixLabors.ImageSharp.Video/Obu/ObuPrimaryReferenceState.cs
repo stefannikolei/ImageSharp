@@ -12,12 +12,15 @@ namespace SixLabors.ImageSharp.Formats.Av1.Obu;
 /// <param name="LoopFilterModeDeltas">The two per-mode loop-filter level deltas.</param>
 /// <param name="GlobalMotion">The seven per-reference global-motion models (the parameter deltas of a
 /// frame with a primary reference are coded against these).</param>
-internal sealed record ObuPrimaryReferenceState(int[] LoopFilterRefDeltas, int[] LoopFilterModeDeltas, Av1WarpedMotionParams[] GlobalMotion)
+/// <param name="Segmentation">The frame's segmentation parameters (a frame that does not update the
+/// feature data inherits this table).</param>
+internal sealed record ObuPrimaryReferenceState(int[] LoopFilterRefDeltas, int[] LoopFilterModeDeltas, Av1WarpedMotionParams[] GlobalMotion, ObuSegmentationParams Segmentation)
 {
     /// <summary>Creates the specification-default state (<c>setup_past_independence</c>).</summary>
     /// <returns>The default state.</returns>
     public static ObuPrimaryReferenceState CreateDefault() => new(
         [1, 0, 0, 0, -1, 0, -1, -1],
         [0, 0],
-        [Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity]);
+        [Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity, Av1WarpedMotionParams.Identity],
+        ObuSegmentationParams.Disabled);
 }

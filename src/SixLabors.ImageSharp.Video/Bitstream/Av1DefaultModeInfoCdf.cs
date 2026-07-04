@@ -317,4 +317,33 @@ internal static class Av1DefaultModeInfoCdf
         [30528, 21672, 17315, 12427, 10207, 3851, 0, 0],
         [29163, 22340, 20309, 15092, 11524, 2113, 0, 0],
     ];
+
+    /// <summary>The segment-id CDFs, indexed by the spatial prediction context (8 symbols each).</summary>
+    public static readonly ushort[][] SegId =
+    [
+        [27146, 24875, 16675, 14535, 4959, 4395, 235, 0, 0],
+        [18494, 14538, 10211, 7833, 2788, 1917, 424, 0, 0],
+        [5241, 4281, 4045, 3878, 371, 121, 89, 0, 0],
+    ];
+
+    /// <summary>The temporal segment-prediction flag CDFs, indexed by neighbour context.</summary>
+    public static readonly ushort[][] SegPred =
+    [
+        [16384, 0, 0],
+        [16384, 0, 0],
+        [16384, 0, 0],
+    ];
+
+    /// <summary>The per-superblock quantizer-delta token CDF (4 symbols).</summary>
+    public static readonly ushort[] DeltaQ = [4608, 648, 91, 0, 0];
+
+    /// <summary>The per-superblock loop-filter-delta token CDFs (shared plus four per-component).</summary>
+    public static readonly ushort[][] DeltaLf =
+    [
+        [4608, 648, 91, 0, 0],
+        [4608, 648, 91, 0, 0],
+        [4608, 648, 91, 0, 0],
+        [4608, 648, 91, 0, 0],
+        [4608, 648, 91, 0, 0],
+    ];
 }

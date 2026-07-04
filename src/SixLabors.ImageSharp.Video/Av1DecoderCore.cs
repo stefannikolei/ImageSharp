@@ -223,7 +223,7 @@ internal static class Av1DecoderCore
             tileDecoder.ChromaU,
             tileDecoder.ChromaV,
             frameEndCdfs,
-            new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas, frameHeader.GlobalMotionParams),
+            new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas, frameHeader.GlobalMotionParams, frameHeader.SegmentationParams),
             temporalMvs,
             referenceOrderHints);
         referenceStore.Update(decoded, frameHeader.RefreshFrameFlags);

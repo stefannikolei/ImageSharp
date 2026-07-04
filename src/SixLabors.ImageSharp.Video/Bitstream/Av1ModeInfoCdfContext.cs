@@ -62,6 +62,18 @@ internal sealed class Av1ModeInfoCdfContext
     /// <summary>Gets the switchable loop-restoration type CDF.</summary>
     public ushort[] RestoreSwitchable { get; private set; } = default!;
 
+    /// <summary>Gets the segment-id CDFs, indexed by the spatial prediction context.</summary>
+    public ushort[][] SegId { get; private set; } = default!;
+
+    /// <summary>Gets the temporal segment-prediction flag CDFs, indexed by neighbour context.</summary>
+    public ushort[][] SegPred { get; private set; } = default!;
+
+    /// <summary>Gets the per-superblock quantizer-delta token CDF.</summary>
+    public ushort[] DeltaQ { get; private set; } = default!;
+
+    /// <summary>Gets the per-superblock loop-filter-delta token CDFs.</summary>
+    public ushort[][] DeltaLf { get; private set; } = default!;
+
     /// <summary>
     /// Creates a mode-info CDF context initialized from the default tables.
     /// </summary>
@@ -84,6 +96,10 @@ internal sealed class Av1ModeInfoCdfContext
         RestoreWiener = (ushort[])Av1DefaultModeInfoCdf.RestoreWiener.Clone(),
         RestoreSgrProj = (ushort[])Av1DefaultModeInfoCdf.RestoreSgrProj.Clone(),
         RestoreSwitchable = (ushort[])Av1DefaultModeInfoCdf.RestoreSwitchable.Clone(),
+        SegId = Clone(Av1DefaultModeInfoCdf.SegId),
+        SegPred = Clone(Av1DefaultModeInfoCdf.SegPred),
+        DeltaQ = (ushort[])Av1DefaultModeInfoCdf.DeltaQ.Clone(),
+        DeltaLf = Clone(Av1DefaultModeInfoCdf.DeltaLf),
     };
 
     /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
@@ -106,6 +122,10 @@ internal sealed class Av1ModeInfoCdfContext
         RestoreWiener = (ushort[])this.RestoreWiener.Clone(),
         RestoreSgrProj = (ushort[])this.RestoreSgrProj.Clone(),
         RestoreSwitchable = (ushort[])this.RestoreSwitchable.Clone(),
+        SegId = Clone(this.SegId),
+        SegPred = Clone(this.SegPred),
+        DeltaQ = (ushort[])this.DeltaQ.Clone(),
+        DeltaLf = Clone(this.DeltaLf),
     };
 
     private static ushort[][] Clone(ushort[][] group)

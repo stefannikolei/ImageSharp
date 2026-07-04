@@ -143,6 +143,19 @@ internal class Av1TileDecoder
 
     private protected Av1SymbolDecoder decoder = default!;
 
+    // Segmentation state: the frame's parameters, the segment map coded by this frame (4x4 resolution)
+    // and the current block's segment id.
+    private readonly ObuSegmentationParams segmentation;
+    private readonly byte[] segmentMap;
+    private int currentSegmentId;
+
+    // Per-superblock quantizer/loop-filter delta state (dav1d ts->last_qidx / last_delta_lf), reset per
+    // tile, and the current block's effective per-plane DC/AC quantizer indices.
+    private int currentQIndex;
+    private readonly int[] currentDeltaLf = new int[4];
+    private readonly int[] blockDcQIndex = new int[3];
+    private readonly int[] blockAcQIndex = new int[3];
+
     public Av1TileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader)
         : this(sequenceHeader, frameHeader, Av1FrameCdfSet.CreateDefault(frameHeader.BaseQIndex))
     {
@@ -224,6 +237,32 @@ internal class Av1TileDecoder
         this.chromaEdgeH = new bool[chromaCells];
 
         this.tileBounds = new Av1TileBounds(0, miCols, 0, miRows);
+
+        this.segmentation = frameHeader.SegmentationParams ?? ObuSegmentationParams.Disabled;
+        this.segmentMap = new byte[miCols * miRows];
+        if (this.segmentation.Enabled)
+        {
+            if (!this.segmentation.UpdateMap || this.segmentation.TemporalUpdate)
+            {
+                throw new NotSupportedException("Segment maps predicted from a previous frame are not supported yet.");
+            }
+
+            if (this.segmentation.PreSkip)
+            {
+                throw new NotSupportedException("The segmentation reference, skip and global-mv features are not supported yet.");
+            }
+
+            for (int i = 0; i <= this.segmentation.LastActiveSegmentId; i++)
+            {
+                if (Math.Clamp(frameHeader.BaseQIndex + this.segmentation.DeltaQ[i], 0, 255) == 0)
+                {
+                    throw new NotSupportedException("Lossless segments are not supported yet.");
+                }
+            }
+        }
+
+        this.currentQIndex = frameHeader.BaseQIndex;
+        this.UpdateBlockQIndex();
     }
 
     /// <summary>
@@ -316,6 +355,11 @@ internal class Av1TileDecoder
         int chromaCount = ((this.tileBounds.ColumnEnd + this.subsamplingX) >> this.subsamplingX) - chromaStart;
         this.chromaULevels.ClearAbove(chromaStart, chromaCount);
         this.chromaVLevels.ClearAbove(chromaStart, chromaCount);
+
+        this.currentQIndex = this.frameHeader.BaseQIndex;
+        Array.Clear(this.currentDeltaLf);
+        this.currentSegmentId = 0;
+        this.UpdateBlockQIndex();
 
         for (int p = 0; p < 3; p++)
         {
@@ -689,8 +733,11 @@ internal class Av1TileDecoder
             return;
         }
 
-        byte lumaV = (byte)this.CalcLfLevel(lf.Levels[0], reference, modeIndex, isChroma: false);
-        byte lumaH = (byte)this.CalcLfLevel(lf.Levels[1], reference, modeIndex, isChroma: false);
+        bool multiLf = this.frameHeader.DeltaLfMulti;
+        int seg = this.currentSegmentId;
+        bool hasSeg = this.segmentation.Enabled;
+        byte lumaV = (byte)this.CalcLfLevel(lf.Levels[0], this.currentDeltaLf[0], hasSeg ? this.segmentation.DeltaLfYVertical[seg] : 0, reference, modeIndex, isChroma: false);
+        byte lumaH = (byte)this.CalcLfLevel(lf.Levels[1], this.currentDeltaLf[multiLf ? 1 : 0], hasSeg ? this.segmentation.DeltaLfYHorizontal[seg] : 0, reference, modeIndex, isChroma: false);
         int width4 = Math.Min(bsize.GetWidth4(), this.miColumns - col);
         int height4 = Math.Min(bsize.GetHeight4(), this.miRows - row);
         for (int y = 0; y < height4; y++)
@@ -708,8 +755,8 @@ internal class Av1TileDecoder
             return;
         }
 
-        byte chromaU = (byte)this.CalcLfLevel(lf.Levels[2], reference, modeIndex, isChroma: true);
-        byte chromaV = (byte)this.CalcLfLevel(lf.Levels[3], reference, modeIndex, isChroma: true);
+        byte chromaU = (byte)this.CalcLfLevel(lf.Levels[2], this.currentDeltaLf[multiLf ? 2 : 0], hasSeg ? this.segmentation.DeltaLfU[seg] : 0, reference, modeIndex, isChroma: true);
+        byte chromaV = (byte)this.CalcLfLevel(lf.Levels[3], this.currentDeltaLf[multiLf ? 3 : 0], hasSeg ? this.segmentation.DeltaLfV[seg] : 0, reference, modeIndex, isChroma: true);
         int chromaCol = col >> this.subsamplingX;
         int chromaRow = row >> this.subsamplingY;
         int chromaWidth4 = Math.Min((bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX, this.chromaStride4 - chromaCol);
@@ -725,24 +772,26 @@ internal class Av1TileDecoder
         }
     }
 
-    // dav1d calc_lf_value (no segmentation or delta_lf in this subset): the block's filter level is the
-    // frame level adjusted by the reference and mode deltas. A zero chroma base level is never adjusted.
-    private int CalcLfLevel(int baseLevel, int reference, int modeIndex, bool isChroma)
+    // dav1d calc_lf_value: the block's filter level is the frame level adjusted by the superblock
+    // loop-filter delta, the segment delta and the reference/mode deltas. A zero chroma base level is
+    // never adjusted.
+    private int CalcLfLevel(int baseLevel, int lfDelta, int segDelta, int reference, int modeIndex, bool isChroma)
     {
         if (isChroma && baseLevel == 0)
         {
             return 0;
         }
 
+        int adjusted = Math.Clamp(Math.Clamp(baseLevel + lfDelta, 0, 63) + segDelta, 0, 63);
         ObuFrameHeader.LoopFilter lf = this.frameHeader.LoopFilterParameters;
         if (!lf.DeltaEnabled)
         {
-            return baseLevel;
+            return adjusted;
         }
 
-        int shift = baseLevel >= 32 ? 1 : 0;
+        int shift = adjusted >= 32 ? 1 : 0;
         int delta = reference == 0 ? lf.RefDeltas[0] : lf.ModeDeltas[modeIndex] + lf.RefDeltas[reference];
-        return Math.Clamp(baseLevel + (delta * (1 << shift)), 0, 63);
+        return Math.Clamp(adjusted + (delta * (1 << shift)), 0, 63);
     }
 
     private void DeblockPlane(Av1Plane plane, int stride4, int cols4, int rows4, byte[] txLw, byte[] txLh, bool[] edgeV, bool[] edgeH, int levelOffsetV, int levelOffsetH, bool isLuma, int[] limit, int[] blimit)
@@ -1205,6 +1254,17 @@ internal class Av1TileDecoder
         int skipContext = this.aboveSkip[col] + this.leftSkip[row];
         int skip = this.decoder.ReadSymbol(this.modeCdf.Skip[skipContext]);
 
+        // Post-skip segment id: predicted from the neighbouring map cells; a skipped block takes the
+        // prediction without coding a symbol (the pre-skip position is rejected at construction).
+        if (this.segmentation.Enabled)
+        {
+            this.ReadSegmentId(row, col, width4, height4, skip);
+        }
+        else
+        {
+            this.currentSegmentId = 0;
+        }
+
         // cdef index: read once per 64x64 region at its first non-skip block, then propagated to every
         // 64x64 cell the block covers (dav1d reads cdef_idx per 64x64, even within a 128x128 superblock).
         if (skip == 0 && this.cdefIndices[((row >> 4) * this.cdefColumns64) + (col >> 4)] == -1)
@@ -1231,7 +1291,165 @@ internal class Av1TileDecoder
             }
         }
 
+        this.ReadSuperblockDeltas(row, col, width4, height4, skip);
+        this.UpdateBlockQIndex();
         return skip;
+    }
+
+    // Reads the block's segment id from the spatial prediction (dav1d's post-skip segment_id branch)
+    // and splats it into the segment map.
+    private void ReadSegmentId(int row, int col, int width4, int height4, int skip)
+    {
+        (int predSegId, int segCtx) = this.PredictSegmentId(row, col);
+        int segId;
+        if (skip != 0)
+        {
+            segId = predSegId;
+        }
+        else
+        {
+            int diff = this.decoder.ReadSymbol(this.modeCdf.SegId[segCtx]);
+            segId = NegDeinterleave(diff, predSegId, this.segmentation.LastActiveSegmentId + 1);
+            if (segId > this.segmentation.LastActiveSegmentId || segId >= ObuSegmentationParams.SegmentCount)
+            {
+                segId = 0;
+            }
+        }
+
+        this.currentSegmentId = segId;
+        for (int dy = 0; dy < height4 && row + dy < this.miRows; dy++)
+        {
+            int rowBase = (row + dy) * this.miColumns;
+            for (int dx = 0; dx < width4 && col + dx < this.miColumns; dx++)
+            {
+                this.segmentMap[rowBase + col + dx] = (byte)segId;
+            }
+        }
+    }
+
+    // The spatial segment-id prediction and its context (dav1d get_cur_frame_segid): from the left,
+    // above and above-left map cells, with tile-relative availability.
+    private (int PredSegId, int Context) PredictSegmentId(int row, int col)
+    {
+        bool haveTop = row > this.tileBounds.RowStart;
+        bool haveLeft = col > this.tileBounds.ColumnStart;
+        int position = (row * this.miColumns) + col;
+        if (haveLeft && haveTop)
+        {
+            int l = this.segmentMap[position - 1];
+            int a = this.segmentMap[position - this.miColumns];
+            int al = this.segmentMap[position - this.miColumns - 1];
+            int ctx = l == a && al == l ? 2 : l == a || al == l || a == al ? 1 : 0;
+            return (a == al ? a : l, ctx);
+        }
+
+        return (haveLeft ? this.segmentMap[position - 1] : haveTop ? this.segmentMap[position - this.miColumns] : 0, 0);
+    }
+
+    // dav1d neg_deinterleave: recovers the segment id from the coded difference and the prediction.
+    private static int NegDeinterleave(int diff, int reference, int max)
+    {
+        if (reference == 0)
+        {
+            return diff;
+        }
+
+        if (reference >= max - 1)
+        {
+            return max - diff - 1;
+        }
+
+        if (2 * reference < max)
+        {
+            if (diff <= 2 * reference)
+            {
+                return (diff & 1) != 0 ? reference + ((diff + 1) >> 1) : reference - (diff >> 1);
+            }
+
+            return diff;
+        }
+
+        if (diff <= 2 * (max - reference - 1))
+        {
+            return (diff & 1) != 0 ? reference + ((diff + 1) >> 1) : reference - (diff >> 1);
+        }
+
+        return max - (diff + 1);
+    }
+
+    // Reads the per-superblock quantizer and loop-filter deltas at the first block of each superblock
+    // (dav1d's delta-q/lf block in decode_b) and accumulates them into the running tile state.
+    private void ReadSuperblockDeltas(int row, int col, int width4, int height4, int skip)
+    {
+        int sbMask = this.sequenceHeader.Use128x128Superblock ? 31 : 15;
+        if (((col | row) & sbMask) != 0)
+        {
+            return;
+        }
+
+        int sb4 = sbMask + 1;
+        bool haveDeltaQ = this.frameHeader.DeltaQPresent && (width4 != sb4 || height4 != sb4 || skip == 0);
+        if (!haveDeltaQ)
+        {
+            return;
+        }
+
+        int deltaQ = this.ReadDeltaToken(this.modeCdf.DeltaQ, this.frameHeader.DeltaQResolution);
+        this.currentQIndex = Math.Clamp(this.currentQIndex + deltaQ, 1, 255);
+
+        if (this.frameHeader.DeltaLfPresent)
+        {
+            bool multi = this.frameHeader.DeltaLfMulti;
+            int count = multi ? (this.sequenceHeader.NumPlanes > 1 ? 4 : 2) : 1;
+            for (int i = 0; i < count; i++)
+            {
+                int deltaLf = this.ReadDeltaToken(this.modeCdf.DeltaLf[i + (multi ? 1 : 0)], this.frameHeader.DeltaLfResolution);
+                this.currentDeltaLf[i] = Math.Clamp(this.currentDeltaLf[i] + deltaLf, -63, 63);
+            }
+        }
+    }
+
+    // Reads one delta token: a four-way symbol whose last value opens an escape with a coded bit
+    // length, then an equi-probable sign, scaled by the frame's delta resolution.
+    private int ReadDeltaToken(ushort[] cdf, int resolutionLog2)
+    {
+        int delta = this.decoder.ReadSymbol(cdf);
+        if (delta == 3)
+        {
+            int bits = 1 + (int)this.decoder.ReadLiteral(3);
+            delta = (int)this.decoder.ReadLiteral(bits) + 1 + (1 << bits);
+        }
+
+        if (delta != 0)
+        {
+            if (this.decoder.ReadBool() != 0)
+            {
+                delta = -delta;
+            }
+
+            delta *= 1 << resolutionLog2;
+        }
+
+        return delta;
+    }
+
+    // Derives the current block's effective per-plane DC/AC quantizer indices from the running
+    // superblock quantizer, the block's segment quantizer delta and the frame's per-plane deltas
+    // (dav1d init_quant_tables for the active segment).
+    private void UpdateBlockQIndex()
+    {
+        int baseQ = this.currentQIndex;
+        if (this.segmentation.Enabled)
+        {
+            baseQ = Math.Clamp(baseQ + this.segmentation.DeltaQ[this.currentSegmentId], 0, 255);
+        }
+
+        this.blockDcQIndex[0] = Math.Clamp(baseQ + this.frameHeader.DeltaQYDc, 0, 255);
+        this.blockAcQIndex[0] = baseQ;
+        this.blockDcQIndex[1] = Math.Clamp(baseQ + this.frameHeader.DeltaQUDc, 0, 255);
+        this.blockAcQIndex[1] = Math.Clamp(baseQ + this.frameHeader.DeltaQUAc, 0, 255);
+        this.blockDcQIndex[2] = Math.Clamp(baseQ + this.frameHeader.DeltaQVDc, 0, 255);
+        this.blockAcQIndex[2] = Math.Clamp(baseQ + this.frameHeader.DeltaQVAc, 0, 255);
     }
 
     private protected virtual void DecodeBlock(int row, int col, Av1BlockSize bsize, bool topRightAvailable)
@@ -1525,6 +1743,7 @@ internal class Av1TileDecoder
         if (eob != Av1CoefficientReader.AllZero)
         {
             int codedHeight = Math.Min(height, 32);
+            int planeIndex = ReferenceEquals(plane, this.luma) ? 0 : ReferenceEquals(plane, this.chromaU) ? 1 : 2;
             int[] coefficients = new int[width * height];
             for (int rc = 0; rc < levels.Length; rc++)
             {
@@ -1535,8 +1754,9 @@ internal class Av1TileDecoder
 
                 int rowInBlock = rc % codedHeight;
                 int colInBlock = rc / codedHeight;
+                int qindex = rc == 0 ? this.blockDcQIndex[planeIndex] : this.blockAcQIndex[planeIndex];
                 coefficients[(rowInBlock * width) + colInBlock] =
-                    Av1QuantizationLookup.Dequantize(levels[rc], rc == 0, this.frameHeader.BaseQIndex, this.sequenceHeader.BitDepth, tx);
+                    Av1QuantizationLookup.Dequantize(levels[rc], rc == 0, qindex, this.sequenceHeader.BitDepth, tx);
             }
 
             Av1InverseTransform2d.Reconstruct(txType, tx, coefficients, residual, this.sequenceHeader.BitDepth);

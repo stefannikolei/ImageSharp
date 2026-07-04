@@ -102,6 +102,16 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets a value indicating whether segmentation is enabled.</summary>
     public bool SegmentationEnabled { get; init; }
 
+    /// <summary>Gets the segmentation parameters.</summary>
+    public ObuSegmentationParams SegmentationParams { get; init; }
+
+    /// <summary>Gets the per-block loop-filter delta resolution (log2).</summary>
+    public int DeltaLfResolution { get; init; }
+
+    /// <summary>Gets a value indicating whether per-block loop-filter deltas are coded per
+    /// component (multi) instead of a single shared delta.</summary>
+    public bool DeltaLfMulti { get; init; }
+
     /// <summary>Gets a value indicating whether per-block quantizer deltas are coded.</summary>
     public bool DeltaQPresent { get; init; }
 
@@ -290,7 +300,7 @@ internal readonly struct ObuFrameHeader
 
         Quantization q = ReadQuantizationParams(ref reader, sequenceHeader);
 
-        bool segmentationEnabled = ReadSegmentationParams(ref reader);
+        ObuSegmentationParams segmentation = ReadSegmentationParams(ref reader, primaryRefNone: true, inherited: null);
 
         // delta_q_params().
         bool deltaQPresent = false;
@@ -307,13 +317,15 @@ internal readonly struct ObuFrameHeader
 
         // delta_lf_params().
         bool deltaLfPresent = false;
+        int deltaLfResolution = 0;
+        bool deltaLfMulti = false;
         if (deltaQPresent && !allowIntraBlockCopy)
         {
             deltaLfPresent = reader.ReadBoolean();
             if (deltaLfPresent)
             {
-                reader.ReadLiteral(2); // delta_lf_res
-                reader.ReadBoolean();  // delta_lf_multi
+                deltaLfResolution = (int)reader.ReadLiteral(2);
+                deltaLfMulti = reader.ReadBoolean();
             }
         }
 
@@ -364,7 +376,10 @@ internal readonly struct ObuFrameHeader
             DeltaQVDc = q.DeltaQVDc,
             DeltaQVAc = q.DeltaQVAc,
             UsingQMatrix = q.UsingQMatrix,
-            SegmentationEnabled = segmentationEnabled,
+            SegmentationEnabled = segmentation.Enabled,
+            SegmentationParams = segmentation,
+            DeltaLfResolution = deltaLfResolution,
+            DeltaLfMulti = deltaLfMulti,
             DeltaQPresent = deltaQPresent,
             DeltaQResolution = deltaQResolution,
             DeltaLfPresent = deltaLfPresent,
@@ -470,9 +485,17 @@ internal readonly struct ObuFrameHeader
         int modeInfoColumns = 2 * ((size.FrameWidth + 7) >> 3);
         int modeInfoRows = 2 * ((size.FrameHeight + 7) >> 3);
 
+        // With a primary reference the loop-filter deltas, segmentation feature table and global-motion
+        // models start from the reference's saved state (load_previous) instead of the
+        // setup_past_independence defaults.
+        ObuPrimaryReferenceState inherited = primaryRefFrame != PrimaryReferenceNone && slotStates?[refFrameIndices[primaryRefFrame]] is { } saved
+            ? saved
+            : ObuPrimaryReferenceState.CreateDefault();
+
         TileInfo tile = ReadTileInfo(ref reader, sequenceHeader, modeInfoColumns, modeInfoRows);
         Quantization q = ReadQuantizationParams(ref reader, sequenceHeader);
-        bool segmentationEnabled = ReadSegmentationParams(ref reader);
+        ObuSegmentationParams segmentation = ReadSegmentationParams(
+            ref reader, primaryRefNone: primaryRefFrame == PrimaryReferenceNone, inherited: inherited.Segmentation);
 
         bool deltaQPresent = false;
         int deltaQResolution = 0;
@@ -487,24 +510,20 @@ internal readonly struct ObuFrameHeader
         }
 
         bool deltaLfPresent = false;
+        int deltaLfResolution = 0;
+        bool deltaLfMulti = false;
         if (deltaQPresent)
         {
             deltaLfPresent = reader.ReadBoolean();
             if (deltaLfPresent)
             {
-                reader.ReadLiteral(2);
-                reader.ReadBoolean();
+                deltaLfResolution = (int)reader.ReadLiteral(2);
+                deltaLfMulti = reader.ReadBoolean();
             }
         }
 
         bool codedLossless = q.BaseQIndex == 0 && q.DeltaQYDc == 0 &&
             q.DeltaQUDc == 0 && q.DeltaQUAc == 0 && q.DeltaQVDc == 0 && q.DeltaQVAc == 0;
-
-        // With a primary reference the loop-filter deltas start from the reference's saved state
-        // (load_previous) instead of the setup_past_independence defaults.
-        ObuPrimaryReferenceState inherited = primaryRefFrame != PrimaryReferenceNone && slotStates?[refFrameIndices[primaryRefFrame]] is { } saved
-            ? saved
-            : ObuPrimaryReferenceState.CreateDefault();
 
         LoopFilter loopFilter = ReadLoopFilterParams(ref reader, sequenceHeader, codedLossless, false, inherited);
         Cdef cdef = ReadCdefParams(ref reader, sequenceHeader, codedLossless, false);
@@ -559,7 +578,10 @@ internal readonly struct ObuFrameHeader
             DeltaQVDc = q.DeltaQVDc,
             DeltaQVAc = q.DeltaQVAc,
             UsingQMatrix = q.UsingQMatrix,
-            SegmentationEnabled = segmentationEnabled,
+            SegmentationEnabled = segmentation.Enabled,
+            SegmentationParams = segmentation,
+            DeltaLfResolution = deltaLfResolution,
+            DeltaLfMulti = deltaLfMulti,
             DeltaQPresent = deltaQPresent,
             DeltaQResolution = deltaQResolution,
             DeltaLfPresent = deltaLfPresent,
@@ -888,43 +910,131 @@ internal readonly struct ObuFrameHeader
     private static int ReadDeltaQ(ref Av1BitStreamReader reader)
         => reader.ReadBoolean() ? reader.ReadSignedLiteral(7) : 0;
 
-    private static bool ReadSegmentationParams(ref Av1BitStreamReader reader)
+    private static ObuSegmentationParams ReadSegmentationParams(ref Av1BitStreamReader reader, bool primaryRefNone, ObuSegmentationParams? inherited)
     {
-        // Feature bit widths and signedness (specification tables Segmentation_Feature_Bits/Signed).
-        ReadOnlySpan<int> featureBits = [8, 6, 6, 6, 6, 3, 0, 0];
-        ReadOnlySpan<int> featureSigned = [1, 1, 1, 1, 1, 0, 0, 0];
-
-        bool segmentationEnabled = reader.ReadBoolean();
-        if (segmentationEnabled)
+        bool enabled = reader.ReadBoolean();
+        if (!enabled)
         {
-            // primary_ref_frame is PRIMARY_REF_NONE for intra frames, so the map and data are updated.
-            const int segmentCount = 8;
-            const int featureCount = 8;
-            for (int i = 0; i < segmentCount; i++)
+            return ObuSegmentationParams.Disabled;
+        }
+
+        bool updateMap;
+        bool temporalUpdate = false;
+        bool updateData;
+        if (primaryRefNone)
+        {
+            updateMap = true;
+            updateData = true;
+        }
+        else
+        {
+            updateMap = reader.ReadBoolean();
+            if (updateMap)
             {
-                for (int j = 0; j < featureCount; j++)
-                {
-                    bool featureEnabled = reader.ReadBoolean();
-                    if (featureEnabled)
-                    {
-                        int bits = featureBits[j];
-                        if (bits > 0)
-                        {
-                            if (featureSigned[j] == 1)
-                            {
-                                reader.ReadSignedLiteral(bits + 1);
-                            }
-                            else
-                            {
-                                reader.ReadLiteral(bits);
-                            }
-                        }
-                    }
-                }
+                temporalUpdate = reader.ReadBoolean();
+            }
+
+            updateData = reader.ReadBoolean();
+        }
+
+        if (!updateData)
+        {
+            // The feature table is inherited from the primary reference.
+            ObuSegmentationParams reference = inherited ?? ObuSegmentationParams.Disabled;
+            return reference with
+            {
+                Enabled = true,
+                UpdateMap = updateMap,
+                TemporalUpdate = temporalUpdate,
+                UpdateData = false,
+            };
+        }
+
+        int[] deltaQ = new int[ObuSegmentationParams.SegmentCount];
+        int[] deltaLfYV = new int[ObuSegmentationParams.SegmentCount];
+        int[] deltaLfYH = new int[ObuSegmentationParams.SegmentCount];
+        int[] deltaLfU = new int[ObuSegmentationParams.SegmentCount];
+        int[] deltaLfV = new int[ObuSegmentationParams.SegmentCount];
+        int[] refFeature = new int[ObuSegmentationParams.SegmentCount];
+        bool[] skipFeature = new bool[ObuSegmentationParams.SegmentCount];
+        bool[] globalMvFeature = new bool[ObuSegmentationParams.SegmentCount];
+        int lastActive = -1;
+        bool preSkip = false;
+        for (int i = 0; i < ObuSegmentationParams.SegmentCount; i++)
+        {
+            if (reader.ReadBoolean())
+            {
+                deltaQ[i] = reader.ReadSignedLiteral(9);
+                lastActive = i;
+            }
+
+            if (reader.ReadBoolean())
+            {
+                deltaLfYV[i] = reader.ReadSignedLiteral(7);
+                lastActive = i;
+            }
+
+            if (reader.ReadBoolean())
+            {
+                deltaLfYH[i] = reader.ReadSignedLiteral(7);
+                lastActive = i;
+            }
+
+            if (reader.ReadBoolean())
+            {
+                deltaLfU[i] = reader.ReadSignedLiteral(7);
+                lastActive = i;
+            }
+
+            if (reader.ReadBoolean())
+            {
+                deltaLfV[i] = reader.ReadSignedLiteral(7);
+                lastActive = i;
+            }
+
+            if (reader.ReadBoolean())
+            {
+                refFeature[i] = (int)reader.ReadLiteral(3);
+                lastActive = i;
+                preSkip = true;
+            }
+            else
+            {
+                refFeature[i] = -1;
+            }
+
+            skipFeature[i] = reader.ReadBoolean();
+            if (skipFeature[i])
+            {
+                lastActive = i;
+                preSkip = true;
+            }
+
+            globalMvFeature[i] = reader.ReadBoolean();
+            if (globalMvFeature[i])
+            {
+                lastActive = i;
+                preSkip = true;
             }
         }
 
-        return segmentationEnabled;
+        return new ObuSegmentationParams
+        {
+            Enabled = true,
+            UpdateMap = updateMap,
+            TemporalUpdate = temporalUpdate,
+            UpdateData = true,
+            PreSkip = preSkip,
+            LastActiveSegmentId = lastActive,
+            DeltaQ = deltaQ,
+            DeltaLfYVertical = deltaLfYV,
+            DeltaLfYHorizontal = deltaLfYH,
+            DeltaLfU = deltaLfU,
+            DeltaLfV = deltaLfV,
+            Reference = refFeature,
+            Skip = skipFeature,
+            GlobalMv = globalMvFeature,
+        };
     }
 
     // global_motion_params() for one reference (dav1d obu.c): the model type as up to three flag bits,

@@ -77,6 +77,10 @@ internal sealed class Av1FrameCdfSet
     {
         Av1ModeInfoCdfContext m = this.ModeInfo;
         Av1CdfTables.ResetCounters(m.Skip);
+        Av1CdfTables.ResetCounters(m.SegId);
+        Av1CdfTables.ResetCounters(m.SegPred);
+        Av1CdfTables.ResetCounter(m.DeltaQ);
+        Av1CdfTables.ResetCounters(m.DeltaLf);
         Av1CdfTables.ResetCounters(m.Partition);
         Av1CdfTables.ResetCounters(m.KeyFrameYMode);
         Av1CdfTables.ResetCounters(m.YMode);
