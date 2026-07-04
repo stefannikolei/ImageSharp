@@ -24,12 +24,12 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // The reference frames, indexed by the zero-based reference name (LAST .. ALTREF).
     private readonly Av1ReferenceFrame?[] references;
 
-    private readonly Av1InterModeCdfContext interCdf;
-    private readonly Av1MotionVectorCdfContext mvCdf;
-    private readonly Av1InterpolationFilterCdfContext filterCdf;
-    private readonly Av1MotionModeCdfContext motionModeCdf;
-    private readonly Av1InterTransformTypeCdfContext interTransformTypeCdf;
-    private readonly ushort[][][] transformPartitionCdf;
+    private Av1InterModeCdfContext interCdf;
+    private Av1MotionVectorCdfContext mvCdf;
+    private Av1InterpolationFilterCdfContext filterCdf;
+    private Av1MotionModeCdfContext motionModeCdf;
+    private Av1InterTransformTypeCdfContext interTransformTypeCdf;
+    private ushort[][][] transformPartitionCdf;
 
     // The inter variable-transform size neighbour context (dav1d's BlockContext.tx, distinct from the
     // intra tx_intra context in the base class). It stores the transform width/height category (log2 of
@@ -42,7 +42,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     private readonly Av1TransformType[] lumaTransformTypes;
     private readonly Av1MotionVectorGrid grid;
     private readonly Av1InterNeighbourContext interNeighbours;
-    private readonly Av1InterModeInfoOptions options;
+    private Av1InterModeInfoOptions options;
     private readonly int interpolationFilter;
 
     // The current block's prediction source: set true around an inter block so the Predict override
@@ -166,7 +166,32 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     private Av1ReferenceFrame GetReference(int reference)
         => this.references[reference] ?? throw new InvalidDataException($"Inter block references the empty reference slot {reference}.");
 
-    private protected override void OnSuperblockRowStart() => Array.Fill(this.interLeftTx, (sbyte)4);
+    private protected override void OnSuperblockRowStart()
+    {
+        Array.Fill(this.interLeftTx, (sbyte)4);
+        this.interNeighbours.ClearLeft();
+    }
+
+    private protected override void BindCdfs(Av1FrameCdfSet cdfs)
+    {
+        base.BindCdfs(cdfs);
+        this.interCdf = cdfs.InterMode;
+        this.mvCdf = cdfs.MotionVector;
+        this.filterCdf = cdfs.Filter;
+        this.motionModeCdf = cdfs.MotionMode;
+        this.interTransformTypeCdf = cdfs.InterTransformType;
+        this.transformPartitionCdf = cdfs.TransformPartition;
+    }
+
+    private protected override void OnTileStart()
+    {
+        base.OnTileStart();
+        int start = this.tileBounds.ColumnStart;
+        int count = this.tileBounds.ColumnEnd - start;
+        Array.Fill(this.interAboveTx, (sbyte)4, start, count);
+        this.interNeighbours.ClearAbove(start, count);
+        this.options = this.options.WithBounds(this.tileBounds);
+    }
 
     private protected override void RecordLumaTransformType(int txCol, int txRow, int txWidth4, int txHeight4, Av1TransformType txType)
     {
@@ -197,8 +222,8 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     {
         int width4 = bsize.GetWidth4();
         int height4 = bsize.GetHeight4();
-        bool haveTop = row > 0;
-        bool haveLeft = col > 0;
+        bool haveTop = row > this.tileBounds.RowStart;
+        bool haveLeft = col > this.tileBounds.ColumnStart;
 
         int skip = this.ReadSkipFlag(row, col, width4, height4);
 
@@ -272,7 +297,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         // or a WARP motion-mode block whose derived local model is affine, is predicted with the
         // affine warp kernel instead of translational MC (dav1d's warp_affine path); an OBMC block
         // blends overlapped predictions from its inter neighbours over the translational prediction.
-        Av1ReferenceFrame blockReference = this.GetReference(info.Reference);
+                Av1ReferenceFrame blockReference = this.GetReference(info.Reference);
         int[]? warpMatrix = null;
         short[]? warpShear = null;
         if (Math.Min(width4, height4) > 1)
@@ -302,7 +327,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                 this.OverlappedPrediction(this.luma, 0, row, col, width4, height4, obmcAboveFilters!, obmcLeftFilters!);
             }
         }
-        bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
+                bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
                          (height4 > this.subsamplingY || (row & 1) != 0);
         if (hasChroma && blockReference.ChromaU is not null && blockReference.ChromaV is not null)
@@ -310,7 +335,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             this.MotionCompensateChroma(row, col, width4, height4, info, leftNeighbour, aboveNeighbour, warpMatrix, warpShear, obmcAboveFilters, obmcLeftFilters);
         }
 
-        // Add the residual through the shared transform-block loop, substituting the motion-compensated
+                // Add the residual through the shared transform-block loop, substituting the motion-compensated
         // prediction via the Predict override. A skipped block carries no residual.
         bool blockSkip = skip != 0;
         this.currentBlockIsInter = true;
@@ -483,7 +508,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
 
         // The chroma minimum-size condition gates only the above pass (dav1d obmc); the left pass
         // runs for every plane.
-        if (row > 0 && (plane == 0 || (bw4 * hMul) + (bh4 * vMul) >= 16))
+        if (row > this.tileBounds.RowStart && (plane == 0 || (bw4 * hMul) + (bh4 * vMul) >= 16))
         {
             int maxNeighbours = Math.Min(System.Numerics.BitOperations.Log2((uint)bw4), 4);
             for (int i = 0, x = 0; x < w4 && i < maxNeighbours;)
@@ -512,7 +537,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             }
         }
 
-        if (col > 0)
+        if (col > this.tileBounds.ColumnStart)
         {
             int maxNeighbours = Math.Min(System.Numerics.BitOperations.Log2((uint)bh4), 4);
             for (int i = 0, y = 0; y < h4 && i < maxNeighbours;)

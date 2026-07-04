@@ -66,6 +66,18 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets the number of bytes used to encode tile sizes.</summary>
     public int TileSizeBytes { get; init; }
 
+    /// <summary>Gets the tile column boundaries in 4x4 units: one start per tile column plus the frame
+    /// end, so column <c>i</c> spans <c>[TileColumnStarts[i], TileColumnStarts[i + 1])</c>.</summary>
+    public int[]? TileColumnStarts { get; init; }
+
+    /// <summary>Gets the tile row boundaries in 4x4 units (same layout as
+    /// <see cref="TileColumnStarts"/>).</summary>
+    public int[]? TileRowStarts { get; init; }
+
+    /// <summary>Gets the tile whose frame-end CDF state a later frame inherits
+    /// (<c>context_update_tile_id</c>).</summary>
+    public int ContextUpdateTileId { get; init; }
+
     /// <summary>Gets the base quantizer index (<c>base_q_idx</c>).</summary>
     public int BaseQIndex { get; init; }
 
@@ -342,6 +354,9 @@ internal readonly struct ObuFrameHeader
             TileColumnsLog2 = tile.ColumnsLog2,
             TileRowsLog2 = tile.RowsLog2,
             TileSizeBytes = tile.SizeBytes,
+            TileColumnStarts = tile.ColumnStarts,
+            TileRowStarts = tile.RowStarts,
+            ContextUpdateTileId = tile.ContextUpdateTileId,
             BaseQIndex = q.BaseQIndex,
             DeltaQYDc = q.DeltaQYDc,
             DeltaQUDc = q.DeltaQUDc,
@@ -534,6 +549,9 @@ internal readonly struct ObuFrameHeader
             TileColumnsLog2 = tile.ColumnsLog2,
             TileRowsLog2 = tile.RowsLog2,
             TileSizeBytes = tile.SizeBytes,
+            TileColumnStarts = tile.ColumnStarts,
+            TileRowStarts = tile.RowStarts,
+            ContextUpdateTileId = tile.ContextUpdateTileId,
             BaseQIndex = q.BaseQIndex,
             DeltaQYDc = q.DeltaQYDc,
             DeltaQUDc = q.DeltaQUDc,
@@ -722,6 +740,8 @@ internal readonly struct ObuFrameHeader
 
         int tileColumnsLog2;
         int tileRowsLog2;
+        List<int> columnStartsSb = [];
+        List<int> rowStartsSb = [];
         bool uniformTileSpacing = reader.ReadBoolean();
         if (uniformTileSpacing)
         {
@@ -731,11 +751,23 @@ internal readonly struct ObuFrameHeader
                 tileColumnsLog2++;
             }
 
+            int tileWidthSb = (sbCols + (1 << tileColumnsLog2) - 1) >> tileColumnsLog2;
+            for (int startSb = 0; startSb < sbCols; startSb += tileWidthSb)
+            {
+                columnStartsSb.Add(startSb);
+            }
+
             int minLog2TileRows = Math.Max(minLog2Tiles - tileColumnsLog2, 0);
             tileRowsLog2 = minLog2TileRows;
             while (tileRowsLog2 < maxLog2TileRows && reader.ReadBoolean())
             {
                 tileRowsLog2++;
+            }
+
+            int tileHeightSb = (sbRows + (1 << tileRowsLog2) - 1) >> tileRowsLog2;
+            for (int startSb = 0; startSb < sbRows; startSb += tileHeightSb)
+            {
+                rowStartsSb.Add(startSb);
             }
         }
         else
@@ -745,6 +777,7 @@ internal readonly struct ObuFrameHeader
             int i = 0;
             for (; startSb < sbCols; i++)
             {
+                columnStartsSb.Add(startSb);
                 int maxWidth = Math.Min(sbCols - startSb, maxTileWidthSb);
                 int width = (int)reader.ReadNonSymmetric((uint)maxWidth) + 1;
                 widestTileSb = Math.Max(width, widestTileSb);
@@ -758,6 +791,7 @@ internal readonly struct ObuFrameHeader
             int j = 0;
             for (; startSb < sbRows; j++)
             {
+                rowStartsSb.Add(startSb);
                 int maxHeight = Math.Min(sbRows - startSb, maxTileAreaSb2);
                 int height = (int)reader.ReadNonSymmetric((uint)maxHeight) + 1;
                 startSb += height;
@@ -766,18 +800,39 @@ internal readonly struct ObuFrameHeader
             tileRowsLog2 = TileLog2(1, j);
         }
 
+        int contextUpdateTileId = 0;
         int tileSizeBytes = 1;
         if (tileColumnsLog2 > 0 || tileRowsLog2 > 0)
         {
-            reader.ReadLiteral(tileRowsLog2 + tileColumnsLog2); // context_update_tile_id
+            contextUpdateTileId = (int)reader.ReadLiteral(tileRowsLog2 + tileColumnsLog2);
             tileSizeBytes = (int)reader.ReadLiteral(2) + 1;
         }
+
+        // Convert the superblock boundaries to 4x4 units, appending the frame end.
+        int[] columnStarts = new int[columnStartsSb.Count + 1];
+        for (int c = 0; c < columnStartsSb.Count; c++)
+        {
+            columnStarts[c] = Math.Min(columnStartsSb[c] << sbShift, miCols);
+        }
+
+        columnStarts[^1] = miCols;
+
+        int[] rowStarts = new int[rowStartsSb.Count + 1];
+        for (int r = 0; r < rowStartsSb.Count; r++)
+        {
+            rowStarts[r] = Math.Min(rowStartsSb[r] << sbShift, miRows);
+        }
+
+        rowStarts[^1] = miRows;
 
         return new TileInfo
         {
             ColumnsLog2 = tileColumnsLog2,
             RowsLog2 = tileRowsLog2,
             SizeBytes = tileSizeBytes,
+            ColumnStarts = columnStarts,
+            RowStarts = rowStarts,
+            ContextUpdateTileId = contextUpdateTileId,
         };
     }
 
@@ -1079,6 +1134,12 @@ internal readonly struct ObuFrameHeader
         public int RowsLog2 { get; init; }
 
         public int SizeBytes { get; init; }
+
+        public int[] ColumnStarts { get; init; }
+
+        public int[] RowStarts { get; init; }
+
+        public int ContextUpdateTileId { get; init; }
     }
 
     /// <summary>

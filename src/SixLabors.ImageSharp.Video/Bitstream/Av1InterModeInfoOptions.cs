@@ -86,4 +86,21 @@ internal readonly struct Av1InterModeInfoOptions
 
     /// <summary>Gets the temporal motion-vector prediction state, or <see langword="null"/>.</summary>
     public Av1TemporalMvContext? Temporal { get; }
+
+    /// <summary>Returns a copy of these options with the tile bounds replaced (per-tile decoding).</summary>
+    /// <param name="bounds">The new tile bounds.</param>
+    /// <returns>The re-bounded options.</returns>
+    public Av1InterModeInfoOptions WithBounds(Av1TileBounds bounds) => new(
+        bounds,
+        this.ImageWidth4,
+        this.ImageHeight4,
+        this.AllowHighPrecisionMv,
+        this.ForceIntegerMv,
+        this.FilterSwitchable,
+        this.DualFilter,
+        this.FixedFilter,
+        this.GlobalMotion,
+        this.SignBias,
+        this.AllowWarpedMotion,
+        this.Temporal);
 }

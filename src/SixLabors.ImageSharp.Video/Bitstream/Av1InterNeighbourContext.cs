@@ -49,8 +49,8 @@ internal sealed class Av1InterNeighbourContext
         this.aboveSkipMode = new byte[columns4];
         this.leftSkipMode = new byte[rows4];
 
-        ResetToIntra(this.aboveIntra, this.aboveReference0, this.aboveReference1, this.aboveFilter0, this.aboveFilter1);
-        ResetToIntra(this.leftIntra, this.leftReference0, this.leftReference1, this.leftFilter0, this.leftFilter1);
+        this.ClearAbove(0, columns4);
+        this.ClearLeft();
     }
 
     /// <summary>Gets the above neighbour state at the given 4x4 column.</summary>
@@ -151,20 +151,32 @@ internal sealed class Av1InterNeighbourContext
         }
     }
 
-    /// <summary>Resets the left neighbour arrays at the start of a super-block row.</summary>
+    /// <summary>Resets the left neighbour arrays at the start of a super-block row (the reference
+    /// decoder's <c>reset_context</c> for inter frames: not-intra, no reference, unset filter, so an
+    /// unwritten row is overlappable but never matches a reference).</summary>
     public void ClearLeft()
     {
-        ResetToIntra(this.leftIntra, this.leftReference0, this.leftReference1, this.leftFilter0, this.leftFilter1);
+        Array.Clear(this.leftIntra);
+        Array.Fill(this.leftReference0, (sbyte)-1);
+        Array.Fill(this.leftReference1, (sbyte)-1);
+        Array.Fill(this.leftFilter0, (byte)FilterUnset);
+        Array.Fill(this.leftFilter1, (byte)FilterUnset);
         Array.Clear(this.leftCompound);
         Array.Clear(this.leftSkipMode);
     }
 
-    private static void ResetToIntra(byte[] intra, sbyte[] reference0, sbyte[] reference1, byte[] filter0, byte[] filter1)
+    /// <summary>Resets a column range of the above neighbour arrays at the start of a tile (the same
+    /// inter-frame reset values as <see cref="ClearLeft"/>).</summary>
+    /// <param name="column">The first 4x4 column of the range.</param>
+    /// <param name="count">The number of columns.</param>
+    public void ClearAbove(int column, int count)
     {
-        Array.Fill(intra, (byte)1);
-        Array.Fill(reference0, (sbyte)-1);
-        Array.Fill(reference1, (sbyte)-1);
-        Array.Fill(filter0, (byte)FilterUnset);
-        Array.Fill(filter1, (byte)FilterUnset);
+        Array.Clear(this.aboveIntra, column, count);
+        Array.Fill(this.aboveReference0, (sbyte)-1, column, count);
+        Array.Fill(this.aboveReference1, (sbyte)-1, column, count);
+        Array.Fill(this.aboveFilter0, (byte)FilterUnset, column, count);
+        Array.Fill(this.aboveFilter1, (byte)FilterUnset, column, count);
+        Array.Clear(this.aboveCompound, column, count);
+        Array.Clear(this.aboveSkipMode, column, count);
     }
 }

@@ -68,8 +68,12 @@ internal class Av1TileDecoder
 
     private protected readonly ObuSequenceHeader sequenceHeader;
     private protected readonly ObuFrameHeader frameHeader;
-    private protected readonly Av1ModeInfoCdfContext modeCdf;
-    private protected readonly Av1CoefficientCdfContext coefficientCdf;
+    private protected Av1ModeInfoCdfContext modeCdf;
+    private protected Av1CoefficientCdfContext coefficientCdf;
+
+    // The bounds of the tile currently being decoded, in 4x4 units (the whole frame for single-tile
+    // frames). Availability at the tile's top/left edges follows these, not the frame edges.
+    private protected Av1TileBounds tileBounds;
 
     private protected readonly Av1Plane luma;
     private protected readonly Av1Plane chromaU;
@@ -218,6 +222,8 @@ internal class Av1TileDecoder
         this.chromaTxLh = new byte[chromaCells];
         this.chromaEdgeV = new bool[chromaCells];
         this.chromaEdgeH = new bool[chromaCells];
+
+        this.tileBounds = new Av1TileBounds(0, miCols, 0, miRows);
     }
 
     /// <summary>
@@ -240,13 +246,76 @@ internal class Av1TileDecoder
     /// </summary>
     /// <param name="tileData">The tile's compressed bytes.</param>
     public void DecodeTile(ReadOnlyMemory<byte> tileData)
+        => this.DecodeTiles([tileData]);
+
+    /// <summary>
+    /// Decodes every tile of the frame (in raster order) and applies the frame-wide post filters. Each
+    /// tile starts from the frame's initial CDF state; the frame-end CDF state is the adapted state of
+    /// the tile selected by <c>context_update_tile_id</c>.
+    /// </summary>
+    /// <param name="tiles">The compressed bytes of each tile, in tile raster order.</param>
+    public void DecodeTiles(IReadOnlyList<ReadOnlyMemory<byte>> tiles)
     {
-        if (this.frameHeader.TileColumnsLog2 != 0 || this.frameHeader.TileRowsLog2 != 0)
+        int[] columnStarts = this.frameHeader.TileColumnStarts ?? [];
+        int[] rowStarts = this.frameHeader.TileRowStarts ?? [];
+        int tileColumns = Math.Max(1, columnStarts.Length - 1);
+        int tileRows = Math.Max(1, rowStarts.Length - 1);
+        if (tiles.Count != tileColumns * tileRows)
         {
-            throw new NotSupportedException("Multi-tile frames are not supported yet.");
+            throw new InvalidDataException($"Expected {tileColumns * tileRows} tiles, got {tiles.Count}.");
         }
 
-        this.decoder = new Av1SymbolDecoder(tileData);
+        // Every tile adapts from the frame's initial CDF state; the context-update tile decodes
+        // directly into the frame set (which the reference store saves at the frame end), the others
+        // into throwaway clones taken before any tile adapts anything.
+        Av1FrameCdfSet[] tileCdfs = new Av1FrameCdfSet[tiles.Count];
+        for (int i = 0; i < tiles.Count; i++)
+        {
+            tileCdfs[i] = i == this.frameHeader.ContextUpdateTileId ? this.Cdfs : this.Cdfs.Clone();
+        }
+
+        for (int tileRow = 0; tileRow < tileRows; tileRow++)
+        {
+            for (int tileColumn = 0; tileColumn < tileColumns; tileColumn++)
+            {
+                int index = (tileRow * tileColumns) + tileColumn;
+                this.tileBounds = new Av1TileBounds(
+                    columnStarts.Length > 1 ? columnStarts[tileColumn] : 0,
+                    columnStarts.Length > 1 ? columnStarts[tileColumn + 1] : this.miColumns,
+                    rowStarts.Length > 1 ? rowStarts[tileRow] : 0,
+                    rowStarts.Length > 1 ? rowStarts[tileRow + 1] : this.miRows);
+                this.BindCdfs(tileCdfs[index]);
+                this.DecodeTileData(tiles[index]);
+            }
+        }
+
+        this.BindCdfs(this.Cdfs);
+        this.ApplyPostFilters();
+    }
+
+    // Rebinds the per-tile CDF contexts read during symbol decoding (each tile adapts its own set).
+    private protected virtual void BindCdfs(Av1FrameCdfSet cdfs)
+    {
+        this.modeCdf = cdfs.ModeInfo;
+        this.coefficientCdf = cdfs.Coefficient;
+    }
+
+    // Resets the neighbour contexts above the current tile's columns (the specification's
+    // clear_above_context, over the tile range) and the in-tile running state at the tile start.
+    private protected virtual void OnTileStart()
+    {
+        int start = this.tileBounds.ColumnStart;
+        int count = this.tileBounds.ColumnEnd - start;
+        Array.Clear(this.abovePartition, start >> 1, ((this.tileBounds.ColumnEnd + 1) >> 1) - (start >> 1));
+        Array.Clear(this.aboveSkip, start, count);
+        Array.Clear(this.aboveMode, start, count);
+        Array.Clear(this.aboveUvMode, start, count);
+        Array.Fill(this.aboveTx, (sbyte)-1, start, count);
+        this.lumaLevels.ClearAbove(start, count);
+        int chromaStart = start >> this.subsamplingX;
+        int chromaCount = ((this.tileBounds.ColumnEnd + this.subsamplingX) >> this.subsamplingX) - chromaStart;
+        this.chromaULevels.ClearAbove(chromaStart, chromaCount);
+        this.chromaVLevels.ClearAbove(chromaStart, chromaCount);
 
         for (int p = 0; p < 3; p++)
         {
@@ -259,11 +328,18 @@ internal class Av1TileDecoder
             this.lrRefSgrWeights[p][0] = -32;
             this.lrRefSgrWeights[p][1] = 31;
         }
+    }
+
+    // Decodes one tile's superblocks from its compressed data over the current tile bounds.
+    private void DecodeTileData(ReadOnlyMemory<byte> tileData)
+    {
+        this.decoder = new Av1SymbolDecoder(tileData);
+        this.OnTileStart();
 
         int superblock4 = this.sequenceHeader.Use128x128Superblock ? 32 : 16;
         Av1BlockSize superblock = this.sequenceHeader.Use128x128Superblock ? Av1BlockSize.Block128x128 : Av1BlockSize.Block64x64;
 
-        for (int row = 0; row < this.frameHeader.ModeInfoRows; row += superblock4)
+        for (int row = this.tileBounds.RowStart; row < this.tileBounds.RowEnd; row += superblock4)
         {
             Array.Clear(this.leftPartition);
             Array.Clear(this.leftSkip);
@@ -274,13 +350,18 @@ internal class Av1TileDecoder
             this.chromaVLevels.ClearLeft();
             this.OnSuperblockRowStart();
 
-            for (int col = 0; col < this.frameHeader.ModeInfoColumns; col += superblock4)
+            for (int col = this.tileBounds.ColumnStart; col < this.tileBounds.ColumnEnd; col += superblock4)
             {
                 this.ReadRestorationUnits(row, col);
                 this.DecodePartition(row, col, superblock, topRightAvailable: true);
             }
         }
+    }
 
+    // Applies the frame-wide post filters (deblocking, CDEF, loop restoration) after every tile has
+    // been decoded.
+    private void ApplyPostFilters()
+    {
         this.ApplyDeblock();
 
         // Snapshot the deblocked planes that have loop restoration before CDEF overwrites them; loop
@@ -1540,12 +1621,21 @@ internal class Av1TileDecoder
         }
     }
 
+    // The pixel row of the current tile's top edge in the given plane: intra reference samples above
+    // it belong to another tile and are unavailable (dav1d have_top = by > tiling.row_start).
+    private int TileTopPixel(Av1Plane plane)
+        => ReferenceEquals(plane, this.luma) ? this.tileBounds.RowStart * 4 : (this.tileBounds.RowStart * 4) >> this.subsamplingY;
+
+    // The pixel column of the current tile's left edge in the given plane.
+    private int TileLeftPixel(Av1Plane plane)
+        => ReferenceEquals(plane, this.luma) ? this.tileBounds.ColumnStart * 4 : (this.tileBounds.ColumnStart * 4) >> this.subsamplingX;
+
     // Gathers the extended reference edges (2*size above and left) for directional prediction, applying
     // the dav1d availability fills and frame-edge replication. Only square transforms are handled.
     private void PrepareDirectionalEdges(Av1Plane plane, int x, int y, int width, int height, out byte[] above, out byte[] left, out byte topLeft)
     {
-        bool hasAbove = y > 0;
-        bool hasLeft = x > 0;
+        bool hasAbove = y > this.TileTopPixel(plane);
+        bool hasLeft = x > this.TileLeftPixel(plane);
         int extent = width + height;
         above = new byte[extent];
         left = new byte[extent];
@@ -1648,8 +1738,8 @@ internal class Av1TileDecoder
 
     private void PrepareEdges(Av1Plane plane, int x, int y, int width, int height, out byte[] above, out byte[] left, out byte topLeft)
     {
-        bool hasAbove = y > 0;
-        bool hasLeft = x > 0;
+        bool hasAbove = y > this.TileTopPixel(plane);
+        bool hasLeft = x > this.TileLeftPixel(plane);
         byte mid = (byte)this.midGrey;
         above = new byte[width];
         left = new byte[height];
@@ -1721,8 +1811,8 @@ internal class Av1TileDecoder
 
     private int PredictDc(Av1Plane plane, int x, int y, int width, int height)
     {
-        bool hasAbove = y > 0;
-        bool hasLeft = x > 0;
+        bool hasAbove = y > this.TileTopPixel(plane);
+        bool hasLeft = x > this.TileLeftPixel(plane);
         long sum = 0;
         int count = 0;
 
@@ -1900,5 +1990,8 @@ internal class Av1TileDecoder
         }
 
         public void ClearLeft() => Array.Fill(this.left, LevelContextBaseline);
+
+        public void ClearAbove(int col, int count)
+            => Array.Fill(this.above, LevelContextBaseline, col, Math.Min(count, this.above.Length - col));
     }
 }

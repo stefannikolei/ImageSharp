@@ -13,15 +13,17 @@ namespace SixLabors.ImageSharp.Codecs.Av1.Tests;
 public class Av1InterNeighbourContextTests
 {
     [Fact]
-    public void InitialState_IsIntra()
+    public void InitialState_IsInterFrameReset()
     {
+        // The reference decoder's reset_context for inter frames: not intra (so the edge counts as
+        // overlappable for OBMC), but with no reference and unset filters (so it never matches).
         Av1InterNeighbourContext context = new(32, 32);
 
         Av1ReferenceNeighbour above = context.GetAbove(5);
-        Assert.True(above.IsIntra);
+        Assert.False(above.IsIntra);
         Assert.Equal(-1, above.Reference0);
         Assert.Equal(3, above.Filter0);
-        Assert.Equal(1, context.AboveIntra(5));
+        Assert.Equal(0, context.AboveIntra(5));
         Assert.Equal(0, context.LeftSkipMode(5));
     }
 
@@ -52,9 +54,11 @@ public class Av1InterNeighbourContextTests
             Assert.Equal(1, context.LeftSkipMode(y));
         }
 
-        // Outside the block stays intra.
-        Assert.True(context.GetAbove(10).IsIntra);
-        Assert.True(context.GetLeft(6).IsIntra);
+        // Outside the block keeps the reset state.
+        Assert.False(context.GetAbove(10).IsIntra);
+        Assert.Equal(-1, context.GetAbove(10).Reference0);
+        Assert.False(context.GetLeft(6).IsIntra);
+        Assert.Equal(-1, context.GetLeft(6).Reference0);
     }
 
     [Fact]
@@ -84,10 +88,12 @@ public class Av1InterNeighbourContextTests
 
         context.ClearLeft();
 
-        Assert.True(context.GetLeft(4).IsIntra);
+        Assert.False(context.GetLeft(4).IsIntra);
+        Assert.Equal(-1, context.GetLeft(4).Reference0);
+        Assert.Equal(3, context.GetLeft(4).Filter0);
         Assert.Equal(0, context.LeftSkipMode(4));
 
         // Above is untouched.
-        Assert.False(context.GetAbove(8).IsIntra);
+        Assert.Equal(0, context.GetAbove(8).Reference0);
     }
 }

@@ -37,7 +37,7 @@ internal readonly struct ObuTileGroup
     /// <returns>The parsed <see cref="ObuTileGroup"/>.</returns>
     public static ObuTileGroup Parse(ReadOnlySpan<byte> data, in ObuFrameHeader frameHeader)
     {
-        int numTiles = (1 << frameHeader.TileColumnsLog2) * (1 << frameHeader.TileRowsLog2);
+        int numTiles = ((frameHeader.TileColumnStarts?.Length ?? 2) - 1) * ((frameHeader.TileRowStarts?.Length ?? 2) - 1);
 
         Av1BitStreamReader reader = new(data);
         int tgStart = 0;

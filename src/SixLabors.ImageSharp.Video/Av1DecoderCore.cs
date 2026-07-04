@@ -83,11 +83,9 @@ internal static class Av1DecoderCore
 
                 int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
                 ObuTileGroup tileGroup = ObuTileGroup.Parse(payload[tileGroupStart..], frameHeader);
-                (int tileOffset, int tileLength) = tileGroup.GetTile(0);
-                byte[] tileData = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
 
                 Av1TileDecoder tileDecoder = new(sequenceHeader, frameHeader);
-                tileDecoder.DecodeTile(tileData);
+                tileDecoder.DecodeTiles(SliceTiles(payload, tileGroupStart, tileGroup));
                 return tileDecoder;
             }
         }
@@ -186,16 +184,14 @@ internal static class Av1DecoderCore
             tileDecoder = new Av1InterTileDecoder(sequenceHeader, frameHeader, references, cdfs);
         }
 
+
         // With disable_frame_end_update_cdf the state saved at the frame end is the initial state, not
         // the adaptation the decode performs; snapshot it before decoding.
         Av1FrameCdfSet frameEndCdfs = frameHeader.DisableFrameEndUpdateCdf ? tileDecoder.Cdfs.Clone() : tileDecoder.Cdfs;
 
         int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
         ObuTileGroup tileGroup = ObuTileGroup.Parse(payload[tileGroupStart..], frameHeader);
-        (int tileOffset, int tileLength) = tileGroup.GetTile(0);
-        byte[] tileData = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
-
-        tileDecoder.DecodeTile(tileData);
+        tileDecoder.DecodeTiles(SliceTiles(payload, tileGroupStart, tileGroup));
 
         // The save zeroes every CDF's adaptation counter (dav1d's cdf_thread_update); a frame inheriting
         // the state keeps the adapted probabilities but restarts adaptation at the initial rate.
@@ -232,6 +228,20 @@ internal static class Av1DecoderCore
             referenceOrderHints);
         referenceStore.Update(decoded, frameHeader.RefreshFrameFlags);
         return tileDecoder;
+    }
+
+    // Copies each tile's compressed bytes out of the tile group (the tile decoder consumes them in
+    // tile raster order).
+    private static ReadOnlyMemory<byte>[] SliceTiles(ReadOnlySpan<byte> payload, int tileGroupStart, in ObuTileGroup tileGroup)
+    {
+        ReadOnlyMemory<byte>[] tiles = new ReadOnlyMemory<byte>[tileGroup.Count];
+        for (int i = 0; i < tiles.Length; i++)
+        {
+            (int tileOffset, int tileLength) = tileGroup.GetTile(i);
+            tiles[i] = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
+        }
+
+        return tiles;
     }
 
     // Reads only enough of a frame OBU header to determine the frame type (used to choose the parser).

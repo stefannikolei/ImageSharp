@@ -108,15 +108,17 @@ internal static class Av1ReferenceContext
 
     private static int ForwardReferenceContext(in Av1ReferenceNeighbour a, in Av1ReferenceNeighbour l, bool haveTop, bool haveLeft)
     {
+        // An unwritten neighbour (the inter-frame reset state) carries reference -1 and counts for
+        // neither bucket.
         int[] cnt = new int[4];
         if (haveTop && !a.IsIntra)
         {
-            if (a.Reference0 < 4)
+            if (a.Reference0 is >= 0 and < 4)
             {
                 cnt[a.Reference0]++;
             }
 
-            if (a.IsCompound && a.Reference1 < 4)
+            if (a.IsCompound && a.Reference1 is >= 0 and < 4)
             {
                 cnt[a.Reference1]++;
             }
@@ -124,12 +126,12 @@ internal static class Av1ReferenceContext
 
         if (haveLeft && !l.IsIntra)
         {
-            if (l.Reference0 < 4)
+            if (l.Reference0 is >= 0 and < 4)
             {
                 cnt[l.Reference0]++;
             }
 
-            if (l.IsCompound && l.Reference1 < 4)
+            if (l.IsCompound && l.Reference1 is >= 0 and < 4)
             {
                 cnt[l.Reference1]++;
             }
