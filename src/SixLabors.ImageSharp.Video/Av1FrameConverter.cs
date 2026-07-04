@@ -24,10 +24,20 @@ internal static class Av1FrameConverter
     /// <returns>The converted image.</returns>
     public static Image<TPixel> ToImage<TPixel>(Av1TileDecoder frame, Configuration configuration)
         where TPixel : unmanaged, IPixel<TPixel>
+        => ToImage<TPixel>(frame.Luma, frame.ChromaU, frame.ChromaV, configuration);
+
+    /// <summary>
+    /// Converts reconstructed YUV planes to an RGB image.
+    /// </summary>
+    /// <typeparam name="TPixel">The destination pixel type.</typeparam>
+    /// <param name="luma">The luma plane.</param>
+    /// <param name="chromaU">The chroma U plane.</param>
+    /// <param name="chromaV">The chroma V plane.</param>
+    /// <param name="configuration">The configuration used to allocate the image.</param>
+    /// <returns>The converted image.</returns>
+    public static Image<TPixel> ToImage<TPixel>(Av1Plane luma, Av1Plane chromaU, Av1Plane chromaV, Configuration configuration)
+        where TPixel : unmanaged, IPixel<TPixel>
     {
-        Av1Plane luma = frame.Luma;
-        Av1Plane chromaU = frame.ChromaU;
-        Av1Plane chromaV = frame.ChromaV;
         int width = luma.CropWidth;
         int height = luma.CropHeight;
 

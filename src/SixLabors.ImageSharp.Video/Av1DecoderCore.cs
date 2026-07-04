@@ -244,6 +244,109 @@ internal static class Av1DecoderCore
         return tiles;
     }
 
+    /// <summary>
+    /// Decodes an IVF-wrapped AV1 stream into its displayed frames, in display order: hidden
+    /// (no-show) frames are decoded into the reference store without being emitted, and
+    /// <c>show_existing_frame</c> headers emit the referenced, previously decoded frame.
+    /// </summary>
+    /// <param name="stream">The stream positioned at the start of the IVF container.</param>
+    /// <returns>The displayed frames, in display order.</returns>
+    /// <exception cref="InvalidDataException">The stream is not a valid AV1/IVF bitstream.</exception>
+    public static List<Av1DisplayFrame> DecodeDisplayFrames(Stream stream)
+    {
+        Guard.NotNull(stream, nameof(stream));
+
+        IvfFileHeader fileHeader = IvfReader.ReadFileHeader(stream);
+        if (!fileHeader.IsAv1)
+        {
+            throw new InvalidDataException($"Unsupported IVF codec FourCC '{fileHeader.FourCc}', expected AV1.");
+        }
+
+        List<Av1DisplayFrame> frames = [];
+        bool haveSequenceHeader = false;
+        ObuSequenceHeader sequenceHeader = default;
+        Av1ReferenceFrameStore referenceStore = new();
+
+        while (IvfReader.TryReadFrame(stream, out _, out byte[] temporalUnit))
+        {
+            int offset = 0;
+            while (ObuReader.TryRead(temporalUnit, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
+            {
+                if (header.Type == ObuType.SequenceHeader)
+                {
+                    sequenceHeader = ObuSequenceHeader.Parse(payload);
+                    haveSequenceHeader = true;
+                }
+                else if (header.Type == ObuType.Frame)
+                {
+                    if (!haveSequenceHeader)
+                    {
+                        throw new InvalidDataException("Encountered a frame OBU before any sequence header.");
+                    }
+
+                    Av1TileDecoder tileDecoder = DecodeFrame(payload, sequenceHeader, referenceStore, out ObuFrameHeader frameHeader);
+                    if (frameHeader.ShowFrame)
+                    {
+                        frames.Add(new Av1DisplayFrame(tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV));
+                    }
+                }
+                else if (header.Type == ObuType.FrameHeader && haveSequenceHeader
+                    && TryPeekShowExistingSlot(payload, sequenceHeader, out int slot))
+                {
+                    Av1ReferenceFrame shown = referenceStore[slot]
+                        ?? throw new InvalidDataException($"show_existing_frame references the empty slot {slot}.");
+                    frames.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
+                }
+            }
+        }
+
+        if (frames.Count == 0)
+        {
+            throw new InvalidDataException("The AV1 stream contains no displayable frame.");
+        }
+
+        return frames;
+    }
+
+    // Reads a frame-header OBU only far enough to detect show_existing_frame and its reference slot.
+    // (Showing an existing KEY frame additionally reloads decoder state; such streams use forward key
+    // frames, which aomenc does not emit by default, and are not handled here.)
+    internal static bool TryPeekShowExistingSlot(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader, out int slot)
+    {
+        slot = 0;
+        if (sequenceHeader.ReducedStillPictureHeader)
+        {
+            return false;
+        }
+
+        Av1BitStreamReader reader = new(payload);
+        if (!reader.ReadBoolean())
+        {
+            return false;
+        }
+
+        slot = (int)reader.ReadLiteral(3);
+        return true;
+    }
+
+    // Reads a frame OBU header only far enough to determine whether the frame is shown directly.
+    internal static bool PeekShowFrame(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader)
+    {
+        if (sequenceHeader.ReducedStillPictureHeader)
+        {
+            return true;
+        }
+
+        Av1BitStreamReader reader = new(payload);
+        if (reader.ReadBoolean())
+        {
+            throw new NotSupportedException("show_existing_frame inside a frame OBU is not supported.");
+        }
+
+        reader.ReadLiteral(2); // frame_type
+        return reader.ReadBoolean();
+    }
+
     // Reads only enough of a frame OBU header to determine the frame type (used to choose the parser).
     internal static Av1FrameType PeekFrameType(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader)
     {

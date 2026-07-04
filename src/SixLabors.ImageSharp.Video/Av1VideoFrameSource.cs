@@ -20,9 +20,13 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
 {
     private readonly Stream stream;
     private readonly List<FrameEntry> index = [];
+
+    // Display index -> the temporal-unit index that produces it, plus its position among that unit's
+    // displayed outputs (a temporal unit can show a coded frame, hide it, or re-show a stored one).
+    private readonly List<(int Unit, int Output)> displayMap = [];
     private ObuSequenceHeader sequenceHeader;
     private Av1ReferenceFrameStore referenceStore = new();
-    private int lastDecodedIndex = -1;
+    private int lastDecodedUnit = -1;
     private bool isDisposed;
 
     public Av1VideoFrameSource(Stream stream)
@@ -32,7 +36,7 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
         this.Metadata = new VideoMetadata
         {
             Size = new Size(fileHeader.Width, fileHeader.Height),
-            FrameCount = this.index.Count,
+            FrameCount = this.displayMap.Count,
             FrameRateNumerator = (int)fileHeader.FrameRateNumerator,
             FrameRateDenominator = (int)fileHeader.FrameRateDenominator,
         };
@@ -42,7 +46,7 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
     public Size Size => this.Metadata.Size;
 
     /// <inheritdoc/>
-    public int FrameCount => this.index.Count;
+    public int FrameCount => this.displayMap.Count;
 
     /// <inheritdoc/>
     public VideoMetadata Metadata { get; }
@@ -51,8 +55,8 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
     public Image<TPixel> DecodeFrame<TPixel>(int frameIndex, Configuration configuration)
         where TPixel : unmanaged, IPixel<TPixel>
     {
-        Av1TileDecoder decoded = this.DecodeUpTo(frameIndex);
-        return Av1FrameConverter.ToImage<TPixel>(decoded, configuration);
+        Av1DisplayFrame decoded = this.DecodeUpTo(frameIndex);
+        return Av1FrameConverter.ToImage<TPixel>(decoded.Luma, decoded.ChromaU, decoded.ChromaV, configuration);
     }
 
     /// <inheritdoc/>
@@ -84,6 +88,8 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
             this.stream.ReadExactly(temporalUnit);
 
             int offset = 0;
+            bool isKeyFrame = false;
+            int displayed = 0;
             while (ObuReader.TryRead(temporalUnit, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
             {
                 if (header.Type == ObuType.SequenceHeader)
@@ -99,24 +105,40 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
                     }
 
                     Av1FrameType frameType = Av1DecoderCore.PeekFrameType(payload, this.sequenceHeader);
-                    bool isKeyFrame = frameType is Av1FrameType.Key or Av1FrameType.IntraOnly;
-                    this.index.Add(new FrameEntry(payloadOffset, (int)frameSize, isKeyFrame));
+                    isKeyFrame |= frameType is Av1FrameType.Key or Av1FrameType.IntraOnly;
+                    if (Av1DecoderCore.PeekShowFrame(payload, this.sequenceHeader))
+                    {
+                        displayed++;
+                    }
                 }
+                else if (header.Type == ObuType.FrameHeader && haveSequenceHeader
+                    && Av1DecoderCore.TryPeekShowExistingSlot(payload, this.sequenceHeader, out _))
+                {
+                    displayed++;
+                }
+            }
+
+            int unit = this.index.Count;
+            this.index.Add(new FrameEntry(payloadOffset, (int)frameSize, isKeyFrame));
+            for (int d = 0; d < displayed; d++)
+            {
+                this.displayMap.Add((unit, d));
             }
         }
 
         return fileHeader;
     }
 
-    private Av1TileDecoder DecodeUpTo(int target)
+    private Av1DisplayFrame DecodeUpTo(int displayTarget)
     {
-        int keyframe = this.NearestKeyframeAtOrBefore(target);
+        (int targetUnit, int targetOutput) = this.displayMap[displayTarget];
+        int keyframe = this.NearestKeyframeAtOrBefore(targetUnit);
 
         int startFrom;
-        if (target > this.lastDecodedIndex && this.lastDecodedIndex >= keyframe)
+        if (targetUnit > this.lastDecodedUnit && this.lastDecodedUnit >= keyframe)
         {
             // The decoder is already positioned within this GOP; continue forward.
-            startFrom = this.lastDecodedIndex + 1;
+            startFrom = this.lastDecodedUnit + 1;
         }
         else
         {
@@ -125,23 +147,26 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
             startFrom = keyframe;
         }
 
-        Av1TileDecoder? decoded = null;
-        for (int i = startFrom; i <= target; i++)
+        List<Av1DisplayFrame> outputs = [];
+        for (int i = startFrom; i <= targetUnit; i++)
         {
-            decoded = this.DecodeFrameAt(i);
-            this.lastDecodedIndex = i;
+            outputs = this.DecodeUnitAt(i);
+            this.lastDecodedUnit = i;
         }
 
-        return decoded!;
+        return outputs[targetOutput];
     }
 
-    private Av1TileDecoder DecodeFrameAt(int frameIndex)
+    // Decodes every frame OBU of one temporal unit (updating the reference store) and returns the
+    // frames the unit displays: shown coded frames plus show_existing_frame re-emissions.
+    private List<Av1DisplayFrame> DecodeUnitAt(int unitIndex)
     {
-        FrameEntry entry = this.index[frameIndex];
+        FrameEntry entry = this.index[unitIndex];
         this.stream.Position = entry.Offset;
         byte[] temporalUnit = new byte[entry.Length];
         this.stream.ReadExactly(temporalUnit);
 
+        List<Av1DisplayFrame> outputs = [];
         int offset = 0;
         while (ObuReader.TryRead(temporalUnit, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
         {
@@ -149,11 +174,22 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
             {
                 // DecodeFrame also publishes the frame (with its frame-end CDF and header state) into
                 // the reference slots it refreshes.
-                return Av1DecoderCore.DecodeFrame(payload, this.sequenceHeader, this.referenceStore, out _);
+                Av1TileDecoder decoded = Av1DecoderCore.DecodeFrame(payload, this.sequenceHeader, this.referenceStore, out ObuFrameHeader frameHeader);
+                if (frameHeader.ShowFrame)
+                {
+                    outputs.Add(new Av1DisplayFrame(decoded.Luma, decoded.ChromaU, decoded.ChromaV));
+                }
+            }
+            else if (header.Type == ObuType.FrameHeader
+                && Av1DecoderCore.TryPeekShowExistingSlot(payload, this.sequenceHeader, out int slot))
+            {
+                Av1ReferenceFrame shown = this.referenceStore[slot]
+                    ?? throw new InvalidDataException($"show_existing_frame references the empty slot {slot}.");
+                outputs.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
             }
         }
 
-        throw new InvalidDataException("Temporal unit contained no frame OBU.");
+        return outputs;
     }
 
     private int NearestKeyframeAtOrBefore(int target)
