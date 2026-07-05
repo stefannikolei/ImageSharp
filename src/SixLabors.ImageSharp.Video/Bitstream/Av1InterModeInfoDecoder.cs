@@ -156,6 +156,12 @@ internal static class Av1InterModeInfoDecoder
         return new Av1InterBlockInfo(reference, mode, drlIndex, motionVector, filter0, filter1, motionMode, warpMatrix, warpShear);
     }
 
+    /// <summary>Gets the wedge block-size context for a wedge-eligible block size (doubles as the
+    /// wedge mask table index).</summary>
+    /// <param name="blockSize">The block size.</param>
+    /// <returns>The wedge context.</returns>
+    public static int GetWedgeContext(Av1BlockSize blockSize) => WedgeContextLut[(int)blockSize];
+
     // dav1d wedge_allowed_mask / dav1d_wedge_ctx_lut, indexed by Av1BlockSize.
     private static readonly int[] WedgeContextLut = CreateWedgeContextLut();
 
@@ -328,6 +334,7 @@ internal static class Av1InterModeInfoDecoder
         const int CompoundWedge = 4;
         int compoundType = CompoundAverage;
         bool maskSign = false;
+        int wedgeIndex = 0;
         if (!skipMode && options.EnableMaskedCompound)
         {
             int maskContext = Av1ReferenceContext.ComputeMaskCompoundContext(above, left);
@@ -340,8 +347,7 @@ internal static class Av1InterModeInfoDecoder
                     compoundType = CompoundWedge - decoder.ReadSymbol(interCdf.WedgeComp[wedgeContext]);
                     if (compoundType == CompoundWedge)
                     {
-                        _ = decoder.ReadSymbol(interCdf.WedgeIdx[wedgeContext]);
-                        throw new NotSupportedException("Wedge-masked compound prediction is not supported yet.");
+                        wedgeIndex = decoder.ReadSymbol(interCdf.WedgeIdx[wedgeContext]);
                     }
                 }
                 else
@@ -379,7 +385,7 @@ internal static class Av1InterModeInfoDecoder
 
         return new Av1InterBlockInfo(
             reference0, (Av1InterPredictionMode)CompoundModeComponents[compoundMode][0], drlIndex, motionVector0,
-            filter0, filter1, Av1MotionMode.Translation, null, null, reference1, motionVector1, compoundMode, compoundType, maskSign);
+            filter0, filter1, Av1MotionMode.Translation, null, null, reference1, motionVector1, compoundMode, compoundType, maskSign, wedgeIndex);
     }
 
     private static Av1MotionVector AssignCompoundComponent(

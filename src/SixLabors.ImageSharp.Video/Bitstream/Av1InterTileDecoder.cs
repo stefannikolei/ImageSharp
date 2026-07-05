@@ -353,7 +353,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             bool compoundHasChroma = this.sequenceHeader.NumPlanes > 1 &&
                                      (width4 > this.subsamplingX || (col & 1) != 0) &&
                                      (height4 > this.subsamplingY || (row & 1) != 0);
-            this.CompoundPredict(row, col, width4, height4, info);
+            this.CompoundPredict(row, col, width4, height4, info, bsize);
             this.DecodeInterResidual(row, col, bsize, skip, info, compoundHasChroma);
             return;
         }
@@ -450,7 +450,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // Motion-compensates both references of a compound block into 16-bit intermediates and blends them
     // by plain averaging (dav1d's COMP_INTER_AVG path); a GLOBALMV_GLOBALMV component with a warpable
     // model uses the warp kernel into the intermediate instead.
-    private void CompoundPredict(int row, int col, int width4, int height4, in Av1InterBlockInfo info)
+    private void CompoundPredict(int row, int col, int width4, int height4, in Av1InterBlockInfo info, Av1BlockSize bsize)
     {
         bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
@@ -464,15 +464,15 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             segMask = new byte[((width4 * 4) >> this.subsamplingX) * ((height4 * 4) >> this.subsamplingY)];
         }
 
-        this.CompoundPredictPlane(0, row, col, width4, height4, info, segMask);
+        this.CompoundPredictPlane(0, row, col, width4, height4, info, segMask, bsize);
         if (hasChroma)
         {
-            this.CompoundPredictPlane(1, row, col, width4, height4, info, segMask);
-            this.CompoundPredictPlane(2, row, col, width4, height4, info, segMask);
+            this.CompoundPredictPlane(1, row, col, width4, height4, info, segMask, bsize);
+            this.CompoundPredictPlane(2, row, col, width4, height4, info, segMask, bsize);
         }
     }
 
-    private void CompoundPredictPlane(int plane, int row, int col, int width4, int height4, in Av1InterBlockInfo info, byte[]? segMask)
+    private void CompoundPredictPlane(int plane, int row, int col, int width4, int height4, in Av1InterBlockInfo info, byte[]? segMask, Av1BlockSize bsizeForWedge)
     {
         int ssX = plane == 0 ? 0 : this.subsamplingX;
         int ssY = plane == 0 ? 0 : this.subsamplingY;
@@ -511,18 +511,30 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         Av1Plane destination = plane == 0 ? this.luma : plane == 1 ? this.chromaU : this.chromaV;
         int dstX = (col >> ssX) * 4;
         int dstY = (row >> ssY) * 4;
-        if (info.CompoundType == 3 && segMask is not null)
+        if (info.CompoundType is 3 or 4)
         {
-            // Segmented compound: the mask-signed intermediate leads the blend.
+            // Masked compound: the mask-signed intermediate leads the blend. A segmented block
+            // derives the mask from the luma difference; a wedge block reads it from the tables.
             short[] lead = info.MaskSign ? intermediate1 : intermediate0;
             short[] trail = info.MaskSign ? intermediate0 : intermediate1;
-            if (plane == 0)
+            if (info.CompoundType == 3 && segMask is not null)
             {
-                WMaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask, info.MaskSign ? 1 : 0, this.subsamplingX, this.subsamplingY);
+                if (plane == 0)
+                {
+                    WMaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask, info.MaskSign ? 1 : 0, this.subsamplingX, this.subsamplingY);
+                }
+                else
+                {
+                    MaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask);
+                }
             }
             else
             {
-                MaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask);
+                int wedgeContext = Av1InterModeInfoDecoder.GetWedgeContext(bsizeForWedge);
+                byte[] wedgeMask = plane == 0
+                    ? Prediction.Av1WedgeMasks.Luma[wedgeContext][info.WedgeIndex]
+                    : Prediction.Av1WedgeMasks.Chroma420[wedgeContext][info.MaskSign ? 1 : 0][info.WedgeIndex];
+                MaskBlend(destination, dstX, dstY, lead, trail, width, height, wedgeMask);
             }
 
             return;
