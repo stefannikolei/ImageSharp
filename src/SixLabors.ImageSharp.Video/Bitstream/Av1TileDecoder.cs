@@ -1249,10 +1249,18 @@ internal class Av1TileDecoder
     /// <param name="width4">The block width in 4x4 units.</param>
     /// <param name="height4">The block height in 4x4 units.</param>
     /// <returns>The decoded skip flag (0 or 1).</returns>
-    private protected int ReadSkipFlag(int row, int col, int width4, int height4)
+    private protected int ReadSkipFlag(int row, int col, int width4, int height4, int? forcedSkip = null)
     {
-        int skipContext = this.aboveSkip[col] + this.leftSkip[row];
-        int skip = this.decoder.ReadSymbol(this.modeCdf.Skip[skipContext]);
+        int skip;
+        if (forcedSkip is { } forced)
+        {
+            skip = forced;
+        }
+        else
+        {
+            int skipContext = this.aboveSkip[col] + this.leftSkip[row];
+            skip = this.decoder.ReadSymbol(this.modeCdf.Skip[skipContext]);
+        }
 
         // Post-skip segment id: predicted from the neighbouring map cells; a skipped block takes the
         // prediction without coding a symbol (the pre-skip position is rejected at construction).

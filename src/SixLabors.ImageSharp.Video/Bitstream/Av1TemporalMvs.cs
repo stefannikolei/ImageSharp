@@ -66,6 +66,17 @@ internal sealed class Av1TemporalMvs
             {
                 int col4 = Math.Min((x8 * 2) + 1, grid.Columns4 - 1);
                 Av1RefMvsBlock candidate = grid[row4, col4];
+
+                // A compound block prefers its second (typically backward) reference when that
+                // reference lies in the past (dav1d save_tmvs).
+                int reference1 = candidate.Reference1;
+                Av1MotionVector mv1 = candidate.MotionVector1;
+                if (reference1 > 0 && isPast[reference1 - 1] && (Math.Abs(mv1.Y) | Math.Abs(mv1.X)) < 4096)
+                {
+                    blocks[(y8 * stride8) + x8] = new Av1TemporalMvBlock(mv1, reference1);
+                    continue;
+                }
+
                 int reference = candidate.Reference0;
                 Av1MotionVector mv = candidate.MotionVector0;
                 if (reference > 0 && isPast[reference - 1] && (Math.Abs(mv.Y) | Math.Abs(mv.X)) < 4096)

@@ -81,9 +81,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame?[] references, Av1FrameCdfSet cdfs)
         : base(sequenceHeader, frameHeader, cdfs)
     {
-        if (frameHeader.ReferenceSelect)
+        if (frameHeader.ReferenceSelect && (sequenceHeader.EnableJntComp || sequenceHeader.EnableMaskedCompound))
         {
-            throw new NotSupportedException("Compound (two-reference) prediction is not supported yet.");
+            throw new NotSupportedException("Distance-weighted and masked compound prediction are not supported yet.");
         }
 
         if (sequenceHeader.EnableInterIntraCompound)
@@ -225,11 +225,25 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         bool haveTop = row > this.tileBounds.RowStart;
         bool haveLeft = col > this.tileBounds.ColumnStart;
 
-        int skip = this.ReadSkipFlag(row, col, width4, height4);
+        // skip_mode: read before the skip flag; a skip-mode block is a residual-free compound block
+        // with the frame's derived reference pair (no further mode syntax).
+        bool skipModeBlock = false;
+        if (this.frameHeader.SkipModeEnabled && Math.Min(width4, height4) > 1)
+        {
+            int skipModeContext = this.interNeighbours.AboveSkipMode(col) + this.interNeighbours.LeftSkipMode(row);
+            skipModeBlock = this.decoder.ReadSymbol(this.interCdf.SkipMode[skipModeContext]) != 0;
+        }
 
-        int intraContext = Av1IsInterReader.GetIntraContext(
-            this.interNeighbours.LeftIntra(row), this.interNeighbours.AboveIntra(col), haveLeft, haveTop);
-        bool isInter = Av1IsInterReader.ReadIsInter(this.decoder, this.interCdf, intraContext);
+        int skip = this.ReadSkipFlag(row, col, width4, height4, skipModeBlock ? 1 : null);
+
+        bool isInter = true;
+        if (!skipModeBlock)
+        {
+            int intraContext = Av1IsInterReader.GetIntraContext(
+                this.interNeighbours.LeftIntra(row), this.interNeighbours.AboveIntra(col), haveLeft, haveTop);
+            isInter = Av1IsInterReader.ReadIsInter(this.decoder, this.interCdf, intraContext);
+        }
+
         if (!isInter)
         {
             // An intra block inside an inter frame: the luma mode is read from the inter-frame y_mode
@@ -274,23 +288,58 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             }
         }
 
-        Av1InterBlockInfo info = Av1InterModeInfoDecoder.Decode(
-            this.decoder,
-            this.interCdf,
-            this.mvCdf,
-            this.filterCdf,
-            this.motionModeCdf,
-            this.grid,
-            this.interNeighbours,
-            col,
-            row,
-            bsize,
-            this.options,
-            haveTop,
-            haveLeft,
-            topRightAvailable,
-            readMotionMode,
-            skipMode: false);
+        // Compound flag (dav1d: switchable_comp_refs && min(bw4,bh4) > 1); a skip-mode block is
+        // compound by definition.
+        bool isCompound = skipModeBlock;
+        if (!skipModeBlock && this.frameHeader.ReferenceSelect && Math.Min(width4, height4) > 1)
+        {
+            int compoundContext = Av1ReferenceContext.ComputeCompoundContext(
+                this.interNeighbours.GetAbove(col), this.interNeighbours.GetLeft(row), haveTop, haveLeft);
+            isCompound = this.decoder.ReadSymbol(this.interCdf.Compound[compoundContext]) != 0;
+        }
+
+        Av1InterBlockInfo info;
+        if (isCompound)
+        {
+            int[] skipModeReferences = this.frameHeader.SkipModeReferences ?? [0, 0];
+            info = Av1InterModeInfoDecoder.DecodeCompound(
+                this.decoder,
+                this.interCdf,
+                this.mvCdf,
+                this.filterCdf,
+                this.grid,
+                this.interNeighbours,
+                col,
+                row,
+                bsize,
+                this.options,
+                haveTop,
+                haveLeft,
+                topRightAvailable,
+                skipModeBlock,
+                skipModeReferences[0],
+                skipModeReferences[1]);
+        }
+        else
+        {
+            info = Av1InterModeInfoDecoder.Decode(
+                this.decoder,
+                this.interCdf,
+                this.mvCdf,
+                this.filterCdf,
+                this.motionModeCdf,
+                this.grid,
+                this.interNeighbours,
+                col,
+                row,
+                bsize,
+                this.options,
+                haveTop,
+                haveLeft,
+                topRightAvailable,
+                readMotionMode,
+                skipMode: false);
+        }
 
         // Motion-compensate every plane from the block's reference frame into the output planes. A
         // GLOBALMV block whose reference has a warpable (non-translational, shearable) global model,
@@ -298,6 +347,16 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         // affine warp kernel instead of translational MC (dav1d's warp_affine path); an OBMC block
         // blends overlapped predictions from its inter neighbours over the translational prediction.
                 Av1ReferenceFrame blockReference = this.GetReference(info.Reference);
+        if (info.IsCompound)
+        {
+            bool compoundHasChroma = this.sequenceHeader.NumPlanes > 1 &&
+                                     (width4 > this.subsamplingX || (col & 1) != 0) &&
+                                     (height4 > this.subsamplingY || (row & 1) != 0);
+            this.CompoundPredict(row, col, width4, height4, info);
+            this.DecodeInterResidual(row, col, bsize, skip, info, compoundHasChroma);
+            return;
+        }
+
         int[]? warpMatrix = null;
         short[]? warpShear = null;
         if (Math.Min(width4, height4) > 1)
@@ -327,7 +386,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                 this.OverlappedPrediction(this.luma, 0, row, col, width4, height4, obmcAboveFilters!, obmcLeftFilters!);
             }
         }
-                bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
+        bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
                          (height4 > this.subsamplingY || (row & 1) != 0);
         if (hasChroma && blockReference.ChromaU is not null && blockReference.ChromaV is not null)
@@ -335,8 +394,16 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             this.MotionCompensateChroma(row, col, width4, height4, info, leftNeighbour, aboveNeighbour, warpMatrix, warpShear, obmcAboveFilters, obmcLeftFilters);
         }
 
-                // Add the residual through the shared transform-block loop, substituting the motion-compensated
-        // prediction via the Predict override. A skipped block carries no residual.
+        this.DecodeInterResidual(row, col, bsize, skip, info, hasChroma);
+    }
+
+    // Adds the residual through the shared transform-block loop (substituting the motion-compensated
+    // prediction via the Predict override; a skipped block carries no residual) and records the
+    // neighbour contexts an inter block contributes.
+    private void DecodeInterResidual(int row, int col, Av1BlockSize bsize, int skip, in Av1InterBlockInfo info, bool hasChroma)
+    {
+        int width4 = bsize.GetWidth4();
+        int height4 = bsize.GetHeight4();
         bool blockSkip = skip != 0;
         this.currentBlockIsInter = true;
         Av1TransformSize maxLumaTx = bsize.GetMaxTransformSize();
@@ -372,8 +439,78 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         Fill(this.aboveSkip, col, width4, (byte)skip);
         Fill(this.leftSkip, row, height4, (byte)skip);
         this.RecordInterBlockIntraContexts(row, col, bsize, hasChroma);
-        this.RecordLoopFilterLevels(row, col, bsize, hasChroma, info.Reference + 1, info.Mode == Av1InterPredictionMode.GlobalMv ? 0 : 1);
+        bool isGlobal = info.IsCompound
+            ? info.CompoundMode == Av1InterModeInfoDecoder.CompoundGlobalGlobal
+            : info.Mode == Av1InterPredictionMode.GlobalMv;
+        this.RecordLoopFilterLevels(row, col, bsize, hasChroma, info.Reference + 1, isGlobal ? 0 : 1);
         this.TopLeft4x4Filter = (info.Filter0, info.Filter1);
+    }
+
+    // Motion-compensates both references of a compound block into 16-bit intermediates and blends them
+    // by plain averaging (dav1d's COMP_INTER_AVG path); a GLOBALMV_GLOBALMV component with a warpable
+    // model uses the warp kernel into the intermediate instead.
+    private void CompoundPredict(int row, int col, int width4, int height4, in Av1InterBlockInfo info)
+    {
+        bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
+                         (width4 > this.subsamplingX || (col & 1) != 0) &&
+                         (height4 > this.subsamplingY || (row & 1) != 0);
+
+        this.CompoundPredictPlane(0, row, col, width4, height4, info);
+        if (hasChroma)
+        {
+            this.CompoundPredictPlane(1, row, col, width4, height4, info);
+            this.CompoundPredictPlane(2, row, col, width4, height4, info);
+        }
+    }
+
+    private void CompoundPredictPlane(int plane, int row, int col, int width4, int height4, in Av1InterBlockInfo info)
+    {
+        int ssX = plane == 0 ? 0 : this.subsamplingX;
+        int ssY = plane == 0 ? 0 : this.subsamplingY;
+        int width = (width4 * 4) >> ssX;
+        int height = (height4 * 4) >> ssY;
+        short[] intermediate0 = new short[width * height];
+        short[] intermediate1 = new short[width * height];
+        int cbw4 = (width4 + this.subsamplingX) >> this.subsamplingX;
+        int cbh4 = (height4 + this.subsamplingY) >> this.subsamplingY;
+        bool warpSized = plane == 0 || Math.Min(cbw4, cbh4) > 1;
+
+        for (int i = 0; i < 2; i++)
+        {
+            int reference = i == 0 ? info.Reference : info.Reference1;
+            Av1MotionVector motionVector = i == 0 ? info.MotionVector : info.MotionVector1;
+            Av1ReferenceFrame referenceFrame = this.GetReference(reference);
+            Av1Plane referencePlane = plane == 0 ? referenceFrame.Luma : plane == 1 ? referenceFrame.ChromaU! : referenceFrame.ChromaV!;
+            short[] intermediate = i == 0 ? intermediate0 : intermediate1;
+
+            if (info.CompoundMode == Av1InterModeInfoDecoder.CompoundGlobalGlobal
+                && warpSized
+                && this.globalWarpShear[reference] is { } shear)
+            {
+                Prediction.Av1WarpedMotion.WarpPlane16(
+                    intermediate, width, referencePlane, col, row, width4, height4,
+                    this.frameHeader.GlobalMotionParams[reference].Matrix, shear, ssX, ssY);
+            }
+            else
+            {
+                Av1InterPredictor.Prepare(
+                    intermediate, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
+                    col, row, width4, height4, motionVector, info.Filter0, info.Filter1, ssX, ssY);
+            }
+        }
+
+        Av1Plane destination = plane == 0 ? this.luma : plane == 1 ? this.chromaU : this.chromaV;
+        int dstX = (col >> ssX) * 4;
+        int dstY = (row >> ssY) * 4;
+        for (int y = 0; y < height; y++)
+        {
+            int dstBase = ((dstY + y) * destination.Width) + dstX;
+            int srcBase = y * width;
+            for (int x = 0; x < width; x++)
+            {
+                destination.Samples[dstBase + x] = (byte)Math.Clamp((intermediate0[srcBase + x] + intermediate1[srcBase + x] + 16) >> 5, 0, 255);
+            }
+        }
     }
 
     private protected override (int F0, int F1) TopLeft4x4Filter { get; set; }

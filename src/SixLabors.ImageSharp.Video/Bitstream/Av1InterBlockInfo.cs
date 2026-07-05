@@ -30,8 +30,14 @@ internal readonly struct Av1InterBlockInfo
         int filter1,
         Av1MotionMode motionMode,
         int[]? warpMatrix = null,
-        short[]? warpShear = null)
+        short[]? warpShear = null,
+        int reference1 = -1,
+        Av1MotionVector motionVector1 = default,
+        int compoundMode = -1)
     {
+        this.Reference1 = reference1;
+        this.MotionVector1 = motionVector1;
+        this.CompoundMode = compoundMode;
         this.Reference = reference;
         this.Mode = mode;
         this.DynamicReferenceIndex = dynamicReferenceIndex;
@@ -70,4 +76,16 @@ internal readonly struct Av1InterBlockInfo
 
     /// <summary>Gets the derived local warp shear parameters, or <see langword="null"/>.</summary>
     public short[]? WarpShear { get; }
+
+    /// <summary>Gets the zero-based second reference (-1 for single-reference blocks).</summary>
+    public int Reference1 { get; }
+
+    /// <summary>Gets the second motion vector (compound blocks).</summary>
+    public Av1MotionVector MotionVector1 { get; }
+
+    /// <summary>Gets the compound inter mode (dav1d <c>CompInterPredMode</c>), or -1 for single.</summary>
+    public int CompoundMode { get; }
+
+    /// <summary>Gets a value indicating whether the block uses compound prediction.</summary>
+    public bool IsCompound => this.Reference1 >= 0;
 }

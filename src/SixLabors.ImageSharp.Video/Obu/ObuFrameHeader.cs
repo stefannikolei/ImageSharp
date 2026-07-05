@@ -178,6 +178,10 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets a value indicating whether skip-mode is enabled for this frame.</summary>
     public bool SkipModeEnabled { get; init; }
 
+    /// <summary>Gets the derived zero-based skip-mode reference pair (valid when skip-mode is
+    /// enabled).</summary>
+    public int[]? SkipModeReferences { get; init; }
+
     /// <summary>Gets a value indicating whether warped motion is allowed.</summary>
     public bool AllowWarpedMotion { get; init; }
 
@@ -533,7 +537,7 @@ internal readonly struct ObuFrameHeader
 
         bool referenceSelect = reader.ReadBoolean();
 
-        bool skipModeAllowed = ComputeSkipModeAllowed(referenceSelect, sequenceHeader, orderHint, refFrameIndices, referenceOrderHints);
+        bool skipModeAllowed = ComputeSkipModeAllowed(referenceSelect, sequenceHeader, orderHint, refFrameIndices, referenceOrderHints, out int[] skipModeReferences);
         bool skipModeEnabled = skipModeAllowed && reader.ReadBoolean();
 
         bool allowWarpedMotion = !errorResilientMode && sequenceHeader.EnableWarpedMotion && reader.ReadBoolean();
@@ -603,6 +607,7 @@ internal readonly struct ObuFrameHeader
             UseReferenceFrameMotionVectors = useReferenceFrameMotionVectors,
             ReferenceSelect = referenceSelect,
             SkipModeEnabled = skipModeEnabled,
+            SkipModeReferences = skipModeReferences,
             AllowWarpedMotion = allowWarpedMotion,
             GlobalMotionParams = globalMotion,
             EndBitPosition = reader.BitPosition,
@@ -624,8 +629,9 @@ internal readonly struct ObuFrameHeader
 
     // dav1d skip_mode_params allowed computation: requires either a forward and backward reference, or
     // two distinct backward references, among the seven reference frames (by order hint).
-    private static bool ComputeSkipModeAllowed(bool referenceSelect, in ObuSequenceHeader sequenceHeader, int orderHint, int[] refFrameIndices, int[] referenceOrderHints)
+    private static bool ComputeSkipModeAllowed(bool referenceSelect, in ObuSequenceHeader sequenceHeader, int orderHint, int[] refFrameIndices, int[] referenceOrderHints, out int[] skipModeReferences)
     {
+        skipModeReferences = [0, 0];
         if (!referenceSelect || !sequenceHeader.EnableOrderHint)
         {
             return false;
@@ -657,12 +663,14 @@ internal readonly struct ObuFrameHeader
 
         if (offBefore >= 0 && offAfter >= 0)
         {
+            skipModeReferences = [Math.Min(offBeforeIdx, offAfterIdx), Math.Max(offBeforeIdx, offAfterIdx)];
             return true;
         }
 
         if (offBefore >= 0)
         {
             int offBefore2 = -1;
+            int offBefore2Idx = -1;
             for (int i = 0; i < 7; i++)
             {
                 int refPoc = referenceOrderHints[refFrameIndices[i]];
@@ -670,14 +678,19 @@ internal readonly struct ObuFrameHeader
                     (offBefore2 < 0 || GetOrderHintDiff(bits, refPoc, offBefore2) > 0))
                 {
                     offBefore2 = refPoc;
+                    offBefore2Idx = i;
                 }
             }
 
-            return offBefore2 >= 0;
+            if (offBefore2 >= 0)
+            {
+                skipModeReferences = [Math.Min(offBeforeIdx, offBefore2Idx), Math.Max(offBeforeIdx, offBefore2Idx)];
+                return true;
+            }
+
+            return false;
         }
 
-        _ = offBeforeIdx;
-        _ = offAfterIdx;
         return false;
     }
 

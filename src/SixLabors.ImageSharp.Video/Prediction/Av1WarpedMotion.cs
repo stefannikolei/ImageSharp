@@ -442,6 +442,100 @@ internal static class Av1WarpedMotion
 
     // dav1d warp_affine_8x8_c for 8-bit: horizontal pass into a 15x8 intermediate at
     // 7 - intermediate_bits(4) = 3 bits of downshift, vertical pass at 7 + 4 = 11.
+    /// <summary>
+    /// Warps one plane of a block into a 16-bit compound intermediate buffer (dav1d's
+    /// <c>warp_affine_8x8t</c> driver): identical to <see cref="WarpPlane"/> but with the vertical
+    /// pass shifted to the compound intermediate precision instead of rounding to pixels.
+    /// </summary>
+    /// <param name="destination">The intermediate buffer (block-relative, row stride = block width).</param>
+    /// <param name="destinationStride">The intermediate row stride in samples.</param>
+    /// <param name="reference">The reference plane.</param>
+    /// <param name="bx4">The block column in luma 4x4 units.</param>
+    /// <param name="by4">The block row in luma 4x4 units.</param>
+    /// <param name="width4">The block width in luma 4x4 units.</param>
+    /// <param name="height4">The block height in luma 4x4 units.</param>
+    /// <param name="matrix">The warp matrix.</param>
+    /// <param name="shear">The derived shear parameters.</param>
+    /// <param name="subsamplingX">The plane's horizontal subsampling.</param>
+    /// <param name="subsamplingY">The plane's vertical subsampling.</param>
+    public static void WarpPlane16(short[] destination, int destinationStride, Bitstream.Av1Plane reference, int bx4, int by4, int width4, int height4, ReadOnlySpan<int> matrix, ReadOnlySpan<short> shear, int subsamplingX, int subsamplingY)
+    {
+        int hMul = 4 >> subsamplingX;
+        int vMul = 4 >> subsamplingY;
+        int width = reference.CropWidth;
+        int height = reference.CropHeight;
+
+        Span<byte> tile = stackalloc byte[15 * 15];
+        for (int y = 0; y < height4 * vMul; y += 8)
+        {
+            long srcY = (by4 * 4) + ((y + 4) << subsamplingY);
+            long mat3Y = ((long)matrix[3] * srcY) + matrix[0];
+            long mat5Y = ((long)matrix[5] * srcY) + matrix[1];
+            for (int x = 0; x < width4 * hMul; x += 8)
+            {
+                long srcX = (bx4 * 4) + ((x + 4) << subsamplingX);
+                long mvx = (((long)matrix[2] * srcX) + mat3Y) >> subsamplingX;
+                long mvy = (((long)matrix[4] * srcX) + mat5Y) >> subsamplingY;
+
+                int dx = (int)(mvx >> 16) - 4;
+                int mx = (((int)mvx & 0xffff) - (shear[0] * 4) - (shear[1] * 7)) & ~0x3f;
+                int dy = (int)(mvy >> 16) - 4;
+                int my = (((int)mvy & 0xffff) - (shear[2] * 4) - (shear[3] * 4)) & ~0x3f;
+
+                for (int r = 0; r < 15; r++)
+                {
+                    int sy = Math.Clamp(dy - 3 + r, 0, height - 1);
+                    int rowBase = sy * reference.Width;
+                    for (int c = 0; c < 15; c++)
+                    {
+                        int sx = Math.Clamp(dx - 3 + c, 0, width - 1);
+                        tile[(r * 15) + c] = reference.Samples[rowBase + sx];
+                    }
+                }
+
+                Warp8x8To16(destination, destinationStride, x, y, tile, mx, my, shear);
+            }
+        }
+    }
+
+    private static void Warp8x8To16(short[] destination, int destinationStride, int dstX, int dstY, ReadOnlySpan<byte> src, int mx, int my, ReadOnlySpan<short> shear)
+    {
+        Span<int> mid = stackalloc int[15 * 8];
+        for (int y = 0; y < 15; y++, mx += shear[1])
+        {
+            int tmx = mx;
+            int srcBase = (y * 15) + 3;
+            for (int x = 0; x < 8; x++, tmx += shear[0])
+            {
+                sbyte[] filter = WarpFilter[64 + ((tmx + 512) >> 10)];
+                int sum = (1 << 3) >> 1;
+                for (int t = 0; t < 8; t++)
+                {
+                    sum += filter[t] * src[srcBase + x - 3 + t];
+                }
+
+                mid[(y * 8) + x] = sum >> 3;
+            }
+        }
+
+        for (int y = 0; y < 8; y++, my += shear[3])
+        {
+            int tmy = my;
+            int dstBase = ((dstY + y) * destinationStride) + dstX;
+            for (int x = 0; x < 8; x++, tmy += shear[2])
+            {
+                sbyte[] filter = WarpFilter[64 + ((tmy + 512) >> 10)];
+                int sum = (1 << 7) >> 1;
+                for (int t = 0; t < 8; t++)
+                {
+                    sum += filter[t] * mid[((y + t) * 8) + x];
+                }
+
+                destination[dstBase + x] = (short)(sum >> 7);
+            }
+        }
+    }
+
     private static void Warp8x8(Bitstream.Av1Plane destination, int dstX, int dstY, ReadOnlySpan<byte> src, int mx, int my, ReadOnlySpan<short> shear)
     {
         Span<int> mid = stackalloc int[15 * 8];

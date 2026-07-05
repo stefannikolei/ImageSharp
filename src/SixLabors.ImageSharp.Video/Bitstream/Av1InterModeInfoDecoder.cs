@@ -156,6 +156,208 @@ internal static class Av1InterModeInfoDecoder
         return new Av1InterBlockInfo(reference, mode, drlIndex, motionVector, filter0, filter1, motionMode, warpMatrix, warpShear);
     }
 
+    // dav1d_comp_inter_pred_modes: the two component modes of each compound inter mode
+    // (0 = NEARESTMV, 1 = NEARMV, 2 = GLOBALMV, 3 = NEWMV).
+    private static readonly byte[][] CompoundModeComponents =
+    [
+        [0, 0], [1, 1], [0, 3], [3, 0], [1, 3], [3, 1], [2, 2], [3, 3],
+    ];
+
+    /// <summary>The GLOBALMV_GLOBALMV compound inter mode.</summary>
+    public const int CompoundGlobalGlobal = 6;
+
+    /// <summary>The NEWMV_NEWMV compound inter mode.</summary>
+    public const int CompoundNewNew = 7;
+
+    /// <summary>
+    /// Decodes a compound (two-reference) inter block: the reference pair (explicit, or the frame's
+    /// derived skip-mode pair), the compound candidate list, the compound inter mode with its
+    /// dynamic-reference-list index, both motion vectors and the interpolation filter, then writes the
+    /// block back into the grid and neighbour context (dav1d's compound branch of <c>decode_b</c>).
+    /// </summary>
+    /// <param name="decoder">The tile symbol decoder.</param>
+    /// <param name="interCdf">The tile's adaptive inter-mode CDFs.</param>
+    /// <param name="mvCdf">The tile's adaptive motion-vector CDFs.</param>
+    /// <param name="filterCdf">The tile's adaptive interpolation-filter CDFs.</param>
+    /// <param name="grid">The motion-vector reference grid.</param>
+    /// <param name="neighbours">The inter neighbour-context store.</param>
+    /// <param name="bx4">The block column in 4x4 units.</param>
+    /// <param name="by4">The block row in 4x4 units.</param>
+    /// <param name="blockSize">The block size.</param>
+    /// <param name="options">The frame-level inter parameters.</param>
+    /// <param name="haveTop">Whether an above neighbour is available.</param>
+    /// <param name="haveLeft">Whether a left neighbour is available.</param>
+    /// <param name="topRightAvailable">Whether the top-right neighbour is available.</param>
+    /// <param name="skipMode">Whether the block uses skip mode (forced pair and mode, no coded syntax).</param>
+    /// <param name="skipModeReference0">The frame's first skip-mode reference.</param>
+    /// <param name="skipModeReference1">The frame's second skip-mode reference.</param>
+    /// <returns>The decoded compound block info.</returns>
+    public static Av1InterBlockInfo DecodeCompound(
+        Av1SymbolDecoder decoder,
+        Av1InterModeCdfContext interCdf,
+        Av1MotionVectorCdfContext mvCdf,
+        Av1InterpolationFilterCdfContext filterCdf,
+        Av1MotionVectorGrid grid,
+        Av1InterNeighbourContext neighbours,
+        int bx4,
+        int by4,
+        Av1BlockSize blockSize,
+        in Av1InterModeInfoOptions options,
+        bool haveTop,
+        bool haveLeft,
+        bool topRightAvailable,
+        bool skipMode,
+        int skipModeReference0,
+        int skipModeReference1)
+    {
+        int bw4 = blockSize.GetWidth4();
+        int bh4 = blockSize.GetHeight4();
+
+        Av1ReferenceNeighbour above = neighbours.GetAbove(bx4);
+        Av1ReferenceNeighbour left = neighbours.GetLeft(by4);
+
+        int reference0;
+        int reference1;
+        if (skipMode)
+        {
+            reference0 = skipModeReference0;
+            reference1 = skipModeReference1;
+        }
+        else
+        {
+            int[] referenceContexts = Av1ReferenceContext.ComputeSingleReferenceContexts(above, left, haveTop, haveLeft);
+            (reference0, reference1) = Av1ReferenceFrameReader.ReadCompoundReferences(
+                decoder, interCdf, above, left, haveTop, haveLeft, referenceContexts);
+        }
+
+        Obu.Av1WarpedMotionParams model0 = options.GlobalMotion[reference0];
+        Obu.Av1WarpedMotionParams model1 = options.GlobalMotion[reference1];
+        Av1MotionVector globalMv0 = Prediction.Av1WarpedMotion.GetGlobalMv(
+            model0, bx4, by4, bw4, bh4, options.AllowHighPrecisionMv, options.ForceIntegerMv);
+        Av1MotionVector globalMv1 = Prediction.Av1WarpedMotion.GetGlobalMv(
+            model1, bx4, by4, bw4, bh4, options.AllowHighPrecisionMv, options.ForceIntegerMv);
+
+        Av1CompoundMotionVectorStack stack = new();
+        (int candidateCount, int modeContext) = Av1MotionVectorFinder.FindCompound(
+            grid, stack, bx4, by4, blockSize, reference0 + 1, reference1 + 1, options.Bounds, topRightAvailable,
+            options.ImageWidth4, options.ImageHeight4,
+            globalMv0, model0.Type > Obu.Av1WarpModelType.Translation,
+            globalMv1, model1.Type > Obu.Av1WarpModelType.Translation,
+            options.SignBias, options.Temporal);
+
+        int compoundMode = 0;
+        int drlIndex = 0;
+        if (!skipMode)
+        {
+            compoundMode = decoder.ReadSymbol(interCdf.CompoundInterMode[modeContext]);
+
+            Span<Av1MotionVectorCandidate> weights = stackalloc Av1MotionVectorCandidate[8];
+            for (int i = 0; i < 8; i++)
+            {
+                weights[i] = new Av1MotionVectorCandidate(default, stack.Weight(i));
+            }
+
+            byte[] components = CompoundModeComponents[compoundMode];
+            if (compoundMode == CompoundNewNew)
+            {
+                if (candidateCount > 1)
+                {
+                    drlIndex += decoder.ReadSymbol(interCdf.DrlBit[Av1InterModeReader.GetDrlContext(weights, 0)]);
+                    if (drlIndex == 1 && candidateCount > 2)
+                    {
+                        drlIndex += decoder.ReadSymbol(interCdf.DrlBit[Av1InterModeReader.GetDrlContext(weights, 1)]);
+                    }
+                }
+            }
+            else if (components[0] == 1 || components[1] == 1)
+            {
+                drlIndex = 1;
+                if (candidateCount > 2)
+                {
+                    drlIndex += decoder.ReadSymbol(interCdf.DrlBit[Av1InterModeReader.GetDrlContext(weights, 1)]);
+                    if (drlIndex == 2 && candidateCount > 3)
+                    {
+                        drlIndex += decoder.ReadSymbol(interCdf.DrlBit[Av1InterModeReader.GetDrlContext(weights, 2)]);
+                    }
+                }
+            }
+        }
+
+        // Assign both motion vectors; a NEW component reads a residual on top of its predictor.
+        bool hasSubpelFilter = Math.Min(bw4, bh4) == 1 || compoundMode != CompoundGlobalGlobal;
+        if (skipMode)
+        {
+            hasSubpelFilter = false;
+        }
+
+        Av1MotionVector motionVector0 = AssignCompoundComponent(
+            decoder, mvCdf, stack, drlIndex, CompoundModeComponents[compoundMode][0], 0, globalMv0, model0, options, ref hasSubpelFilter);
+        Av1MotionVector motionVector1 = AssignCompoundComponent(
+            decoder, mvCdf, stack, drlIndex, CompoundModeComponents[compoundMode][1], 1, globalMv1, model1, options, ref hasSubpelFilter);
+
+        // The sequence flags for distance-weighted and masked compound are rejected at construction,
+        // so the compound type is always the plain average and carries no further syntax.
+
+        // Interpolation filter.
+        int filter0;
+        int filter1;
+        if (options.FilterSwitchable)
+        {
+            int horizontalContext = Av1ReferenceContext.ComputeFilterContext(above, left, isCompound: true, direction: 0, reference0);
+            int verticalContext = Av1ReferenceContext.ComputeFilterContext(above, left, isCompound: true, direction: 1, reference0);
+            (filter0, filter1) = Av1InterpolationFilterReader.ReadFilters(
+                decoder, filterCdf, hasSubpelFilter, options.DualFilter, horizontalContext, verticalContext);
+        }
+        else
+        {
+            filter0 = options.FixedFilter;
+            filter1 = options.FixedFilter;
+        }
+
+        // Write the block back into the grid and the neighbour context (dav1d splat_tworef_mv).
+        bool isNewMv = ((1 << compoundMode) & 0xbc) != 0;
+        bool isGlobalMv = compoundMode == CompoundGlobalGlobal;
+        Av1RefMvsBlock gridBlock = new(
+            motionVector0, motionVector1, reference0 + 1, reference1 + 1, blockSize, isNewMv, isGlobalMv, isIntra: false);
+        grid.Fill(by4, bx4, bw4, bh4, gridBlock);
+        neighbours.Write(by4, bx4, bw4, bh4, isIntra: false, reference0, reference1, isCompound: true, filter0, filter1, skipMode);
+
+        return new Av1InterBlockInfo(
+            reference0, (Av1InterPredictionMode)CompoundModeComponents[compoundMode][0], drlIndex, motionVector0,
+            filter0, filter1, Av1MotionMode.Translation, null, null, reference1, motionVector1, compoundMode);
+    }
+
+    private static Av1MotionVector AssignCompoundComponent(
+        Av1SymbolDecoder decoder,
+        Av1MotionVectorCdfContext mvCdf,
+        Av1CompoundMotionVectorStack stack,
+        int drlIndex,
+        int componentMode,
+        int component,
+        Av1MotionVector globalMv,
+        Obu.Av1WarpedMotionParams model,
+        in Av1InterModeInfoOptions options,
+        ref bool hasSubpelFilter)
+    {
+        Av1MotionVector candidate = component == 0 ? stack.Mv0(drlIndex) : stack.Mv1(drlIndex);
+        switch (componentMode)
+        {
+            case 0: // NEARESTMV
+            case 1: // NEARMV
+                return Av1MotionVectorPrecision.Fix(candidate, options.AllowHighPrecisionMv, options.ForceIntegerMv);
+
+            case 2: // GLOBALMV
+                hasSubpelFilter |= model.Type == Obu.Av1WarpModelType.Translation;
+                return globalMv;
+
+            default: // NEWMV
+            {
+                int precision = (options.AllowHighPrecisionMv ? 1 : 0) - (options.ForceIntegerMv ? 1 : 0);
+                return Av1MotionVectorReader.ReadResidual(decoder, mvCdf, candidate, precision);
+            }
+        }
+    }
+
     private static Av1MotionVector ResolveMotionVector(
         Av1SymbolDecoder decoder,
         Av1MotionVectorCdfContext mvCdf,
