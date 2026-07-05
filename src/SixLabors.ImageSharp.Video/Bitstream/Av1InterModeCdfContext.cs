@@ -53,6 +53,15 @@ internal sealed class Av1InterModeCdfContext
     /// <summary>Gets the compound inter-mode CDFs.</summary>
     public ushort[][] CompoundInterMode { get; private set; } = default!;
 
+    /// <summary>Gets the masked-vs-unmasked compound CDFs.</summary>
+    public ushort[][] MaskComp { get; private set; } = default!;
+
+    /// <summary>Gets the wedge-vs-segmented compound CDFs.</summary>
+    public ushort[][] WedgeComp { get; private set; } = default!;
+
+    /// <summary>Gets the wedge-index CDFs.</summary>
+    public ushort[][] WedgeIdx { get; private set; } = default!;
+
     /// <summary>Creates an inter-mode CDF context initialized from the default tables.</summary>
     /// <returns>A fresh, mutable inter-mode CDF context.</returns>
     public static Av1InterModeCdfContext CreateDefault() => new()
@@ -70,6 +79,9 @@ internal sealed class Av1InterModeCdfContext
         CompoundBackwardReference = Clone(Av1DefaultInterModeCdf.CompoundBackwardReference),
         CompoundUniReference = Clone(Av1DefaultInterModeCdf.CompoundUniReference),
         CompoundInterMode = Clone(Av1DefaultInterModeCdf.CompoundInterMode),
+        MaskComp = Clone(Av1DefaultInterModeCdf.MaskComp),
+        WedgeComp = Clone(Av1DefaultInterModeCdf.WedgeComp),
+        WedgeIdx = Clone(Av1DefaultInterModeCdf.WedgeIdx),
     };
 
     /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
@@ -89,6 +101,9 @@ internal sealed class Av1InterModeCdfContext
         CompoundBackwardReference = Clone(this.CompoundBackwardReference),
         CompoundUniReference = Clone(this.CompoundUniReference),
         CompoundInterMode = Clone(this.CompoundInterMode),
+        MaskComp = Clone(this.MaskComp),
+        WedgeComp = Clone(this.WedgeComp),
+        WedgeIdx = Clone(this.WedgeIdx),
     };
 
     private static ushort[][] Clone(ushort[][] group)

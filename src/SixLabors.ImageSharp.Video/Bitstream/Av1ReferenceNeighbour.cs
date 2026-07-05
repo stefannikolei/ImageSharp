@@ -17,12 +17,15 @@ internal readonly struct Av1ReferenceNeighbour
     /// <param name="isCompound">Whether the neighbour uses compound prediction.</param>
     /// <param name="filter0">The neighbour's horizontal interpolation filter (3 = unset).</param>
     /// <param name="filter1">The neighbour's vertical interpolation filter (3 = unset).</param>
-    public Av1ReferenceNeighbour(bool isIntra, int reference0, int reference1, bool isCompound, int filter0, int filter1)
+    /// <param name="compoundType">The neighbour's compound type (0 = none, 2 = average, 3 = seg,
+    /// 4 = wedge).</param>
+    public Av1ReferenceNeighbour(bool isIntra, int reference0, int reference1, bool isCompound, int filter0, int filter1, int compoundType = 0)
     {
         this.IsIntra = isIntra;
         this.Reference0 = reference0;
         this.Reference1 = reference1;
-        this.IsCompound = isCompound;
+        this.IsCompound = isCompound || compoundType != 0;
+        this.CompoundType = compoundType;
         this.Filter0 = filter0;
         this.Filter1 = filter1;
     }
@@ -38,6 +41,10 @@ internal readonly struct Av1ReferenceNeighbour
 
     /// <summary>Gets a value indicating whether the neighbour uses compound prediction.</summary>
     public bool IsCompound { get; }
+
+    /// <summary>Gets the neighbour's compound type (dav1d <c>CompInterType</c>: 0 = none,
+    /// 2 = average, 3 = seg, 4 = wedge).</summary>
+    public int CompoundType { get; }
 
     /// <summary>Gets the neighbour's horizontal interpolation filter (3 = unset).</summary>
     public int Filter0 { get; }

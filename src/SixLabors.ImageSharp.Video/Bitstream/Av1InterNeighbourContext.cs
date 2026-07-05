@@ -62,7 +62,8 @@ internal sealed class Av1InterNeighbourContext
         this.aboveReference1[column],
         this.aboveCompound[column] != 0,
         this.aboveFilter0[column],
-        this.aboveFilter1[column]);
+        this.aboveFilter1[column],
+        this.aboveCompound[column]);
 
     /// <summary>Gets the left neighbour state at the given 4x4 row.</summary>
     /// <param name="row">The 4x4 row.</param>
@@ -73,7 +74,8 @@ internal sealed class Av1InterNeighbourContext
         this.leftReference1[row],
         this.leftCompound[row] != 0,
         this.leftFilter0[row],
-        this.leftFilter1[row]);
+        this.leftFilter1[row],
+        this.leftCompound[row]);
 
     /// <summary>Gets the above intra flag at the given 4x4 column (0 or 1).</summary>
     /// <param name="column">The 4x4 column.</param>
@@ -120,10 +122,11 @@ internal sealed class Av1InterNeighbourContext
         bool isCompound,
         int filter0,
         int filter1,
-        bool skipMode)
+        bool skipMode,
+        int compoundType = -1)
     {
         byte intra = (byte)(isIntra ? 1 : 0);
-        byte compound = (byte)(isCompound ? 1 : 0);
+        byte compound = (byte)(compoundType >= 0 ? compoundType : isCompound ? 2 : 0);
         byte skip = (byte)(skipMode ? 1 : 0);
 
         int columnEnd = Math.Min(column + width4, this.aboveIntra.Length);

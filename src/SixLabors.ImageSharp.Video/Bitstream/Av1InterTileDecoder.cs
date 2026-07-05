@@ -81,9 +81,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame?[] references, Av1FrameCdfSet cdfs)
         : base(sequenceHeader, frameHeader, cdfs)
     {
-        if (frameHeader.ReferenceSelect && (sequenceHeader.EnableJntComp || sequenceHeader.EnableMaskedCompound))
+        if (frameHeader.ReferenceSelect && sequenceHeader.EnableJntComp)
         {
-            throw new NotSupportedException("Distance-weighted and masked compound prediction are not supported yet.");
+            throw new NotSupportedException("Distance-weighted compound prediction is not supported yet.");
         }
 
         if (sequenceHeader.EnableInterIntraCompound)
@@ -134,7 +134,8 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             frameHeader.GlobalMotionParams,
             signBias,
             frameHeader.AllowWarpedMotion,
-            Av1TemporalMvContext.Create(sequenceHeader, frameHeader, references));
+            Av1TemporalMvContext.Create(sequenceHeader, frameHeader, references),
+            sequenceHeader.EnableMaskedCompound);
 
         // Whether each reference's global-motion model can be applied as a warp (dav1d
         // gmv_warp_allowed): a non-translation model whose shear parameters are within limits.
@@ -455,15 +456,23 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
                          (height4 > this.subsamplingY || (row & 1) != 0);
 
-        this.CompoundPredictPlane(0, row, col, width4, height4, info);
+        // A segmented (difference-weighted) compound derives its blend mask from the luma
+        // intermediates at the chroma resolution; the chroma planes then blend with that mask.
+        byte[]? segMask = null;
+        if (info.CompoundType == 3)
+        {
+            segMask = new byte[((width4 * 4) >> this.subsamplingX) * ((height4 * 4) >> this.subsamplingY)];
+        }
+
+        this.CompoundPredictPlane(0, row, col, width4, height4, info, segMask);
         if (hasChroma)
         {
-            this.CompoundPredictPlane(1, row, col, width4, height4, info);
-            this.CompoundPredictPlane(2, row, col, width4, height4, info);
+            this.CompoundPredictPlane(1, row, col, width4, height4, info, segMask);
+            this.CompoundPredictPlane(2, row, col, width4, height4, info, segMask);
         }
     }
 
-    private void CompoundPredictPlane(int plane, int row, int col, int width4, int height4, in Av1InterBlockInfo info)
+    private void CompoundPredictPlane(int plane, int row, int col, int width4, int height4, in Av1InterBlockInfo info, byte[]? segMask)
     {
         int ssX = plane == 0 ? 0 : this.subsamplingX;
         int ssY = plane == 0 ? 0 : this.subsamplingY;
@@ -502,6 +511,23 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         Av1Plane destination = plane == 0 ? this.luma : plane == 1 ? this.chromaU : this.chromaV;
         int dstX = (col >> ssX) * 4;
         int dstY = (row >> ssY) * 4;
+        if (info.CompoundType == 3 && segMask is not null)
+        {
+            // Segmented compound: the mask-signed intermediate leads the blend.
+            short[] lead = info.MaskSign ? intermediate1 : intermediate0;
+            short[] trail = info.MaskSign ? intermediate0 : intermediate1;
+            if (plane == 0)
+            {
+                WMaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask, info.MaskSign ? 1 : 0, this.subsamplingX, this.subsamplingY);
+            }
+            else
+            {
+                MaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask);
+            }
+
+            return;
+        }
+
         for (int y = 0; y < height; y++)
         {
             int dstBase = ((dstY + y) * destination.Width) + dstX;
@@ -509,6 +535,72 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             for (int x = 0; x < width; x++)
             {
                 destination.Samples[dstBase + x] = (byte)Math.Clamp((intermediate0[srcBase + x] + intermediate1[srcBase + x] + 16) >> 5, 0, 255);
+            }
+        }
+    }
+
+    // dav1d w_mask_c (8-bit): blends the luma intermediates by a per-pixel weight derived from their
+    // difference and stores the weight, subsampled to the chroma layout, for the chroma blend.
+    private static void WMaskBlend(Av1Plane destination, int dstX, int dstY, short[] tmp1, short[] tmp2, int width, int height, byte[] mask, int sign, int ssHor, int ssVer)
+    {
+        int maskStride = width >> ssHor;
+        int maskBase = 0;
+        for (int y = 0; y < height; y++)
+        {
+            int remaining = height - y;
+            int dstBase = ((dstY + y) * destination.Width) + dstX;
+            int srcBase = y * width;
+            for (int x = 0; x < width; x++)
+            {
+                int diff = tmp1[srcBase + x] - tmp2[srcBase + x];
+                int m = Math.Min(38 + ((Math.Abs(diff) + 8) >> 8), 64);
+                destination.Samples[dstBase + x] = (byte)Math.Clamp(((diff * m) + (tmp2[srcBase + x] * 64) + 512) >> 10, 0, 255);
+
+                if (ssHor != 0)
+                {
+                    x++;
+                    int diff2 = tmp1[srcBase + x] - tmp2[srcBase + x];
+                    int n = Math.Min(38 + ((Math.Abs(diff2) + 8) >> 8), 64);
+                    destination.Samples[dstBase + x] = (byte)Math.Clamp(((diff2 * n) + (tmp2[srcBase + x] * 64) + 512) >> 10, 0, 255);
+
+                    if ((remaining & ssVer) != 0)
+                    {
+                        mask[maskBase + (x >> 1)] = (byte)((m + n + mask[maskBase + (x >> 1)] + 2 - sign) >> 2);
+                    }
+                    else if (ssVer != 0)
+                    {
+                        mask[maskBase + (x >> 1)] = (byte)(m + n);
+                    }
+                    else
+                    {
+                        mask[maskBase + (x >> 1)] = (byte)((m + n + 1 - sign) >> 1);
+                    }
+                }
+                else
+                {
+                    mask[maskBase + x] = (byte)m;
+                }
+            }
+
+            if (ssVer == 0 || (remaining & 1) != 0)
+            {
+                maskBase += maskStride;
+            }
+        }
+    }
+
+    // dav1d mask_c (8-bit): blends two intermediates by an explicit per-pixel 64-weight mask.
+    private static void MaskBlend(Av1Plane destination, int dstX, int dstY, short[] tmp1, short[] tmp2, int width, int height, byte[] mask)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            int dstBase = ((dstY + y) * destination.Width) + dstX;
+            int srcBase = y * width;
+            int maskBase = y * width;
+            for (int x = 0; x < width; x++)
+            {
+                int m = mask[maskBase + x];
+                destination.Samples[dstBase + x] = (byte)Math.Clamp(((tmp1[srcBase + x] * m) + (tmp2[srcBase + x] * (64 - m)) + 512) >> 10, 0, 255);
             }
         }
     }

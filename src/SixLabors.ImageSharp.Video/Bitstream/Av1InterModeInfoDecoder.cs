@@ -156,6 +156,31 @@ internal static class Av1InterModeInfoDecoder
         return new Av1InterBlockInfo(reference, mode, drlIndex, motionVector, filter0, filter1, motionMode, warpMatrix, warpShear);
     }
 
+    // dav1d wedge_allowed_mask / dav1d_wedge_ctx_lut, indexed by Av1BlockSize.
+    private static readonly int[] WedgeContextLut = CreateWedgeContextLut();
+
+    private static readonly int WedgeAllowedMask = CreateWedgeAllowedMask();
+
+    private static int[] CreateWedgeContextLut()
+    {
+        int[] lut = new int[32];
+        lut[(int)Av1BlockSize.Block32x32] = 6;
+        lut[(int)Av1BlockSize.Block32x16] = 5;
+        lut[(int)Av1BlockSize.Block32x8] = 8;
+        lut[(int)Av1BlockSize.Block16x32] = 4;
+        lut[(int)Av1BlockSize.Block16x16] = 3;
+        lut[(int)Av1BlockSize.Block16x8] = 2;
+        lut[(int)Av1BlockSize.Block8x32] = 7;
+        lut[(int)Av1BlockSize.Block8x16] = 1;
+        lut[(int)Av1BlockSize.Block8x8] = 0;
+        return lut;
+    }
+
+    private static int CreateWedgeAllowedMask()
+        => (1 << (int)Av1BlockSize.Block32x32) | (1 << (int)Av1BlockSize.Block32x16) | (1 << (int)Av1BlockSize.Block32x8)
+         | (1 << (int)Av1BlockSize.Block16x32) | (1 << (int)Av1BlockSize.Block16x16) | (1 << (int)Av1BlockSize.Block16x8)
+         | (1 << (int)Av1BlockSize.Block8x32) | (1 << (int)Av1BlockSize.Block8x16) | (1 << (int)Av1BlockSize.Block8x8);
+
     // dav1d_comp_inter_pred_modes: the two component modes of each compound inter mode
     // (0 = NEARESTMV, 1 = NEARMV, 2 = GLOBALMV, 3 = NEWMV).
     private static readonly byte[][] CompoundModeComponents =
@@ -295,8 +320,38 @@ internal static class Av1InterModeInfoDecoder
         Av1MotionVector motionVector1 = AssignCompoundComponent(
             decoder, mvCdf, stack, drlIndex, CompoundModeComponents[compoundMode][1], 1, globalMv1, model1, options, ref hasSubpelFilter);
 
-        // The sequence flags for distance-weighted and masked compound are rejected at construction,
-        // so the compound type is always the plain average and carries no further syntax.
+        // Compound type: with masked compound enabled a flag selects the masked (wedge/segmented)
+        // blend; distance-weighted compound stays rejected at construction, so the unmasked case is
+        // always the plain average. Skip-mode blocks are always averaged with no coded type.
+        const int CompoundAverage = 2;
+        const int CompoundSeg = 3;
+        const int CompoundWedge = 4;
+        int compoundType = CompoundAverage;
+        bool maskSign = false;
+        if (!skipMode && options.EnableMaskedCompound)
+        {
+            int maskContext = Av1ReferenceContext.ComputeMaskCompoundContext(above, left);
+            bool isSegWedge = decoder.ReadSymbol(interCdf.MaskComp[maskContext]) != 0;
+            if (isSegWedge)
+            {
+                if ((WedgeAllowedMask & (1 << (int)blockSize)) != 0)
+                {
+                    int wedgeContext = WedgeContextLut[(int)blockSize];
+                    compoundType = CompoundWedge - decoder.ReadSymbol(interCdf.WedgeComp[wedgeContext]);
+                    if (compoundType == CompoundWedge)
+                    {
+                        _ = decoder.ReadSymbol(interCdf.WedgeIdx[wedgeContext]);
+                        throw new NotSupportedException("Wedge-masked compound prediction is not supported yet.");
+                    }
+                }
+                else
+                {
+                    compoundType = CompoundSeg;
+                }
+
+                maskSign = decoder.ReadBool() != 0;
+            }
+        }
 
         // Interpolation filter.
         int filter0;
@@ -320,11 +375,11 @@ internal static class Av1InterModeInfoDecoder
         Av1RefMvsBlock gridBlock = new(
             motionVector0, motionVector1, reference0 + 1, reference1 + 1, blockSize, isNewMv, isGlobalMv, isIntra: false);
         grid.Fill(by4, bx4, bw4, bh4, gridBlock);
-        neighbours.Write(by4, bx4, bw4, bh4, isIntra: false, reference0, reference1, isCompound: true, filter0, filter1, skipMode);
+        neighbours.Write(by4, bx4, bw4, bh4, isIntra: false, reference0, reference1, isCompound: true, filter0, filter1, skipMode, compoundType);
 
         return new Av1InterBlockInfo(
             reference0, (Av1InterPredictionMode)CompoundModeComponents[compoundMode][0], drlIndex, motionVector0,
-            filter0, filter1, Av1MotionMode.Translation, null, null, reference1, motionVector1, compoundMode);
+            filter0, filter1, Av1MotionMode.Translation, null, null, reference1, motionVector1, compoundMode, compoundType, maskSign);
     }
 
     private static Av1MotionVector AssignCompoundComponent(

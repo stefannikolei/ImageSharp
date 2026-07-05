@@ -33,11 +33,15 @@ internal readonly struct Av1InterBlockInfo
         short[]? warpShear = null,
         int reference1 = -1,
         Av1MotionVector motionVector1 = default,
-        int compoundMode = -1)
+        int compoundMode = -1,
+        int compoundType = 0,
+        bool maskSign = false)
     {
         this.Reference1 = reference1;
         this.MotionVector1 = motionVector1;
         this.CompoundMode = compoundMode;
+        this.CompoundType = compoundType;
+        this.MaskSign = maskSign;
         this.Reference = reference;
         this.Mode = mode;
         this.DynamicReferenceIndex = dynamicReferenceIndex;
@@ -85,6 +89,13 @@ internal readonly struct Av1InterBlockInfo
 
     /// <summary>Gets the compound inter mode (dav1d <c>CompInterPredMode</c>), or -1 for single.</summary>
     public int CompoundMode { get; }
+
+    /// <summary>Gets the compound blend type (dav1d <c>CompInterType</c>: 2 = average, 3 = seg,
+    /// 4 = wedge), or 0 for single-reference blocks.</summary>
+    public int CompoundType { get; }
+
+    /// <summary>Gets the masked-compound mask sign.</summary>
+    public bool MaskSign { get; }
 
     /// <summary>Gets a value indicating whether the block uses compound prediction.</summary>
     public bool IsCompound => this.Reference1 >= 0;

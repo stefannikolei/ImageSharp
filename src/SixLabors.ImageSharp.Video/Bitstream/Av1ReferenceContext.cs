@@ -153,6 +153,17 @@ internal static class Av1ReferenceContext
         return 2;
     }
 
+    /// <summary>Computes the masked-compound context (dav1d <c>get_mask_comp_ctx</c>).</summary>
+    /// <param name="a">The above neighbour.</param>
+    /// <param name="l">The left neighbour.</param>
+    /// <returns>The context.</returns>
+    public static int ComputeMaskCompoundContext(in Av1ReferenceNeighbour a, in Av1ReferenceNeighbour l)
+    {
+        int aCtx = a.CompoundType >= 3 ? 1 : a.Reference0 == 6 ? 3 : 0;
+        int lCtx = l.CompoundType >= 3 ? 1 : l.Reference0 == 6 ? 3 : 0;
+        return Math.Min(aCtx + lCtx, 5);
+    }
+
     /// <summary>Computes the unidirectional-compound second-reference context
     /// (dav1d <c>av1_get_uni_p1_ctx</c>).</summary>
     /// <param name="a">The above neighbour.</param>

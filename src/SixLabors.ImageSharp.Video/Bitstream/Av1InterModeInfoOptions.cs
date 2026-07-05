@@ -35,9 +35,11 @@ internal readonly struct Av1InterModeInfoOptions
         Obu.Av1WarpedMotionParams[] globalMotion,
         int[] signBias,
         bool allowWarpedMotion = false,
-        Av1TemporalMvContext? temporal = null)
+        Av1TemporalMvContext? temporal = null,
+        bool enableMaskedCompound = false)
     {
         this.AllowWarpedMotion = allowWarpedMotion;
+        this.EnableMaskedCompound = enableMaskedCompound;
         this.Bounds = bounds;
         this.ImageWidth4 = imageWidth4;
         this.ImageHeight4 = imageHeight4;
@@ -78,6 +80,9 @@ internal readonly struct Av1InterModeInfoOptions
     /// <summary>Gets a value indicating whether local warped motion is enabled for the frame.</summary>
     public bool AllowWarpedMotion { get; }
 
+    /// <summary>Gets a value indicating whether masked compound prediction is enabled.</summary>
+    public bool EnableMaskedCompound { get; }
+
     /// <summary>Gets the seven per-reference global-motion models.</summary>
     public Obu.Av1WarpedMotionParams[] GlobalMotion { get; }
 
@@ -102,5 +107,6 @@ internal readonly struct Av1InterModeInfoOptions
         this.GlobalMotion,
         this.SignBias,
         this.AllowWarpedMotion,
-        this.Temporal);
+        this.Temporal,
+        this.EnableMaskedCompound);
 }
