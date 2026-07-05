@@ -36,9 +36,13 @@ internal readonly struct Av1InterBlockInfo
         int compoundMode = -1,
         int compoundType = 0,
         bool maskSign = false,
-        int wedgeIndex = 0)
+        int wedgeIndex = 0,
+        int interIntraType = 0,
+        int interIntraMode = 0)
     {
         this.WedgeIndex = wedgeIndex;
+        this.InterIntraType = interIntraType;
+        this.InterIntraMode = interIntraMode;
         this.Reference1 = reference1;
         this.MotionVector1 = motionVector1;
         this.CompoundMode = compoundMode;
@@ -99,8 +103,14 @@ internal readonly struct Av1InterBlockInfo
     /// <summary>Gets the masked-compound mask sign.</summary>
     public bool MaskSign { get; }
 
-    /// <summary>Gets the wedge index (wedge-masked compound blocks).</summary>
+    /// <summary>Gets the wedge index (wedge-masked compound and wedge inter-intra blocks).</summary>
     public int WedgeIndex { get; }
+
+    /// <summary>Gets the inter-intra type (0 = none, 1 = blend, 2 = wedge).</summary>
+    public int InterIntraType { get; }
+
+    /// <summary>Gets the inter-intra intra mode (0 = DC, 1 = V, 2 = H, 3 = SMOOTH).</summary>
+    public int InterIntraMode { get; }
 
     /// <summary>Gets a value indicating whether the block uses compound prediction.</summary>
     public bool IsCompound => this.Reference1 >= 0;

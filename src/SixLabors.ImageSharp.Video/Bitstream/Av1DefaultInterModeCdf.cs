@@ -194,4 +194,31 @@ internal static class Av1DefaultInterModeCdf
         [32614, 31781, 30843, 30717, 30680, 30657, 30617, 9735, 9065, 8484, 7783, 7084, 5509, 3885, 1857, 0, 0],
         [31633, 31446, 31275, 30133, 30072, 30031, 29998, 11752, 9833, 7711, 5517, 3595, 2679, 1808, 835, 0, 0],
     ];
+
+    /// <summary>The inter-intra flag CDFs, indexed by the y-mode size group.</summary>
+    public static readonly ushort[][] InterIntra = [
+        [16384, 0, 0],
+        [5881, 0, 0],
+        [5171, 0, 0],
+        [2531, 0, 0],
+    ];
+
+    /// <summary>The inter-intra mode CDFs (four symbols), indexed by the y-mode size group.</summary>
+    public static readonly ushort[][] InterIntraMode = [
+        [24576, 16384, 8192, 0, 0],
+        [30893, 21686, 5436, 0, 0],
+        [30295, 22772, 6380, 0, 0],
+        [28530, 21231, 6842, 0, 0],
+    ];
+
+    /// <summary>The inter-intra wedge flag CDFs, indexed by the wedge block-size context.</summary>
+    public static readonly ushort[][] InterIntraWedge = [
+        [12732, 0, 0],
+        [7811, 0, 0],
+        [6064, 0, 0],
+        [5238, 0, 0],
+        [3204, 0, 0],
+        [3324, 0, 0],
+        [5896, 0, 0],
+    ];
 }

@@ -86,11 +86,6 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             throw new NotSupportedException("Distance-weighted compound prediction is not supported yet.");
         }
 
-        if (sequenceHeader.EnableInterIntraCompound)
-        {
-            throw new NotSupportedException("Inter-intra compound prediction is not supported yet.");
-        }
-
         this.interCdf = cdfs.InterMode;
         this.mvCdf = cdfs.MotionVector;
         this.filterCdf = cdfs.Filter;
@@ -135,7 +130,8 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             signBias,
             frameHeader.AllowWarpedMotion,
             Av1TemporalMvContext.Create(sequenceHeader, frameHeader, references),
-            sequenceHeader.EnableMaskedCompound);
+            sequenceHeader.EnableMaskedCompound,
+            sequenceHeader.EnableInterIntraCompound);
 
         // Whether each reference's global-motion model can be applied as a warp (dav1d
         // gmv_warp_allowed): a non-translation model whose shear parameters are within limits.
@@ -387,12 +383,22 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                 this.OverlappedPrediction(this.luma, 0, row, col, width4, height4, obmcAboveFilters!, obmcLeftFilters!);
             }
         }
+
+        if (info.InterIntraType != 0)
+        {
+            this.InterIntraBlend(this.luma, 0, row, col, width4, height4, bsize, info);
+        }
         bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
                          (height4 > this.subsamplingY || (row & 1) != 0);
         if (hasChroma && blockReference.ChromaU is not null && blockReference.ChromaV is not null)
         {
             this.MotionCompensateChroma(row, col, width4, height4, info, leftNeighbour, aboveNeighbour, warpMatrix, warpShear, obmcAboveFilters, obmcLeftFilters);
+            if (info.InterIntraType != 0)
+            {
+                this.InterIntraBlend(this.chromaU, 1, row, col, width4, height4, bsize, info);
+                this.InterIntraBlend(this.chromaV, 2, row, col, width4, height4, bsize, info);
+            }
         }
 
         this.DecodeInterResidual(row, col, bsize, skip, info, hasChroma);
@@ -804,6 +810,57 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                 }
 
                 y += step4;
+            }
+        }
+    }
+
+    // Blends an intra prediction of the whole block over its motion-compensated samples (dav1d's
+    // interintra recon): DC/V/H/SMOOTH prediction from the neighbouring reconstruction, weighted by
+    // the mode-faded ii mask (flat 32 for DC), or the sign-0 wedge mask for the wedge type.
+    private void InterIntraBlend(Av1Plane plane, int planeIndex, int row, int col, int width4, int height4, Av1BlockSize bsize, in Av1InterBlockInfo info)
+    {
+        int ssX = planeIndex == 0 ? 0 : this.subsamplingX;
+        int ssY = planeIndex == 0 ? 0 : this.subsamplingY;
+        int width = (width4 * 4) >> ssX;
+        int height = (height4 * 4) >> ssY;
+        int x = (col >> ssX) * 4;
+        int y = (row >> ssY) * 4;
+
+        int intraMode = info.InterIntraMode == 3 ? 9 : info.InterIntraMode;
+        byte[] intra = new byte[width * height];
+        this.Predict(plane, x, y, width, height, intraMode, 0, -1, 0, intra);
+
+        byte[]? mask;
+        int maskStride;
+        if (info.InterIntraType == 2)
+        {
+            int wedgeContext = Av1InterModeInfoDecoder.GetWedgeContext(bsize);
+            mask = planeIndex == 0
+                ? Prediction.Av1WedgeMasks.Luma[wedgeContext][info.WedgeIndex]
+                : Prediction.Av1WedgeMasks.Chroma420[wedgeContext][0][info.WedgeIndex];
+            maskStride = width;
+        }
+        else if (Prediction.Av1InterIntraMasks.Get(width4, height4, info.InterIntraMode, planeIndex != 0) is { } faded)
+        {
+            mask = faded.Mask;
+            maskStride = faded.Stride;
+        }
+        else
+        {
+            mask = null;
+            maskStride = 0;
+        }
+
+        for (int dy = 0; dy < height; dy++)
+        {
+            int dstBase = ((y + dy) * plane.Width) + x;
+            int srcBase = dy * width;
+            int maskBase = dy * maskStride;
+            for (int dx = 0; dx < width; dx++)
+            {
+                int m = mask is null ? 32 : mask[maskBase + dx];
+                int value = plane.Samples[dstBase + dx];
+                plane.Samples[dstBase + dx] = (byte)(((value * (64 - m)) + (intra[srcBase + dx] * m) + 32) >> 6);
             }
         }
     }

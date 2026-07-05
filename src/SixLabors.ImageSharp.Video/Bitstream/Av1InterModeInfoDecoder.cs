@@ -92,18 +92,39 @@ internal static class Av1InterModeInfoDecoder
             || Math.Min(bw4, bh4) == 1
             || globalModel.Type == Obu.Av1WarpModelType.Translation;
 
+        // interintra: eligible single-reference blocks blend an intra prediction over the
+        // motion-compensated block (dav1d's interintra flags).
+        int interIntraType = 0;
+        int interIntraMode = 0;
+        int wedgeIndex = 0;
+        if (options.EnableInterIntra
+            && (InterIntraAllowedMask & (1 << (int)blockSize)) != 0)
+        {
+            int sizeGroup = YModeSizeContext(bw4, bh4);
+            if (decoder.ReadSymbol(interCdf.InterIntra[sizeGroup]) != 0)
+            {
+                interIntraMode = decoder.ReadSymbol(interCdf.InterIntraMode[sizeGroup]);
+                int wedgeContext = WedgeContextLut[(int)blockSize];
+                interIntraType = 1 + decoder.ReadSymbol(interCdf.InterIntraWedge[wedgeContext]);
+                if (interIntraType == 2)
+                {
+                    wedgeIndex = decoder.ReadSymbol(interCdf.WedgeIdx[wedgeContext]);
+                }
+            }
+        }
+
         // Motion mode (read before the subpel filter so a warp block can clear it). A GLOBALMV block
-        // predicted by a warped (non-translational) global model carries no coded motion mode. The
-        // WARP choice is only offered when a same-reference neighbour exists on the block edges; a
-        // warp block then derives its local model from those neighbours (falling back to translation
-        // when the fit degenerates or shears too strongly).
+        // predicted by a warped (non-translational) global model carries no coded motion mode, and
+        // neither does an interintra block. The WARP choice is only offered when a same-reference
+        // neighbour exists on the block edges; a warp block then derives its local model from those
+        // neighbours (falling back to translation when the fit degenerates or shears too strongly).
         Av1MotionMode motionMode = Av1MotionMode.Translation;
         int[]? warpMatrix = null;
         short[]? warpShear = null;
         bool isWarpedGlobalMv = mode == Av1InterPredictionMode.GlobalMv
             && !options.ForceIntegerMv
             && globalModel.Type > Obu.Av1WarpModelType.Translation;
-        if (readMotionMode && !isWarpedGlobalMv)
+        if (readMotionMode && interIntraType == 0 && !isWarpedGlobalMv)
         {
             int w4 = Math.Min(bw4, options.ImageWidth4 - bx4);
             int h4 = Math.Min(bh4, options.ImageHeight4 - by4);
@@ -145,16 +166,31 @@ internal static class Av1InterModeInfoDecoder
             filter1 = options.FixedFilter;
         }
 
-        // Write the block back into the grid and the neighbour context.
+        // Write the block back into the grid and the neighbour context. An interintra block's grid
+        // entry carries a second reference of 0 rather than -1 (dav1d splat_oneref_mv), so it never
+        // matches the warp neighbour scan.
         bool isNewMv = mode == Av1InterPredictionMode.NewMv;
         bool isGlobalMv = mode == Av1InterPredictionMode.GlobalMv && Math.Min(bw4, bh4) >= 2;
         Av1RefMvsBlock gridBlock = new(
-            motionVector, default, reference + 1, -1, blockSize, isNewMv, isGlobalMv, isIntra: false);
+            motionVector, default, reference + 1, interIntraType != 0 ? 0 : -1, blockSize, isNewMv, isGlobalMv, isIntra: false);
         grid.Fill(by4, bx4, bw4, bh4, gridBlock);
         neighbours.Write(by4, bx4, bw4, bh4, isIntra: false, reference, -1, isCompound: false, filter0, filter1, skipMode);
 
-        return new Av1InterBlockInfo(reference, mode, drlIndex, motionVector, filter0, filter1, motionMode, warpMatrix, warpShear);
+        return new Av1InterBlockInfo(
+            reference, mode, drlIndex, motionVector, filter0, filter1, motionMode, warpMatrix, warpShear,
+            -1, default, -1, 0, false, wedgeIndex, interIntraType, interIntraMode);
     }
+
+    // dav1d interintra_allowed_mask.
+    private static readonly int InterIntraAllowedMask =
+        (1 << (int)Av1BlockSize.Block32x32) | (1 << (int)Av1BlockSize.Block32x16)
+        | (1 << (int)Av1BlockSize.Block16x32) | (1 << (int)Av1BlockSize.Block16x16)
+        | (1 << (int)Av1BlockSize.Block16x8) | (1 << (int)Av1BlockSize.Block8x16)
+        | (1 << (int)Av1BlockSize.Block8x8);
+
+    // dav1d_ymode_size_context equivalent for the interintra size group.
+    private static int YModeSizeContext(int bw4, int bh4)
+        => Math.Min(3, System.Numerics.BitOperations.Log2((uint)Math.Min(bw4, bh4)));
 
     /// <summary>Gets the wedge block-size context for a wedge-eligible block size (doubles as the
     /// wedge mask table index).</summary>

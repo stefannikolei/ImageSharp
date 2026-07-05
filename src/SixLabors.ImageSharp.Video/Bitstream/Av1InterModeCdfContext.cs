@@ -62,6 +62,15 @@ internal sealed class Av1InterModeCdfContext
     /// <summary>Gets the wedge-index CDFs.</summary>
     public ushort[][] WedgeIdx { get; private set; } = default!;
 
+    /// <summary>Gets the inter-intra flag CDFs.</summary>
+    public ushort[][] InterIntra { get; private set; } = default!;
+
+    /// <summary>Gets the inter-intra mode CDFs.</summary>
+    public ushort[][] InterIntraMode { get; private set; } = default!;
+
+    /// <summary>Gets the inter-intra wedge flag CDFs.</summary>
+    public ushort[][] InterIntraWedge { get; private set; } = default!;
+
     /// <summary>Creates an inter-mode CDF context initialized from the default tables.</summary>
     /// <returns>A fresh, mutable inter-mode CDF context.</returns>
     public static Av1InterModeCdfContext CreateDefault() => new()
@@ -82,6 +91,9 @@ internal sealed class Av1InterModeCdfContext
         MaskComp = Clone(Av1DefaultInterModeCdf.MaskComp),
         WedgeComp = Clone(Av1DefaultInterModeCdf.WedgeComp),
         WedgeIdx = Clone(Av1DefaultInterModeCdf.WedgeIdx),
+        InterIntra = Clone(Av1DefaultInterModeCdf.InterIntra),
+        InterIntraMode = Clone(Av1DefaultInterModeCdf.InterIntraMode),
+        InterIntraWedge = Clone(Av1DefaultInterModeCdf.InterIntraWedge),
     };
 
     /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
@@ -104,6 +116,9 @@ internal sealed class Av1InterModeCdfContext
         MaskComp = Clone(this.MaskComp),
         WedgeComp = Clone(this.WedgeComp),
         WedgeIdx = Clone(this.WedgeIdx),
+        InterIntra = Clone(this.InterIntra),
+        InterIntraMode = Clone(this.InterIntraMode),
+        InterIntraWedge = Clone(this.InterIntraWedge),
     };
 
     private static ushort[][] Clone(ushort[][] group)
