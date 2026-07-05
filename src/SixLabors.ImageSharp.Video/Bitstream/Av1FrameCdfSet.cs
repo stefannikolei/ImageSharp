@@ -115,6 +115,11 @@ internal sealed class Av1FrameCdfSet
         Av1CdfTables.ResetCounters(i.DrlBit);
         Av1CdfTables.ResetCounters(i.Compound);
         Av1CdfTables.ResetCounters(i.SingleReference);
+        Av1CdfTables.ResetCounters(i.CompoundDirection);
+        Av1CdfTables.ResetCounters(i.CompoundForwardReference);
+        Av1CdfTables.ResetCounters(i.CompoundBackwardReference);
+        Av1CdfTables.ResetCounters(i.CompoundUniReference);
+        Av1CdfTables.ResetCounters(i.CompoundInterMode);
 
         Av1CdfTables.ResetCounter(this.MotionVector.Joint);
         foreach (Av1MotionVectorCdfContext.Component component in this.MotionVector.Components)

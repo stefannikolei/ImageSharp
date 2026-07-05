@@ -38,6 +38,153 @@ internal static class Av1ReferenceContext
         ];
     }
 
+    /// <summary>Computes the compound-flag context (dav1d <c>get_comp_ctx</c>).</summary>
+    /// <param name="a">The above neighbour.</param>
+    /// <param name="l">The left neighbour.</param>
+    /// <param name="haveTop">Whether an above neighbour is available.</param>
+    /// <param name="haveLeft">Whether a left neighbour is available.</param>
+    /// <returns>The context.</returns>
+    public static int ComputeCompoundContext(in Av1ReferenceNeighbour a, in Av1ReferenceNeighbour l, bool haveTop, bool haveLeft)
+    {
+        if (haveTop)
+        {
+            if (haveLeft)
+            {
+                if (a.IsCompound)
+                {
+                    return l.IsCompound ? 4 : 2 + ((uint)l.Reference0 >= 4u ? 1 : 0);
+                }
+
+                if (l.IsCompound)
+                {
+                    return 2 + ((uint)a.Reference0 >= 4u ? 1 : 0);
+                }
+
+                return (l.Reference0 >= 4 ? 1 : 0) ^ (a.Reference0 >= 4 ? 1 : 0);
+            }
+
+            return a.IsCompound ? 3 : a.Reference0 >= 4 ? 1 : 0;
+        }
+
+        if (haveLeft)
+        {
+            return l.IsCompound ? 3 : l.Reference0 >= 4 ? 1 : 0;
+        }
+
+        return 1;
+    }
+
+    /// <summary>Computes the compound-direction (bidirectional vs unidirectional) context
+    /// (dav1d <c>get_comp_dir_ctx</c>).</summary>
+    /// <param name="a">The above neighbour.</param>
+    /// <param name="l">The left neighbour.</param>
+    /// <param name="haveTop">Whether an above neighbour is available.</param>
+    /// <param name="haveLeft">Whether a left neighbour is available.</param>
+    /// <returns>The context.</returns>
+    public static int ComputeCompoundDirectionContext(in Av1ReferenceNeighbour a, in Av1ReferenceNeighbour l, bool haveTop, bool haveLeft)
+    {
+        static bool HasUniCompound(in Av1ReferenceNeighbour n) => (n.Reference0 < 4) == (n.Reference1 < 4);
+
+        if (haveTop && haveLeft)
+        {
+            if (a.IsIntra && l.IsIntra)
+            {
+                return 2;
+            }
+
+            if (a.IsIntra || l.IsIntra)
+            {
+                Av1ReferenceNeighbour edge = a.IsIntra ? l : a;
+                if (!edge.IsCompound)
+                {
+                    return 2;
+                }
+
+                return 1 + (2 * (HasUniCompound(edge) ? 1 : 0));
+            }
+
+            bool aComp = a.IsCompound;
+            bool lComp = l.IsCompound;
+            int aRef0 = a.Reference0;
+            int lRef0 = l.Reference0;
+
+            if (!aComp && !lComp)
+            {
+                return 1 + (2 * ((aRef0 >= 4) == (lRef0 >= 4) ? 1 : 0));
+            }
+
+            if (!aComp || !lComp)
+            {
+                Av1ReferenceNeighbour edge = aComp ? a : l;
+                if (!HasUniCompound(edge))
+                {
+                    return 1;
+                }
+
+                return 3 + ((aRef0 >= 4) == (lRef0 >= 4) ? 1 : 0);
+            }
+
+            bool aUni = HasUniCompound(a);
+            bool lUni = HasUniCompound(l);
+            if (!aUni && !lUni)
+            {
+                return 0;
+            }
+
+            if (!aUni || !lUni)
+            {
+                return 2;
+            }
+
+            return 3 + ((aRef0 == 4) == (lRef0 == 4) ? 1 : 0);
+        }
+
+        if (haveTop || haveLeft)
+        {
+            Av1ReferenceNeighbour edge = haveLeft ? l : a;
+            if (edge.IsIntra || !edge.IsCompound)
+            {
+                return 2;
+            }
+
+            return 4 * (HasUniCompound(edge) ? 1 : 0);
+        }
+
+        return 2;
+    }
+
+    /// <summary>Computes the unidirectional-compound second-reference context
+    /// (dav1d <c>av1_get_uni_p1_ctx</c>).</summary>
+    /// <param name="a">The above neighbour.</param>
+    /// <param name="l">The left neighbour.</param>
+    /// <param name="haveTop">Whether an above neighbour is available.</param>
+    /// <param name="haveLeft">Whether a left neighbour is available.</param>
+    /// <returns>The context.</returns>
+    public static int ComputeUniP1Context(in Av1ReferenceNeighbour a, in Av1ReferenceNeighbour l, bool haveTop, bool haveLeft)
+    {
+        Span<int> cnt = stackalloc int[3];
+        Accumulate(a, haveTop, cnt);
+        Accumulate(l, haveLeft, cnt);
+        cnt[1] += cnt[2];
+        return cnt[0] == cnt[1] ? 1 : cnt[0] < cnt[1] ? 0 : 2;
+
+        static void Accumulate(in Av1ReferenceNeighbour n, bool have, Span<int> cnt)
+        {
+            if (have && !n.IsIntra)
+            {
+                if ((uint)(n.Reference0 - 1) < 3u)
+                {
+                    cnt[n.Reference0 - 1]++;
+                }
+
+                if (n.IsCompound && (uint)(n.Reference1 - 1) < 3u)
+                {
+                    cnt[n.Reference1 - 1]++;
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Computes the interpolation-filter context for one filter direction, a port of
     /// <c>get_filter_ctx</c>.

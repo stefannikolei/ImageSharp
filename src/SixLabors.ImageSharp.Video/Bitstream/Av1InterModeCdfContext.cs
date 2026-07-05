@@ -38,6 +38,21 @@ internal sealed class Av1InterModeCdfContext
     /// <summary>Gets the single-reference selection CDFs, indexed by bit position then context.</summary>
     public ushort[][][] SingleReference { get; private set; } = default!;
 
+    /// <summary>Gets the compound reference-direction CDFs.</summary>
+    public ushort[][] CompoundDirection { get; private set; } = default!;
+
+    /// <summary>Gets the compound forward-reference CDFs.</summary>
+    public ushort[][][] CompoundForwardReference { get; private set; } = default!;
+
+    /// <summary>Gets the compound backward-reference CDFs.</summary>
+    public ushort[][][] CompoundBackwardReference { get; private set; } = default!;
+
+    /// <summary>Gets the unidirectional compound reference CDFs.</summary>
+    public ushort[][][] CompoundUniReference { get; private set; } = default!;
+
+    /// <summary>Gets the compound inter-mode CDFs.</summary>
+    public ushort[][] CompoundInterMode { get; private set; } = default!;
+
     /// <summary>Creates an inter-mode CDF context initialized from the default tables.</summary>
     /// <returns>A fresh, mutable inter-mode CDF context.</returns>
     public static Av1InterModeCdfContext CreateDefault() => new()
@@ -50,6 +65,11 @@ internal sealed class Av1InterModeCdfContext
         DrlBit = Clone(Av1DefaultInterModeCdf.DrlBit),
         Compound = Clone(Av1DefaultInterModeCdf.Compound),
         SingleReference = Clone(Av1DefaultInterModeCdf.SingleReference),
+        CompoundDirection = Clone(Av1DefaultInterModeCdf.CompoundDirection),
+        CompoundForwardReference = Clone(Av1DefaultInterModeCdf.CompoundForwardReference),
+        CompoundBackwardReference = Clone(Av1DefaultInterModeCdf.CompoundBackwardReference),
+        CompoundUniReference = Clone(Av1DefaultInterModeCdf.CompoundUniReference),
+        CompoundInterMode = Clone(Av1DefaultInterModeCdf.CompoundInterMode),
     };
 
     /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
@@ -64,6 +84,11 @@ internal sealed class Av1InterModeCdfContext
         DrlBit = Clone(this.DrlBit),
         Compound = Clone(this.Compound),
         SingleReference = Clone(this.SingleReference),
+        CompoundDirection = Clone(this.CompoundDirection),
+        CompoundForwardReference = Clone(this.CompoundForwardReference),
+        CompoundBackwardReference = Clone(this.CompoundBackwardReference),
+        CompoundUniReference = Clone(this.CompoundUniReference),
+        CompoundInterMode = Clone(this.CompoundInterMode),
     };
 
     private static ushort[][] Clone(ushort[][] group)

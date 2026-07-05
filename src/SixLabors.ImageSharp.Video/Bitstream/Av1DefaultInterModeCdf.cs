@@ -85,4 +85,77 @@ internal static class Av1DefaultInterModeCdf
         [[31864, 0, 0], [21754, 0, 0], [5893, 0, 0]],
         [[31324, 0, 0], [17681, 0, 0], [2464, 0, 0]],
     ];
+
+    /// <summary>The compound reference-direction (bidirectional vs unidirectional) CDFs.</summary>
+    public static readonly ushort[][] CompoundDirection = [
+        [31570, 0, 0],
+        [30698, 0, 0],
+        [23602, 0, 0],
+        [25269, 0, 0],
+        [10293, 0, 0],
+    ];
+
+    /// <summary>The compound forward-reference CDFs (three trees, three contexts each).</summary>
+    public static readonly ushort[][][] CompoundForwardReference = [
+        [
+            [27822, 0, 0],
+            [12877, 0, 0],
+            [2037, 0, 0],
+        ],
+        [
+            [23300, 0, 0],
+            [10327, 0, 0],
+            [1709, 0, 0],
+        ],
+        [
+            [31265, 0, 0],
+            [17608, 0, 0],
+            [5224, 0, 0],
+        ],
+    ];
+
+    /// <summary>The compound backward-reference CDFs (two trees, three contexts each).</summary>
+    public static readonly ushort[][][] CompoundBackwardReference = [
+        [
+            [30533, 0, 0],
+            [15586, 0, 0],
+            [2162, 0, 0],
+        ],
+        [
+            [31345, 0, 0],
+            [17593, 0, 0],
+            [2279, 0, 0],
+        ],
+    ];
+
+    /// <summary>The unidirectional compound reference CDFs (three trees, three contexts each).</summary>
+    public static readonly ushort[][][] CompoundUniReference = [
+        [
+            [27484, 0, 0],
+            [9616, 0, 0],
+            [994, 0, 0],
+        ],
+        [
+            [28903, 0, 0],
+            [18595, 0, 0],
+            [7648, 0, 0],
+        ],
+        [
+            [29640, 0, 0],
+            [17498, 0, 0],
+            [6058, 0, 0],
+        ],
+    ];
+
+    /// <summary>The compound inter-mode CDFs (eight symbols), indexed by the mode context.</summary>
+    public static readonly ushort[][] CompoundInterMode = [
+        [25008, 18945, 16960, 15127, 13612, 12102, 5877, 0, 0],
+        [22038, 13316, 11623, 10019, 8729, 7637, 4044, 0, 0],
+        [22104, 12547, 11180, 9862, 8473, 7381, 4332, 0, 0],
+        [19470, 15784, 12297, 8586, 7701, 7032, 6346, 0, 0],
+        [13864, 9443, 7526, 5336, 4870, 4510, 2010, 0, 0],
+        [22043, 15314, 12644, 9948, 8573, 7600, 6722, 0, 0],
+        [15643, 8495, 6954, 5276, 4554, 4064, 2176, 0, 0],
+        [19722, 9554, 8263, 6826, 5333, 4326, 3438, 0, 0],
+    ];
 }
