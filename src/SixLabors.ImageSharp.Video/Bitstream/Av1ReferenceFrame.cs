@@ -25,8 +25,9 @@ internal sealed class Av1ReferenceFrame
     /// intra frames, which save none).</param>
     /// <param name="referenceOrderHints">The order hints of the frame's own seven references, by name
     /// (all zero for intra frames).</param>
-    public Av1ReferenceFrame(int orderHint, Av1Plane luma, Av1Plane? chromaU, Av1Plane? chromaV, Av1FrameCdfSet? cdfs = null, ObuPrimaryReferenceState? headerState = null, Av1TemporalMvs? temporalMvs = null, int[]? referenceOrderHints = null)
+    public Av1ReferenceFrame(int orderHint, Av1Plane luma, Av1Plane? chromaU, Av1Plane? chromaV, Av1FrameCdfSet? cdfs = null, ObuPrimaryReferenceState? headerState = null, Av1TemporalMvs? temporalMvs = null, int[]? referenceOrderHints = null, bool isKeyFrame = false)
     {
+        this.IsKeyFrame = isKeyFrame;
         this.OrderHint = orderHint;
         this.Luma = luma;
         this.ChromaU = chromaU;
@@ -36,6 +37,10 @@ internal sealed class Av1ReferenceFrame
         this.TemporalMvs = temporalMvs;
         this.ReferenceOrderHints = referenceOrderHints ?? new int[7];
     }
+
+    /// <summary>Gets a value indicating whether the frame is a key frame (re-showing it would
+    /// require a decoder-state reload).</summary>
+    public bool IsKeyFrame { get; }
 
     /// <summary>Gets the frame's order hint.</summary>
     public int OrderHint { get; }

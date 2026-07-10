@@ -92,6 +92,7 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
             int displayed = 0;
             while (ObuReader.TryRead(temporalUnit, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
             {
+                Av1DecoderCore.EnsureBaseLayer(header);
                 if (header.Type == ObuType.SequenceHeader)
                 {
                     this.sequenceHeader = ObuSequenceHeader.Parse(payload);
@@ -185,6 +186,11 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
             {
                 Av1ReferenceFrame shown = this.referenceStore[slot]
                     ?? throw new InvalidDataException($"show_existing_frame references the empty slot {slot}.");
+                if (shown.IsKeyFrame)
+                {
+                    throw new NotSupportedException("show_existing_frame of a key frame (forward key frames) is not supported yet.");
+                }
+
                 outputs.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
             }
         }

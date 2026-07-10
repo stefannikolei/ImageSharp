@@ -238,6 +238,26 @@ internal class Av1TileDecoder
 
         this.tileBounds = new Av1TileBounds(0, miCols, 0, miRows);
 
+        if (frameHeader.UsingQMatrix)
+        {
+            throw new NotSupportedException("Quantizer matrices are not supported yet.");
+        }
+
+        if (frameHeader.CodedLossless)
+        {
+            throw new NotSupportedException("Lossless coding is not supported yet.");
+        }
+
+        if (frameHeader.AllowScreenContentTools)
+        {
+            throw new NotSupportedException("Screen-content tools (palette) are not supported yet.");
+        }
+
+        if (frameHeader.AllowIntraBlockCopy)
+        {
+            throw new NotSupportedException("Intra block copy is not supported yet.");
+        }
+
         this.segmentation = frameHeader.SegmentationParams ?? ObuSegmentationParams.Disabled;
         this.segmentMap = new byte[miCols * miRows];
         if (this.segmentation.Enabled)
@@ -437,7 +457,7 @@ internal class Av1TileDecoder
     // Applies loop restoration (specification section 7.17) to every plane that signalled it. The frame is
     // processed in 64-row (56 for the first) stripes per superblock row; for each stripe the applicable
     // restoration unit selects the filter. Interior rows read the CDEF output, stripe-boundary rows the
-    // deblocked image (dav1d's lr_lpf_line split). Only the self-guided radius-2 filter is implemented.
+    // deblocked image (dav1d's lr_lpf_line split).
     private void ApplyLoopRestoration()
     {
         ObuFrameHeader.LoopRestoration lr = this.frameHeader.LoopRestorationParameters;

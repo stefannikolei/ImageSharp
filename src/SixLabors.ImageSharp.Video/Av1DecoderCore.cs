@@ -66,6 +66,7 @@ internal static class Av1DecoderCore
         int offset = 0;
         while (ObuReader.TryRead(frame, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
         {
+            EnsureBaseLayer(header);
             if (header.Type == ObuType.SequenceHeader)
             {
                 sequenceHeader = ObuSequenceHeader.Parse(payload);
@@ -122,6 +123,7 @@ internal static class Av1DecoderCore
             int offset = 0;
             while (ObuReader.TryRead(frame, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
             {
+                EnsureBaseLayer(header);
                 if (header.Type == ObuType.SequenceHeader)
                 {
                     sequenceHeader = ObuSequenceHeader.Parse(payload);
@@ -225,9 +227,21 @@ internal static class Av1DecoderCore
             frameEndCdfs,
             new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas, frameHeader.GlobalMotionParams, frameHeader.SegmentationParams),
             temporalMvs,
-            referenceOrderHints);
+            referenceOrderHints,
+            frameHeader.FrameType == Av1FrameType.Key);
         referenceStore.Update(decoded, frameHeader.RefreshFrameFlags);
         return tileDecoder;
+    }
+
+    // Multi-layer (scalable) streams carry OBUs for enhancement layers; decoding them into the same
+    // reference store would corrupt the base layer, so they are rejected until operating points are
+    // supported.
+    internal static void EnsureBaseLayer(in ObuHeader header)
+    {
+        if (header.HasExtension && (header.TemporalId != 0 || header.SpatialId != 0))
+        {
+            throw new NotSupportedException("Scalable (multi-layer) streams are not supported yet.");
+        }
     }
 
     // Copies each tile's compressed bytes out of the tile group (the tile decoder consumes them in
@@ -272,6 +286,7 @@ internal static class Av1DecoderCore
             int offset = 0;
             while (ObuReader.TryRead(temporalUnit, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
             {
+                EnsureBaseLayer(header);
                 if (header.Type == ObuType.SequenceHeader)
                 {
                     sequenceHeader = ObuSequenceHeader.Parse(payload);
@@ -295,6 +310,11 @@ internal static class Av1DecoderCore
                 {
                     Av1ReferenceFrame shown = referenceStore[slot]
                         ?? throw new InvalidDataException($"show_existing_frame references the empty slot {slot}.");
+                    if (shown.IsKeyFrame)
+                    {
+                        throw new NotSupportedException("show_existing_frame of a key frame (forward key frames) is not supported yet.");
+                    }
+
                     frames.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
                 }
             }

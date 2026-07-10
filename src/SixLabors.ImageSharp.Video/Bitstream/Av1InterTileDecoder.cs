@@ -15,9 +15,10 @@ namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 /// supports both the uniform transform mode and the <c>TX_MODE_SELECT</c> variable-transform tree.
 /// Intra blocks inside the inter frame read their luma mode from the inter-frame y_mode CDF and reuse
 /// the shared intra body. Frames may inherit their CDF state via <c>primary_ref_frame</c> and predict
-/// motion vectors temporally via <c>use_ref_frame_mvs</c>. The implemented subset is single-reference
-/// prediction with translation-only motion; compound prediction and warped/overlapped motion raise
-/// <see cref="NotSupportedException"/>.
+/// motion vectors temporally via <c>use_ref_frame_mvs</c>. Single-reference prediction covers
+/// translation, global and local warp, overlapped and inter-intra blocks; compound prediction covers
+/// the average, distance-agnostic masked (segmented and wedge) blends and skip mode. Only
+/// distance-weighted compound remains guarded behind its sequence flag.
 /// </summary>
 internal sealed class Av1InterTileDecoder : Av1TileDecoder
 {

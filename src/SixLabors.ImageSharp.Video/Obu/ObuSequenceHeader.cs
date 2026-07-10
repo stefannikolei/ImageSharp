@@ -258,6 +258,21 @@ internal readonly struct ObuSequenceHeader
         bool enableRestoration = reader.ReadBoolean();
 
         ColorConfig color = ReadColorConfig(ref reader, seqProfile);
+        if (color.BitDepth != 8)
+        {
+            throw new NotSupportedException($"{color.BitDepth}-bit streams are not supported yet (only 8-bit).");
+        }
+
+        if (color.MonoChrome)
+        {
+            throw new NotSupportedException("Monochrome streams are not supported yet.");
+        }
+
+        if (color.SubsamplingX != 1 || color.SubsamplingY != 1)
+        {
+            throw new NotSupportedException("Only 4:2:0 chroma subsampling is supported yet.");
+        }
+
 
         bool filmGrainParamsPresent = reader.ReadBoolean();
 
