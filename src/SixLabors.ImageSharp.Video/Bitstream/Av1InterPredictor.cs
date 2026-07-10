@@ -34,10 +34,10 @@ internal static class Av1InterPredictor
     /// <param name="subsamplingX">The horizontal chroma subsampling (0 for luma).</param>
     /// <param name="subsamplingY">The vertical chroma subsampling (0 for luma).</param>
     public static void Predict(
-        byte[] destination,
+        ushort[] destination,
         int destinationOffset,
         int destinationStride,
-        byte[] reference,
+        ushort[] reference,
         int referenceWidth,
         int referenceHeight,
         int referenceStride,
@@ -89,7 +89,7 @@ internal static class Av1InterPredictor
     /// <param name="subsamplingY">The vertical chroma subsampling (0 for luma).</param>
     public static void Prepare(
         short[] intermediate,
-        byte[] reference,
+        ushort[] reference,
         int referenceWidth,
         int referenceHeight,
         int referenceStride,

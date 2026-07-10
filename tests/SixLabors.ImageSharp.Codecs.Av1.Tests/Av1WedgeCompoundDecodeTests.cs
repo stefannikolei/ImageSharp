@@ -65,10 +65,5 @@ public class Av1WedgeCompoundDecodeTests
     }
 
     private static void AppendCropped(IncrementalHash hash, Av1Plane plane)
-    {
-        for (int y = 0; y < plane.CropHeight; y++)
-        {
-            hash.AppendData(plane.Samples, y * plane.Width, plane.CropWidth);
-        }
-    }
+    => hash.AppendData(Av1TestData.CroppedBytes(plane));
 }

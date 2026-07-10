@@ -98,14 +98,5 @@ public class Av1SegmentationDeltaQDecodeTests
         }
     }
 
-    private static byte[] Crop(Av1Plane plane)
-    {
-        byte[] result = new byte[plane.CropWidth * plane.CropHeight];
-        for (int y = 0; y < plane.CropHeight; y++)
-        {
-            plane.Samples.AsSpan(y * plane.Width, plane.CropWidth).CopyTo(result.AsSpan(y * plane.CropWidth));
-        }
-
-        return result;
-    }
+    private static byte[] Crop(Av1Plane plane) => Av1TestData.CroppedBytes(plane);
 }

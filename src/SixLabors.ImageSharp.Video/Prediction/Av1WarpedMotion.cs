@@ -406,7 +406,7 @@ internal static class Av1WarpedMotion
         int dstX0 = (bx4 * 4) >> subsamplingX;
         int dstY0 = (by4 * 4) >> subsamplingY;
 
-        Span<byte> tile = stackalloc byte[15 * 15];
+        Span<ushort> tile = stackalloc ushort[15 * 15];
         for (int y = 0; y < height4 * vMul; y += 8)
         {
             long srcY = (by4 * 4) + ((y + 4) << subsamplingY);
@@ -465,7 +465,7 @@ internal static class Av1WarpedMotion
         int width = reference.CropWidth;
         int height = reference.CropHeight;
 
-        Span<byte> tile = stackalloc byte[15 * 15];
+        Span<ushort> tile = stackalloc ushort[15 * 15];
         for (int y = 0; y < height4 * vMul; y += 8)
         {
             long srcY = (by4 * 4) + ((y + 4) << subsamplingY);
@@ -498,7 +498,7 @@ internal static class Av1WarpedMotion
         }
     }
 
-    private static void Warp8x8To16(short[] destination, int destinationStride, int dstX, int dstY, ReadOnlySpan<byte> src, int mx, int my, ReadOnlySpan<short> shear)
+    private static void Warp8x8To16(short[] destination, int destinationStride, int dstX, int dstY, ReadOnlySpan<ushort> src, int mx, int my, ReadOnlySpan<short> shear)
     {
         Span<int> mid = stackalloc int[15 * 8];
         for (int y = 0; y < 15; y++, mx += shear[1])
@@ -536,7 +536,7 @@ internal static class Av1WarpedMotion
         }
     }
 
-    private static void Warp8x8(Bitstream.Av1Plane destination, int dstX, int dstY, ReadOnlySpan<byte> src, int mx, int my, ReadOnlySpan<short> shear)
+    private static void Warp8x8(Bitstream.Av1Plane destination, int dstX, int dstY, ReadOnlySpan<ushort> src, int mx, int my, ReadOnlySpan<short> shear)
     {
         Span<int> mid = stackalloc int[15 * 8];
         for (int y = 0; y < 15; y++, mx += shear[1])
@@ -569,7 +569,7 @@ internal static class Av1WarpedMotion
                     sum += filter[t] * mid[((y + t) * 8) + x];
                 }
 
-                destination.Samples[dstBase + x] = (byte)Math.Clamp(sum >> 11, 0, 255);
+                destination.Samples[dstBase + x] = (ushort)Math.Clamp(sum >> 11, 0, 255);
             }
         }
     }

@@ -55,7 +55,7 @@ internal static class Av1SelfGuidedFilter
     /// <param name="w0">The radius-2 projection weight.</param>
     /// <param name="w1">The radius-1 projection weight.</param>
     public static void Stripe(
-        byte[] dst, byte[] cdef, byte[] deblock, int planeWidth, int stride,
+        ushort[] dst, ushort[] cdef, ushort[] deblock, int planeWidth, int stride,
         int x0, int unitWidth, int stripeTop, int stripeEnd,
         bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int s0, int s1, int w0, int w1)
     {
@@ -65,7 +65,7 @@ internal static class Av1SelfGuidedFilter
 
         int SrcPix(int ri, int x)
         {
-            byte[] buf;
+            ushort[] buf;
             int row;
             if (ri >= stripeTop && ri < stripeEnd)
             {
@@ -304,5 +304,5 @@ internal static class Av1SelfGuidedFilter
         b = x;
     }
 
-    private static byte Clip255(int v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
+    private static ushort Clip255(int v) => (ushort)(v < 0 ? 0 : v > 255 ? 255 : v);
 }

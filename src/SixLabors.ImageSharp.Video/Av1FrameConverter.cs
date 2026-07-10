@@ -65,7 +65,7 @@ internal static class Av1FrameConverter
     }
 
     // BT.601 limited-range YUV to RGB conversion (specification's default matrix for 8-bit content).
-    private static void YuvToRgb(byte yy, byte uu, byte vv, ref Rgba32 rgba)
+    private static void YuvToRgb(ushort yy, ushort uu, ushort vv, ref Rgba32 rgba)
     {
         float y = 1.164f * (yy - 16);
         float u = uu - 128;

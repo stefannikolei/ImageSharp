@@ -26,7 +26,7 @@ public class Av1MultiFrameDecodeTests
         System.Collections.Generic.List<Av1TileDecoder> frames = Av1DecoderCore.DecodeAllFrames(stream);
 
         Assert.Equal(2, frames.Count);
-        Assert.Equal(Convert.FromBase64String(Frame1LumaBase64), frames[1].Luma.Samples);
+        Assert.Equal(Av1TestData.Widen(Convert.FromBase64String(Frame1LumaBase64)), frames[1].Luma.Samples);
     }
 
     [Fact]

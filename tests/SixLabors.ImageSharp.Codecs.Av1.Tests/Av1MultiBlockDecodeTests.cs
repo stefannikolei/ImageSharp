@@ -37,7 +37,7 @@ public class Av1MultiBlockDecodeTests
         Assert.All(decoder.ChromaU.Samples, s => Assert.Equal(128, s));
         Assert.All(decoder.ChromaV.Samples, s => Assert.Equal(128, s));
 
-        byte[] reference = Convert.FromBase64String(Dav1dLumaBase64);
+        ushort[] reference = Av1TestData.Widen(Convert.FromBase64String(Dav1dLumaBase64));
         Assert.True(decoder.Luma.Samples.AsSpan().SequenceEqual(reference), "Reconstructed luma differs from the dav1d reference.");
     }
 

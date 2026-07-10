@@ -45,9 +45,9 @@ public class Av1ChromaFromLumaTests
         "dQf9/wAA/4txR////x1vHf8AACUAtwCV//////8L+QA=")]
     public void ComputeAcAndPredict_MatchDav1d(int cw, int ch, int sh, int sv, int dc, int alpha, string lumaBase64, string acBase64, string predBase64)
     {
-        byte[] luma = Convert.FromBase64String(lumaBase64);
+        ushort[] luma = Av1TestData.Widen(Convert.FromBase64String(lumaBase64));
         byte[] acBytes = Convert.FromBase64String(acBase64);
-        byte[] expectedPred = Convert.FromBase64String(predBase64);
+        ushort[] expectedPred = Av1TestData.Widen(Convert.FromBase64String(predBase64));
 
         int n = cw * ch;
         int[] expectedAc = new int[n];
@@ -61,7 +61,7 @@ public class Av1ChromaFromLumaTests
         Av1ChromaFromLuma.ComputeAc(luma, 0, lw, cw, ch, sh, sv, ac);
         Assert.Equal(expectedAc, ac);
 
-        byte[] pred = new byte[n];
+        ushort[] pred = new ushort[n];
         Av1ChromaFromLuma.Predict(dc, alpha, ac, cw, ch, pred);
         Assert.Equal(expectedPred, pred);
     }

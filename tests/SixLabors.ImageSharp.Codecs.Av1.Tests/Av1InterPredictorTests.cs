@@ -13,14 +13,14 @@ namespace SixLabors.ImageSharp.Codecs.Av1.Tests;
 /// </summary>
 public class Av1InterPredictorTests
 {
-    private static byte[] Gradient(int width, int height)
+    private static ushort[] Gradient(int width, int height)
     {
-        byte[] plane = new byte[width * height];
+        ushort[] plane = new ushort[width * height];
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
-                plane[(y * width) + x] = (byte)((x * 3) + (y * 7));
+                plane[(y * width) + x] = (ushort)((x * 3) + (y * 7));
             }
         }
 
@@ -32,8 +32,8 @@ public class Av1InterPredictorTests
     {
         const int rw = 32;
         const int rh = 32;
-        byte[] reference = Gradient(rw, rh);
-        byte[] destination = new byte[8 * 8];
+        ushort[] reference = Gradient(rw, rh);
+        ushort[] destination = new ushort[8 * 8];
 
         // bx4=1,by4=1 -> pixel (4,4); mv (8,16) = +1 row, +2 cols, no sub-pixel.
         Av1InterPredictor.Predict(
@@ -56,10 +56,10 @@ public class Av1InterPredictorTests
     {
         const int rw = 32;
         const int rh = 32;
-        byte[] reference = Gradient(rw, rh);
+        ushort[] reference = Gradient(rw, rh);
 
         Av1MotionVector mv = new(11, 22); // y: int 1 frac 3, x: int 2 frac 6
-        byte[] actual = new byte[16 * 16];
+        ushort[] actual = new ushort[16 * 16];
         Av1InterPredictor.Predict(
             actual, 0, 16, reference, rw, rh, rw,
             bx4: 2, by4: 2, blockWidth4: 4, blockHeight4: 4,
@@ -68,7 +68,7 @@ public class Av1InterPredictorTests
         // Hand-derived coordinates: dx = 2*4 + (22>>3) = 8 + 2 = 10; dy = 2*4 + (11>>3) = 8 + 1 = 9.
         // mx = (22 & 7) << 1 = 6 << 1 = 12; my = (11 & 7) << 1 = 3 << 1 = 6.
         // filterType = filter1 | (filter0 << 2) = 2 | (1 << 2) = 6.
-        byte[] expected = new byte[16 * 16];
+        ushort[] expected = new ushort[16 * 16];
         Av1Convolve.PredictBlock(expected, 0, 16, reference, rw, rh, rw, dx: 10, dy: 9, w: 16, h: 16, mx: 12, my: 6, filterType: 6);
 
         Assert.Equal(expected, actual);
@@ -79,10 +79,10 @@ public class Av1InterPredictorTests
     {
         const int rw = 16;
         const int rh = 16;
-        byte[] reference = Gradient(rw, rh);
+        ushort[] reference = Gradient(rw, rh);
 
         Av1MotionVector mv = new(20, 36);
-        byte[] actual = new byte[8 * 8];
+        ushort[] actual = new ushort[8 * 8];
         Av1InterPredictor.Predict(
             actual, 0, 8, reference, rw, rh, rw,
             bx4: 2, by4: 2, blockWidth4: 4, blockHeight4: 4,
@@ -90,7 +90,7 @@ public class Av1InterPredictorTests
 
         // Chroma 4:2:0: h_mul=v_mul=2; dx = 2*2 + (36>>4) = 4 + 2 = 6; dy = 2*2 + (20>>4) = 4 + 1 = 5.
         // mx = (36 & 15) << 0 = 4; my = (20 & 15) << 0 = 4; width=height=4*2=8.
-        byte[] expected = new byte[8 * 8];
+        ushort[] expected = new ushort[8 * 8];
         Av1Convolve.PredictBlock(expected, 0, 8, reference, rw, rh, rw, dx: 6, dy: 5, w: 8, h: 8, mx: 4, my: 4, filterType: 0);
 
         Assert.Equal(expected, actual);
@@ -101,11 +101,11 @@ public class Av1InterPredictorTests
     {
         const int rw = 32;
         const int rh = 32;
-        byte[] reference0 = Gradient(rw, rh);
-        byte[] reference1 = new byte[rw * rh];
+        ushort[] reference0 = Gradient(rw, rh);
+        ushort[] reference1 = new ushort[rw * rh];
         for (int i = 0; i < reference1.Length; i++)
         {
-            reference1[i] = (byte)(255 - reference0[i]);
+            reference1[i] = (ushort)(255 - reference0[i]);
         }
 
         Av1MotionVector mv0 = new(11, 22);
@@ -116,7 +116,7 @@ public class Av1InterPredictorTests
         Av1InterPredictor.Prepare(tmp0, reference0, rw, rh, rw, 2, 2, 4, 4, mv0, 1, 2, 0, 0);
         Av1InterPredictor.Prepare(tmp1, reference1, rw, rh, rw, 2, 2, 4, 4, mv1, 0, 0, 0, 0);
 
-        byte[] actual = new byte[16 * 16];
+        ushort[] actual = new ushort[16 * 16];
         Av1Convolve.Average(actual, 0, 16, tmp0, tmp1, 16, 16);
 
         // Reference path: prep each reference directly, then average.
@@ -124,7 +124,7 @@ public class Av1InterPredictorTests
         short[] expected1 = new short[16 * 16];
         Av1Convolve.PrepBlock(expected0, reference0, rw, rh, rw, dx: 10, dy: 9, w: 16, h: 16, mx: 12, my: 6, filterType: 6);
         Av1Convolve.PrepBlock(expected1, reference1, rw, rh, rw, dx: 9, dy: 8, w: 16, h: 16, mx: 2, my: 10, filterType: 0);
-        byte[] expected = new byte[16 * 16];
+        ushort[] expected = new ushort[16 * 16];
         Av1Convolve.Average(expected, 0, 16, expected0, expected1, 16, 16);
 
         Assert.Equal(expected, actual);

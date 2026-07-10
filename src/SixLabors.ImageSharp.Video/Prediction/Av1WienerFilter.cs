@@ -36,7 +36,7 @@ internal static class Av1WienerFilter
     /// <param name="fh">The seven horizontal filter taps.</param>
     /// <param name="w">The row width.</param>
     /// <param name="edges">The available horizontal edges.</param>
-    public static void FilterHorizontal(Span<ushort> dst, ReadOnlySpan<byte> src, int srcOffset, ReadOnlySpan<byte> left, ReadOnlySpan<short> fh, int w, EdgeFlags edges)
+    public static void FilterHorizontal(Span<ushort> dst, ReadOnlySpan<ushort> src, int srcOffset, ReadOnlySpan<ushort> left, ReadOnlySpan<short> fh, int w, EdgeFlags edges)
     {
         const int bitdepth = 8;
         const int roundBitsH = 3;
@@ -82,7 +82,7 @@ internal static class Av1WienerFilter
     /// <param name="rows">The seven intermediate rows, top to bottom.</param>
     /// <param name="fv">The seven vertical filter taps.</param>
     /// <param name="w">The row width.</param>
-    public static void FilterVertical(Span<byte> dst, int dstOffset, ushort[][] rows, ReadOnlySpan<short> fv, int w)
+    public static void FilterVertical(Span<ushort> dst, int dstOffset, ushort[][] rows, ReadOnlySpan<short> fv, int w)
     {
         const int bitdepth = 8;
         const int roundBitsV = 11;
@@ -97,7 +97,7 @@ internal static class Av1WienerFilter
                 sum += rows[k][i] * fv[k];
             }
 
-            dst[dstOffset + i] = (byte)Math.Clamp((sum + roundingOffV) >> roundBitsV, 0, 255);
+            dst[dstOffset + i] = (ushort)Math.Clamp((sum + roundingOffV) >> roundBitsV, 0, 255);
         }
     }
 
@@ -121,7 +121,7 @@ internal static class Av1WienerFilter
     /// <param name="filterH">The three coded horizontal taps.</param>
     /// <param name="filterV">The three coded vertical taps.</param>
     public static void Stripe(
-        byte[] dst, byte[] cdef, byte[] deblock, int stride,
+        ushort[] dst, ushort[] cdef, ushort[] deblock, int stride,
         int x0, int unitWidth, int stripeTop, int stripeEnd,
         bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int[] filterH, int[] filterV)
     {
@@ -137,7 +137,7 @@ internal static class Av1WienerFilter
         ushort[][] hor = new ushort[rowBottom - rowTop + 1][];
         for (int ri = rowTop; ri <= rowBottom; ri++)
         {
-            byte[] buf;
+            ushort[] buf;
             int row;
             if (ri >= stripeTop && ri < stripeEnd)
             {
@@ -171,7 +171,7 @@ internal static class Av1WienerFilter
                 }
             }
 
-            byte[] left = [];
+            ushort[] left = [];
             if (haveLeft)
             {
                 left = [0, buf[(row * stride) + x0 - 3], buf[(row * stride) + x0 - 2], buf[(row * stride) + x0 - 1]];

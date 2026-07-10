@@ -48,8 +48,8 @@ public class Av1LoopFilterTests
         "WVpZW1paWVlZWVpbWllZW1taWllZWllZW1paWVlaWltbWllbWltaW1pZWVpaWVtaWVpbW1pbWVpaW1paWllZWlpZWVlaW1pbW1taW1pZW1lZWllbW1paWVtaWltaW1tZWllZW1laW1tbWlpaWlpZWVpbWVpbW1pZW1tbWltaW1tbXF1bXFxbXFtcW1tdW1xbXFtcXFxdW1xbW1taW1tbXVtdXVtdW11cW1tcW1tdXFxdW1xbW1xcXFtbXFxbXVxbXFtbW1xcW11bW1xcW1xbXF1bXVxdXV1dW1xcW1xbXVtcXF1cXVxcXVtdXVxcXFxbXF1dW1tcXVtcXVtbXV1cXQ==")]
     public void FilterEdge_MatchesDav1d(int wd, int dir, int e, int i, int h, string inputBase64, string expectedBase64)
     {
-        byte[] plane = Convert.FromBase64String(inputBase64);
-        byte[] expected = Convert.FromBase64String(expectedBase64);
+        ushort[] plane = Av1TestData.Widen(Convert.FromBase64String(inputBase64));
+        ushort[] expected = Av1TestData.Widen(Convert.FromBase64String(expectedBase64));
 
         int strideA = dir == 0 ? 1 : 16;
         int strideB = dir == 0 ? 16 : 1;

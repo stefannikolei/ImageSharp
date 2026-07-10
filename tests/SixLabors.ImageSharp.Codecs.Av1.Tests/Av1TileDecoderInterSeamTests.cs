@@ -54,7 +54,7 @@ public class Av1TileDecoderInterSeamTests
         decoder.RunReconstruct(0, 0, levels, eob: 1);
 
         // The residual is added on top of the zero prediction, so every sample is uniform and positive.
-        byte first = decoder.Luma[0, 0];
+        ushort first = decoder.Luma[0, 0];
         Assert.True(first > 0, "Expected a positive DC residual on top of the zero prediction.");
         for (int y = 0; y < 4; y++)
         {
@@ -77,7 +77,7 @@ public class Av1TileDecoderInterSeamTests
             => this.Reconstruct(this.Luma, x, y, Av1TransformSize.Size4x4, Av1TransformType.DctDct, levels, eob, 0, 0, -1, 0);
 
         private protected override void Predict(
-            Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, byte[] prediction)
+            Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, ushort[] prediction)
             => Array.Fill(prediction, this.predictionFill);
     }
 }

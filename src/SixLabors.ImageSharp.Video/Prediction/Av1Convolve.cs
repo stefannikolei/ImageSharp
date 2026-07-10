@@ -138,11 +138,11 @@ internal static class Av1Convolve
     /// <param name="mx">The horizontal sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="my">The vertical sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="filterType">The combined 2D filter type.</param>
-    public static void PredictBlock(byte[] dst, int dstOffset, int dstStride, byte[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType)
+    public static void PredictBlock(ushort[] dst, int dstOffset, int dstStride, ushort[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType)
     {
         int bw = w + 7;
         int bh = h + 7;
-        byte[] buffer = new byte[bw * bh];
+        ushort[] buffer = new ushort[bw * bh];
         for (int r = 0; r < bh; r++)
         {
             int sy = Clamp(dy - 3 + r, 0, refHeight - 1) * refStride;
@@ -173,7 +173,7 @@ internal static class Av1Convolve
     /// <param name="mx">The horizontal sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="my">The vertical sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="filterType">The combined 2D filter type.</param>
-    public static void Predict(byte[] dst, int dstOffset, int dstStride, byte[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType)
+    public static void Predict(ushort[] dst, int dstOffset, int dstStride, ushort[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType)
     {
         const int intermediateBits = 4;
         int intermediateRound = 32 + ((1 << (6 - intermediateBits)) >> 1);
@@ -252,7 +252,7 @@ internal static class Av1Convolve
     /// <param name="mx">The horizontal sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="my">The vertical sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="filterType">The combined 2D filter type.</param>
-    public static void Prep(short[] tmp, byte[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType)
+    public static void Prep(short[] tmp, ushort[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType)
     {
         const int intermediateBits = 4;
         sbyte[]? fh = mx == 0 ? null : (w > 4 ? SubpelFilters[filterType & 3][mx - 1] : SubpelFilters[3 + (filterType & 1)][mx - 1]);
@@ -316,11 +316,11 @@ internal static class Av1Convolve
     }
 
     /// <summary>Gathers a bordered reference block (clamped edge extension) and runs <see cref="Prep"/>.</summary>
-    public static void PrepBlock(short[] tmp, byte[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType)
+    public static void PrepBlock(short[] tmp, ushort[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType)
     {
         int bw = w + 7;
         int bh = h + 7;
-        byte[] buffer = new byte[bw * bh];
+        ushort[] buffer = new ushort[bw * bh];
         for (int r = 0; r < bh; r++)
         {
             int sy = Clamp(dy - 3 + r, 0, refHeight - 1) * refStride;
@@ -335,7 +335,7 @@ internal static class Av1Convolve
     }
 
     /// <summary>Averages two compound predictions (dav1d <c>avg</c>).</summary>
-    public static void Average(byte[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h)
+    public static void Average(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h)
     {
         for (int r = 0; r < h; r++)
         {
@@ -347,7 +347,7 @@ internal static class Av1Convolve
     }
 
     /// <summary>Weighted-averages two compound predictions with a weight in [0, 16] (dav1d <c>w_avg</c>).</summary>
-    public static void WeightedAverage(byte[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h, int weight)
+    public static void WeightedAverage(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h, int weight)
     {
         for (int r = 0; r < h; r++)
         {
@@ -361,7 +361,7 @@ internal static class Av1Convolve
     }
 
     /// <summary>Mask-blends two compound predictions with a per-sample mask in [0, 64] (dav1d <c>mask</c>).</summary>
-    public static void Mask(byte[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, byte[] mask, int w, int h)
+    public static void Mask(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, byte[] mask, int w, int h)
     {
         for (int r = 0; r < h; r++)
         {
@@ -375,7 +375,7 @@ internal static class Av1Convolve
         }
     }
 
-    private static int Filter(byte[] src, int x, sbyte[] f, int stride)
+    private static int Filter(ushort[] src, int x, sbyte[] f, int stride)
         => (f[0] * src[x - (3 * stride)]) + (f[1] * src[x - (2 * stride)]) + (f[2] * src[x - stride]) +
            (f[3] * src[x]) + (f[4] * src[x + stride]) + (f[5] * src[x + (2 * stride)]) +
            (f[6] * src[x + (3 * stride)]) + (f[7] * src[x + (4 * stride)]);
@@ -385,5 +385,5 @@ internal static class Av1Convolve
            (f[3] * src[x]) + (f[4] * src[x + stride]) + (f[5] * src[x + (2 * stride)]) +
            (f[6] * src[x + (3 * stride)]) + (f[7] * src[x + (4 * stride)]);
 
-    private static byte ClipPixel(int v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
+    private static ushort ClipPixel(int v) => (ushort)(v < 0 ? 0 : v > 255 ? 255 : v);
 }

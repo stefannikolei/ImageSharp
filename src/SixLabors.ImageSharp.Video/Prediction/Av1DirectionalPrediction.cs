@@ -44,9 +44,9 @@ internal static class Av1DirectionalPrediction
     /// <param name="maxHeight">The pixels remaining to the frame's bottom edge (zone-2 filter limit).</param>
     /// <param name="destination">The prediction output buffer (width*height, row-major).</param>
     public static void Predict(
-        ReadOnlySpan<byte> above,
-        ReadOnlySpan<byte> left,
-        byte topLeft,
+        ReadOnlySpan<ushort> above,
+        ReadOnlySpan<ushort> left,
+        ushort topLeft,
         int width,
         int height,
         int mode,
@@ -57,7 +57,7 @@ internal static class Av1DirectionalPrediction
         bool haveLeft,
         int maxWidth,
         int maxHeight,
-        Span<byte> destination)
+        Span<ushort> destination)
     {
         int angle = ModeToAngle[mode - 1] + (3 * angleDelta);
 
@@ -79,14 +79,14 @@ internal static class Av1DirectionalPrediction
         // center+1.. and the left samples at center-1.. (mirroring dav1d's 'topleft_in' pointer).
         int extent = width + height;
         int center = extent;
-        byte[] tl = new byte[(2 * extent) + 1];
+        ushort[] tl = new ushort[(2 * extent) + 1];
 
         // Zone-2 corner smoothing (dav1d prepare_intra_edges): when the block is large enough
         // (transform tw + th >= 6, i.e. width + height >= 24) and edge filtering is enabled, the
         // top-left corner sample is convolved with the first above and left samples before prediction.
         if (angle > 90 && angle < 180 && enableEdgeFilter && width + height >= 24)
         {
-            topLeft = (byte)((((left[0] + above[0]) * 5) + (topLeft * 6) + 8) >> 4);
+            topLeft = (ushort)((((left[0] + above[0]) * 5) + (topLeft * 6) + 8) >> 4);
         }
 
         tl[center] = topLeft;
@@ -110,7 +110,7 @@ internal static class Av1DirectionalPrediction
         }
     }
 
-    private static void PredictVertical(ReadOnlySpan<byte> above, int width, int height, Span<byte> dst)
+    private static void PredictVertical(ReadOnlySpan<ushort> above, int width, int height, Span<ushort> dst)
     {
         for (int y = 0; y < height; y++)
         {
@@ -121,7 +121,7 @@ internal static class Av1DirectionalPrediction
         }
     }
 
-    private static void PredictHorizontal(ReadOnlySpan<byte> left, int width, int height, Span<byte> dst)
+    private static void PredictHorizontal(ReadOnlySpan<ushort> left, int width, int height, Span<ushort> dst)
     {
         for (int y = 0; y < height; y++)
         {
@@ -133,13 +133,13 @@ internal static class Av1DirectionalPrediction
     }
 
     // dav1d ipred_z1_c. Extrapolates from the above edge.
-    private static void PredictZone1(byte[] tl, int center, int width, int height, int angle, bool enableEdgeFilter, bool isSmooth, Span<byte> dst)
+    private static void PredictZone1(ushort[] tl, int center, int width, int height, int angle, bool enableEdgeFilter, bool isSmooth, Span<ushort> dst)
     {
         int wh = width + height;
         int minWh = Math.Min(width, height);
         int dx = Derivative[angle >> 1];
-        byte[] topOut = new byte[(2 * wh) + 16];
-        byte[] top;
+        ushort[] topOut = new ushort[(2 * wh) + 16];
+        ushort[] top;
         int topBase;
         int maxBaseX;
         int upsample = enableEdgeFilter ? GetUpsample(wh, 90 - angle, isSmooth) : 0;
@@ -180,11 +180,11 @@ internal static class Av1DirectionalPrediction
                 if (basePos < maxBaseX)
                 {
                     int v = (top[topBase + basePos] * (64 - frac)) + (top[topBase + basePos + 1] * frac);
-                    dst[(y * width) + x] = (byte)((v + 32) >> 6);
+                    dst[(y * width) + x] = (ushort)((v + 32) >> 6);
                 }
                 else
                 {
-                    byte fill = top[topBase + maxBaseX];
+                    ushort fill = top[topBase + maxBaseX];
                     for (; x < width; x++)
                     {
                         dst[(y * width) + x] = fill;
@@ -197,7 +197,7 @@ internal static class Av1DirectionalPrediction
     }
 
     // dav1d ipred_z2_c. Blends extrapolation from both the above and left edges.
-    private static void PredictZone2(byte[] tl, int center, int width, int height, int angle, bool enableEdgeFilter, bool isSmooth, int maxWidth, int maxHeight, Span<byte> dst)
+    private static void PredictZone2(ushort[] tl, int center, int width, int height, int angle, bool enableEdgeFilter, bool isSmooth, int maxWidth, int maxHeight, Span<ushort> dst)
     {
         int wh = width + height;
         int dy = Derivative[(angle - 90) >> 1];
@@ -208,7 +208,7 @@ internal static class Av1DirectionalPrediction
         // edge buffer with the corner at 'ec'; the left grows downward (up to 2*height with upsampling)
         // and the above upward (up to 2*width), mirroring dav1d's centred layout.
         int ec = 2 * height;
-        byte[] edge = new byte[(2 * wh) + 1];
+        ushort[] edge = new ushort[(2 * wh) + 1];
 
         if (upsampleAbove != 0)
         {
@@ -276,19 +276,19 @@ internal static class Av1DirectionalPrediction
                     v = (edge[leftBase - baseY] * (64 - fracY)) + (edge[leftBase - (baseY + 1)] * fracY);
                 }
 
-                dst[(y * width) + x] = (byte)((v + 32) >> 6);
+                dst[(y * width) + x] = (ushort)((v + 32) >> 6);
             }
         }
     }
 
     // dav1d ipred_z3_c. Extrapolates from the left edge (stored in decreasing order).
-    private static void PredictZone3(byte[] tl, int center, int width, int height, int angle, bool enableEdgeFilter, bool isSmooth, Span<byte> dst)
+    private static void PredictZone3(ushort[] tl, int center, int width, int height, int angle, bool enableEdgeFilter, bool isSmooth, Span<ushort> dst)
     {
         int wh = width + height;
         int minWh = Math.Min(width, height);
         int dy = Derivative[(270 - angle) >> 1];
-        byte[] leftOut = new byte[(2 * wh) + 16];
-        byte[] leftArr;
+        ushort[] leftOut = new ushort[(2 * wh) + 16];
+        ushort[] leftArr;
         int leftBase; // index of left[0]; subsequent samples are at decreasing indices.
         int maxBaseY;
         int upsample = enableEdgeFilter ? GetUpsample(wh, angle - 180, isSmooth) : 0;
@@ -329,11 +329,11 @@ internal static class Av1DirectionalPrediction
                 if (basePos < maxBaseY)
                 {
                     int v = (leftArr[leftBase - basePos] * (64 - frac)) + (leftArr[leftBase - (basePos + 1)] * frac);
-                    dst[(y * width) + x] = (byte)((v + 32) >> 6);
+                    dst[(y * width) + x] = (ushort)((v + 32) >> 6);
                 }
                 else
                 {
-                    byte fill = leftArr[leftBase - maxBaseY];
+                    ushort fill = leftArr[leftBase - maxBaseY];
                     for (; y < height; y++)
                     {
                         dst[(y * width) + x] = fill;
@@ -444,7 +444,7 @@ internal static class Av1DirectionalPrediction
     }
 
     // dav1d filter_edge: out[outBase + i] over [0, sz); samples in [limFrom, limTo) are convolved, the rest copied.
-    private static void FilterEdge(byte[] outp, int outBase, int sz, int limFrom, int limTo, byte[] inp, int inBase, int from, int to, int strength)
+    private static void FilterEdge(ushort[] outp, int outBase, int sz, int limFrom, int limTo, ushort[] inp, int inBase, int from, int to, int strength)
     {
         byte[] kernel = FilterKernel[strength - 1];
         int i = 0;
@@ -461,7 +461,7 @@ internal static class Av1DirectionalPrediction
                 s += inp[inBase + Clip(i - 2 + j, from, to - 1)] * kernel[j];
             }
 
-            outp[outBase + i] = (byte)((s + 8) >> 4);
+            outp[outBase + i] = (ushort)((s + 8) >> 4);
         }
 
         for (; i < sz; i++)
@@ -471,7 +471,7 @@ internal static class Av1DirectionalPrediction
     }
 
     // dav1d upsample_edge: writes 2*hsz-1 samples, doubling resolution with the [-1, 9, 9, -1] kernel.
-    private static void UpsampleEdge(byte[] outp, int outBase, int hsz, byte[] inp, int inBase, int from, int to)
+    private static void UpsampleEdge(ushort[] outp, int outBase, int hsz, ushort[] inp, int inBase, int from, int to)
     {
         ReadOnlySpan<int> kernel = [-1, 9, 9, -1];
         int i = 0;
@@ -484,7 +484,7 @@ internal static class Av1DirectionalPrediction
                 s += inp[inBase + Clip(i + j - 1, from, to - 1)] * kernel[j];
             }
 
-            outp[outBase + (i * 2) + 1] = (byte)Math.Clamp((s + 8) >> 4, 0, 255);
+            outp[outBase + (i * 2) + 1] = (ushort)Math.Clamp((s + 8) >> 4, 0, 255);
         }
 
         outp[outBase + (i * 2)] = inp[inBase + Clip(i, from, to - 1)];

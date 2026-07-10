@@ -24,7 +24,7 @@ internal static class Av1ChromaFromLuma
     /// <param name="subsamplingY">1 when the vertical dimension is subsampled.</param>
     /// <param name="ac">Receives the AC contribution (chromaWidth*chromaHeight, row-major).</param>
     public static void ComputeAc(
-        ReadOnlySpan<byte> luma,
+        ReadOnlySpan<ushort> luma,
         int lumaOffset,
         int lumaStride,
         int chromaWidth,
@@ -85,14 +85,14 @@ internal static class Av1ChromaFromLuma
     /// <param name="width">The chroma block width.</param>
     /// <param name="height">The chroma block height.</param>
     /// <param name="destination">The prediction output buffer (width*height, row-major).</param>
-    public static void Predict(int dc, int alpha, ReadOnlySpan<int> ac, int width, int height, Span<byte> destination)
+    public static void Predict(int dc, int alpha, ReadOnlySpan<int> ac, int width, int height, Span<ushort> destination)
     {
         for (int i = 0; i < width * height; i++)
         {
             int diff = alpha * ac[i];
             int magnitude = (Math.Abs(diff) + 32) >> 6;
             int signed = diff < 0 ? -magnitude : magnitude;
-            destination[i] = (byte)Math.Clamp(dc + signed, 0, 255);
+            destination[i] = (ushort)Math.Clamp(dc + signed, 0, 255);
         }
     }
 

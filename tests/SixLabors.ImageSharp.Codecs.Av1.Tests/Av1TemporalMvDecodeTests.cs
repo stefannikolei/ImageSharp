@@ -60,9 +60,9 @@ public class Av1TemporalMvDecodeTests
         Assert.Equal(8, frames.Count);
         for (int i = 0; i < frames.Count; i++)
         {
-            Assert.Equal(Convert.FromBase64String(Dav1dLumaBase64[i]), frames[i].Luma.Samples);
-            Assert.Equal(Convert.FromBase64String(Dav1dUBase64[i]), frames[i].ChromaU.Samples);
-            Assert.Equal(Convert.FromBase64String(Dav1dVBase64[i]), frames[i].ChromaV.Samples);
+            Assert.Equal(Av1TestData.Widen(Convert.FromBase64String(Dav1dLumaBase64[i])), frames[i].Luma.Samples);
+            Assert.Equal(Av1TestData.Widen(Convert.FromBase64String(Dav1dUBase64[i])), frames[i].ChromaU.Samples);
+            Assert.Equal(Av1TestData.Widen(Convert.FromBase64String(Dav1dVBase64[i])), frames[i].ChromaV.Samples);
         }
     }
 }

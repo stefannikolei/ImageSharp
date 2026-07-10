@@ -60,7 +60,7 @@ internal static class Av1Cdef
     /// <param name="stride">The row stride.</param>
     /// <param name="variance">Receives the direction variance.</param>
     /// <returns>The best direction in [0, 7].</returns>
-    public static int FindDirection(ReadOnlySpan<byte> img, int offset, int stride, out int variance)
+    public static int FindDirection(ReadOnlySpan<ushort> img, int offset, int stride, out int variance)
     {
         int[][] partialSumHv = [new int[8], new int[8]];
         int[][] partialSumDiag = [new int[15], new int[15]];
@@ -155,12 +155,12 @@ internal static class Av1Cdef
     /// <param name="h">The block height (4 or 8).</param>
     /// <param name="edges">The available edges.</param>
     public static void FilterBlock(
-        Span<byte> dst,
+        Span<ushort> dst,
         int dstOffset,
         int dstStride,
-        ReadOnlySpan<byte> left,
-        ReadOnlySpan<byte> top,
-        ReadOnlySpan<byte> bottom,
+        ReadOnlySpan<ushort> left,
+        ReadOnlySpan<ushort> top,
+        ReadOnlySpan<ushort> bottom,
         int priStrength,
         int secStrength,
         int dir,
@@ -233,7 +233,7 @@ internal static class Av1Cdef
                     value = Math.Clamp(value, min, max);
                 }
 
-                dst[dstOffset + (y * dstStride) + x] = (byte)value;
+                dst[dstOffset + (y * dstStride) + x] = (ushort)value;
             }
         }
     }
@@ -241,12 +241,12 @@ internal static class Av1Cdef
     private static void Padding(
         int[] tmp,
         int center,
-        ReadOnlySpan<byte> dst,
+        ReadOnlySpan<ushort> dst,
         int dstOffset,
         int dstStride,
-        ReadOnlySpan<byte> left,
-        ReadOnlySpan<byte> top,
-        ReadOnlySpan<byte> bottom,
+        ReadOnlySpan<ushort> left,
+        ReadOnlySpan<ushort> top,
+        ReadOnlySpan<ushort> bottom,
         int w,
         int h,
         EdgeFlags edges)

@@ -17,8 +17,8 @@ public class Av1WienerFilterTests
     [Fact]
     public void Horizontal_BothEdges_MatchesDav1d()
     {
-        byte[] left = [74, 235, 232, 89];
-        byte[] src = [201, 179, 221, 56, 62, 41, 233, 134, 24, 104, 171];
+        ushort[] left = [74, 235, 232, 89];
+        ushort[] src = [201, 179, 221, 56, 62, 41, 233, 134, 24, 104, 171];
         short[] fh = [3, -7, 15, 106, 15, -7, 3];
         ushort[] expected = [8143, 8058, 8191, 4187, 3764, 3726, 8191, 6410];
 
@@ -31,12 +31,12 @@ public class Av1WienerFilterTests
     [Fact]
     public void Horizontal_NoEdges_MatchesDav1d()
     {
-        byte[] src = [109, 113, 147, 248, 108, 168, 224, 36, 130, 98, 82];
+        ushort[] src = [109, 113, 147, 248, 108, 168, 224, 36, 130, 98, 82];
         short[] fh = [-5, 0, 0, 138, 0, 0, -5];
         ushort[] expected = [5449, 5670, 6763, 8191, 5546, 7520, 8191, 3155];
 
         ushort[] dst = new ushort[8];
-        Av1WienerFilter.FilterHorizontal(dst, src, 0, ReadOnlySpan<byte>.Empty, fh, 8, 0);
+        Av1WienerFilter.FilterHorizontal(dst, src, 0, ReadOnlySpan<ushort>.Empty, fh, 8, 0);
 
         Assert.Equal(expected, dst);
     }
@@ -55,9 +55,9 @@ public class Av1WienerFilterTests
             [1679, 1330, 3028, 396, 3263, 977, 3882, 1409],
         ];
         short[] fv = [1, -3, 12, 108, 12, -3, 1];
-        byte[] expected = [0, 38, 45, 0, 84, 93, 66, 0];
+        ushort[] expected = [0, 38, 45, 0, 84, 93, 66, 0];
 
-        byte[] dst = new byte[8];
+        ushort[] dst = new ushort[8];
         Av1WienerFilter.FilterVertical(dst, 0, rows, fv, 8);
 
         Assert.Equal(expected, dst);

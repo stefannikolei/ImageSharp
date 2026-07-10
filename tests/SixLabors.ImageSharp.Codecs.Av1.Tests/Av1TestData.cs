@@ -110,4 +110,40 @@ internal static class Av1TestData
         BinaryPrimitives.WriteUInt64LittleEndian(buffer, value);
         stream.Write(buffer);
     }
+
+    /// <summary>
+    /// Copies the visible (cropped) area of a plane into a byte buffer, row-major. The decoder stores
+    /// samples as 16-bit values; for the 8-bit clips validated here the narrowing is lossless.
+    /// </summary>
+    /// <param name="plane">The reconstructed plane.</param>
+    /// <returns>The cropped 8-bit samples.</returns>
+    public static byte[] CroppedBytes(SixLabors.ImageSharp.Formats.Av1.Bitstream.Av1Plane plane)
+    {
+        byte[] result = new byte[plane.CropWidth * plane.CropHeight];
+        for (int y = 0; y < plane.CropHeight; y++)
+        {
+            for (int x = 0; x < plane.CropWidth; x++)
+            {
+                result[(y * plane.CropWidth) + x] = (byte)plane.Samples[(y * plane.Width) + x];
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Widens 8-bit reference samples to the decoder's 16-bit sample type for comparisons.
+    /// </summary>
+    /// <param name="samples">The 8-bit samples.</param>
+    /// <returns>The same values as 16-bit samples.</returns>
+    public static ushort[] Widen(byte[] samples)
+    {
+        ushort[] result = new ushort[samples.Length];
+        for (int i = 0; i < samples.Length; i++)
+        {
+            result[i] = samples[i];
+        }
+
+        return result;
+    }
 }

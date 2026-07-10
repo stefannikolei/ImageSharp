@@ -62,7 +62,7 @@ internal class Av1TileDecoder
     // The pre-CDEF (deblocked) and pre-LR (CDEF) plane snapshots, captured by the post-filter pipeline so
     // loop restoration can read stripe-boundary rows from the deblocked image and interior rows from the
     // CDEF image, exactly as dav1d's lr_lpf_line / frame buffer split requires.
-    private readonly byte[]?[] deblockSnapshot = new byte[3][];
+    private readonly ushort[]?[] deblockSnapshot = new ushort[3][];
 
     private const byte LevelContextBaseline = 0x40; // cul_level 0, dc-sign "zero".
 
@@ -439,7 +439,7 @@ internal class Av1TileDecoder
                 if (lrParams.Types[p] != 0)
                 {
                     anyRestoration = true;
-                    this.deblockSnapshot[p] = (byte[])this.PlaneFor(p).Samples.Clone();
+                    this.deblockSnapshot[p] = (ushort[])this.PlaneFor(p).Samples.Clone();
                 }
             }
         }
@@ -473,9 +473,9 @@ internal class Av1TileDecoder
             }
 
             Av1Plane plane = this.PlaneFor(p);
-            byte[] dst = plane.Samples;
-            byte[] cdef = (byte[])dst.Clone();
-            byte[] deblock = this.deblockSnapshot[p]!;
+            ushort[] dst = plane.Samples;
+            ushort[] cdef = (ushort[])dst.Clone();
+            ushort[] deblock = this.deblockSnapshot[p]!;
             int width = plane.CropWidth;
             int height = plane.CropHeight;
             int stride = plane.Width;
@@ -520,7 +520,7 @@ internal class Av1TileDecoder
     }
 
     // Filters every restoration unit column intersecting one stripe.
-    private void RestoreStripeColumns(int plane, byte[] dst, byte[] cdef, byte[] deblock, int width, int stride, int unitSize, int maxUnit, int alignedY, int stripeTop, int stripeEnd, bool haveTop, bool haveBottom)
+    private void RestoreStripeColumns(int plane, ushort[] dst, ushort[] cdef, ushort[] deblock, int width, int stride, int unitSize, int maxUnit, int alignedY, int stripeTop, int stripeEnd, bool haveTop, bool haveBottom)
     {
         int x = 0;
         while (true)
@@ -904,9 +904,9 @@ internal class Av1TileDecoder
         bool is422 = this.subsamplingX == 1 && this.subsamplingY == 0;
         ReadOnlySpan<byte> uvDir = is422 ? [7, 0, 2, 4, 5, 6, 6, 6] : [0, 1, 2, 3, 4, 5, 6, 7];
 
-        byte[] lumaSrc = (byte[])this.luma.Samples.Clone();
-        byte[] uSrc = hasChroma ? (byte[])this.chromaU.Samples.Clone() : [];
-        byte[] vSrc = hasChroma ? (byte[])this.chromaV.Samples.Clone() : [];
+        ushort[] lumaSrc = (ushort[])this.luma.Samples.Clone();
+        ushort[] uSrc = hasChroma ? (ushort[])this.chromaU.Samples.Clone() : [];
+        ushort[] vSrc = hasChroma ? (ushort[])this.chromaV.Samples.Clone() : [];
 
         int bw4 = this.miColumns;
         int bh4 = this.miRows;
@@ -1010,7 +1010,7 @@ internal class Av1TileDecoder
     }
 
     // Gathers the pre-filter edge spans for one CDEF block from the plane clone and filters in place.
-    private static void FilterPlaneBlock(Av1Plane plane, byte[] src, int px, int py, int w, int h, int priStrength, int secStrength, int dir, int damping, Av1Cdef.EdgeFlags edges)
+    private static void FilterPlaneBlock(Av1Plane plane, ushort[] src, int px, int py, int w, int h, int priStrength, int secStrength, int dir, int damping, Av1Cdef.EdgeFlags edges)
     {
         int stride = plane.Width;
         int clampW = Math.Min(w, plane.Width - px);
@@ -1021,9 +1021,9 @@ internal class Av1TileDecoder
         }
 
         int topWidth = clampW + 4;
-        byte[] top = new byte[2 * topWidth];
-        byte[] bottom = new byte[2 * topWidth];
-        byte[] left = new byte[clampH * 2];
+        ushort[] top = new ushort[2 * topWidth];
+        ushort[] bottom = new ushort[2 * topWidth];
+        ushort[] left = new ushort[clampH * 2];
 
         for (int r = 0; r < 2; r++)
         {
@@ -1056,7 +1056,7 @@ internal class Av1TileDecoder
             edges);
     }
 
-    private static byte Sample(byte[] src, int stride, int width, int height, int x, int y)
+    private static ushort Sample(ushort[] src, int stride, int width, int height, int x, int y)
     {
         int cx = Math.Clamp(x, 0, width - 1);
         int cy = Math.Clamp(y, 0, height - 1);
@@ -1764,7 +1764,7 @@ internal class Av1TileDecoder
         int width = tx.GetWidth();
         int height = tx.GetHeight();
 
-        byte[] prediction = new byte[width * height];
+        ushort[] prediction = new ushort[width * height];
         this.Predict(plane, x, y, width, height, intraMode, angleDelta, filterIntraMode, cflAlpha, prediction);
 
         int[] residual = new int[width * height];
@@ -1795,17 +1795,17 @@ internal class Av1TileDecoder
         {
             for (int rx = 0; rx < width && x + rx < plane.Width; rx++)
             {
-                plane[x + rx, y + ry] = (byte)Math.Clamp(prediction[(ry * width) + rx] + residual[(ry * width) + rx], 0, maxValue);
+                plane[x + rx, y + ry] = (ushort)Math.Clamp(prediction[(ry * width) + rx] + residual[(ry * width) + rx], 0, maxValue);
             }
         }
     }
 
-    private protected virtual void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, byte[] prediction)
+    private protected virtual void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, ushort[] prediction)
     {
         // Filter-intra (luma, DC blocks): predict each square unit from the prepared edges.
         if (filterIntraMode >= 0)
         {
-            this.PrepareEdges(plane, x, y, width, height, out byte[] fAbove, out byte[] fLeft, out byte fTopLeft);
+            this.PrepareEdges(plane, x, y, width, height, out ushort[] fAbove, out ushort[] fLeft, out ushort fTopLeft);
             Av1FilterIntraPrediction.Predict(fAbove, fLeft, fTopLeft, width, height, filterIntraMode, prediction);
             return;
         }
@@ -1824,7 +1824,7 @@ internal class Av1TileDecoder
         // DC prediction is computed directly from the available neighbour averages.
         if (intraMode == 0)
         {
-            byte dc = (byte)this.PredictDc(plane, x, y, width, height);
+            ushort dc = (ushort)this.PredictDc(plane, x, y, width, height);
             Array.Fill(prediction, dc);
             return;
         }
@@ -1832,7 +1832,7 @@ internal class Av1TileDecoder
         // Directional modes (VERT..VERT_LEFT) use the extended edges and the angular predictor.
         if (intraMode is >= 1 and <= 8)
         {
-            this.PrepareDirectionalEdges(plane, x, y, width, height, out byte[] dAbove, out byte[] dLeft, out byte dTopLeft);
+            this.PrepareDirectionalEdges(plane, x, y, width, height, out ushort[] dAbove, out ushort[] dLeft, out ushort dTopLeft);
             Av1DirectionalPrediction.Predict(
                 dAbove,
                 dLeft,
@@ -1851,7 +1851,7 @@ internal class Av1TileDecoder
             return;
         }
 
-        this.PrepareEdges(plane, x, y, width, height, out byte[] above, out byte[] left, out byte topLeft);
+        this.PrepareEdges(plane, x, y, width, height, out ushort[] above, out ushort[] left, out ushort topLeft);
         switch (intraMode)
         {
             case 9: // SMOOTH_PRED
@@ -1880,13 +1880,13 @@ internal class Av1TileDecoder
 
     // Gathers the extended reference edges (2*size above and left) for directional prediction, applying
     // the dav1d availability fills and frame-edge replication. Only square transforms are handled.
-    private void PrepareDirectionalEdges(Av1Plane plane, int x, int y, int width, int height, out byte[] above, out byte[] left, out byte topLeft)
+    private void PrepareDirectionalEdges(Av1Plane plane, int x, int y, int width, int height, out ushort[] above, out ushort[] left, out ushort topLeft)
     {
         bool hasAbove = y > this.TileTopPixel(plane);
         bool hasLeft = x > this.TileLeftPixel(plane);
         int extent = width + height;
-        above = new byte[extent];
-        left = new byte[extent];
+        above = new ushort[extent];
+        left = new ushort[extent];
 
         if (hasAbove)
         {
@@ -1894,7 +1894,7 @@ internal class Av1TileDecoder
         }
         else
         {
-            byte fill = hasLeft ? plane[x - 1, y] : (byte)(this.midGrey - 1);
+            ushort fill = hasLeft ? plane[x - 1, y] : (ushort)(this.midGrey - 1);
             Array.Fill(above, fill);
         }
 
@@ -1904,21 +1904,21 @@ internal class Av1TileDecoder
         }
         else
         {
-            byte fill = hasAbove ? plane[x, y - 1] : (byte)(this.midGrey + 1);
+            ushort fill = hasAbove ? plane[x, y - 1] : (ushort)(this.midGrey + 1);
             Array.Fill(left, fill);
         }
 
         topLeft = hasLeft
             ? hasAbove ? plane[x - 1, y - 1] : plane[x - 1, y]
-            : hasAbove ? plane[x, y - 1] : (byte)this.midGrey;
+            : hasAbove ? plane[x, y - 1] : (ushort)this.midGrey;
     }
 
     // Gathers up to 'count' samples of the row above, reading reconstructed samples and replicating the
     // last available one once the source (above-right) has not been decoded yet (dav1d edge availability).
-    private void GatherAbove(Av1Plane plane, int x, int y, int count, byte[] dst)
+    private void GatherAbove(Av1Plane plane, int x, int y, int count, ushort[] dst)
     {
         bool isLuma = ReferenceEquals(plane, this.luma);
-        byte last = plane[x, y - 1];
+        ushort last = plane[x, y - 1];
         bool available = true;
         for (int i = 0; i < count; i++)
         {
@@ -1938,10 +1938,10 @@ internal class Av1TileDecoder
 
     // Gathers up to 'count' samples of the column to the left, replicating once the source (below-left)
     // has not been decoded yet.
-    private void GatherLeft(Av1Plane plane, int x, int y, int count, byte[] dst)
+    private void GatherLeft(Av1Plane plane, int x, int y, int count, ushort[] dst)
     {
         bool isLuma = ReferenceEquals(plane, this.luma);
-        byte last = plane[x - 1, y];
+        ushort last = plane[x - 1, y];
         bool available = true;
         for (int i = 0; i < count; i++)
         {
@@ -1984,13 +1984,13 @@ internal class Av1TileDecoder
         return 0;
     }
 
-    private void PrepareEdges(Av1Plane plane, int x, int y, int width, int height, out byte[] above, out byte[] left, out byte topLeft)
+    private void PrepareEdges(Av1Plane plane, int x, int y, int width, int height, out ushort[] above, out ushort[] left, out ushort topLeft)
     {
         bool hasAbove = y > this.TileTopPixel(plane);
         bool hasLeft = x > this.TileLeftPixel(plane);
-        byte mid = (byte)this.midGrey;
-        above = new byte[width];
-        left = new byte[height];
+        ushort mid = (ushort)this.midGrey;
+        above = new ushort[width];
+        left = new ushort[height];
 
         if (hasAbove)
         {
@@ -1998,7 +1998,7 @@ internal class Av1TileDecoder
         }
         else
         {
-            byte fill = hasLeft ? plane[x - 1, y] : (byte)(this.midGrey - 1);
+            ushort fill = hasLeft ? plane[x - 1, y] : (ushort)(this.midGrey - 1);
             Array.Fill(above, fill);
         }
 
@@ -2008,7 +2008,7 @@ internal class Av1TileDecoder
         }
         else
         {
-            byte fill = hasAbove ? plane[x, y - 1] : (byte)(this.midGrey + 1);
+            ushort fill = hasAbove ? plane[x, y - 1] : (ushort)(this.midGrey + 1);
             Array.Fill(left, fill);
         }
 

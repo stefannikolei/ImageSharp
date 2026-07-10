@@ -23,7 +23,7 @@ internal static class Av1LoopFilter
     /// <param name="i">The inner limit.</param>
     /// <param name="h">The high-edge-variance threshold.</param>
     /// <param name="wd">The filter width (4, 6, 8 or 16).</param>
-    public static void FilterEdge(Span<byte> dst, int offset, int strideA, int strideB, int e, int i, int h, int wd)
+    public static void FilterEdge(Span<ushort> dst, int offset, int strideA, int strideB, int e, int i, int h, int wd)
     {
         const int f = 1; // 1 << (bitdepth - 8), 8-bit.
 
@@ -88,34 +88,34 @@ internal static class Av1LoopFilter
 
             if (wd >= 16 && flat8out && flat8in)
             {
-                dst[offset + (strideB * -6)] = (byte)((p6 + p6 + p6 + p6 + p6 + (p6 * 2) + (p5 * 2) + (p4 * 2) + p3 + p2 + p1 + p0 + q0 + 8) >> 4);
-                dst[offset + (strideB * -5)] = (byte)((p6 + p6 + p6 + p6 + p6 + (p5 * 2) + (p4 * 2) + (p3 * 2) + p2 + p1 + p0 + q0 + q1 + 8) >> 4);
-                dst[offset + (strideB * -4)] = (byte)((p6 + p6 + p6 + p6 + p5 + (p4 * 2) + (p3 * 2) + (p2 * 2) + p1 + p0 + q0 + q1 + q2 + 8) >> 4);
-                dst[offset + (strideB * -3)] = (byte)((p6 + p6 + p6 + p5 + p4 + (p3 * 2) + (p2 * 2) + (p1 * 2) + p0 + q0 + q1 + q2 + q3 + 8) >> 4);
-                dst[offset + (strideB * -2)] = (byte)((p6 + p6 + p5 + p4 + p3 + (p2 * 2) + (p1 * 2) + (p0 * 2) + q0 + q1 + q2 + q3 + q4 + 8) >> 4);
-                dst[offset + (strideB * -1)] = (byte)((p6 + p5 + p4 + p3 + p2 + (p1 * 2) + (p0 * 2) + (q0 * 2) + q1 + q2 + q3 + q4 + q5 + 8) >> 4);
-                dst[offset + (strideB * +0)] = (byte)((p5 + p4 + p3 + p2 + p1 + (p0 * 2) + (q0 * 2) + (q1 * 2) + q2 + q3 + q4 + q5 + q6 + 8) >> 4);
-                dst[offset + (strideB * +1)] = (byte)((p4 + p3 + p2 + p1 + p0 + (q0 * 2) + (q1 * 2) + (q2 * 2) + q3 + q4 + q5 + q6 + q6 + 8) >> 4);
-                dst[offset + (strideB * +2)] = (byte)((p3 + p2 + p1 + p0 + q0 + (q1 * 2) + (q2 * 2) + (q3 * 2) + q4 + q5 + q6 + q6 + q6 + 8) >> 4);
-                dst[offset + (strideB * +3)] = (byte)((p2 + p1 + p0 + q0 + q1 + (q2 * 2) + (q3 * 2) + (q4 * 2) + q5 + q6 + q6 + q6 + q6 + 8) >> 4);
-                dst[offset + (strideB * +4)] = (byte)((p1 + p0 + q0 + q1 + q2 + (q3 * 2) + (q4 * 2) + (q5 * 2) + q6 + q6 + q6 + q6 + q6 + 8) >> 4);
-                dst[offset + (strideB * +5)] = (byte)((p0 + q0 + q1 + q2 + q3 + (q4 * 2) + (q5 * 2) + (q6 * 2) + q6 + q6 + q6 + q6 + q6 + 8) >> 4);
+                dst[offset + (strideB * -6)] = (ushort)((p6 + p6 + p6 + p6 + p6 + (p6 * 2) + (p5 * 2) + (p4 * 2) + p3 + p2 + p1 + p0 + q0 + 8) >> 4);
+                dst[offset + (strideB * -5)] = (ushort)((p6 + p6 + p6 + p6 + p6 + (p5 * 2) + (p4 * 2) + (p3 * 2) + p2 + p1 + p0 + q0 + q1 + 8) >> 4);
+                dst[offset + (strideB * -4)] = (ushort)((p6 + p6 + p6 + p6 + p5 + (p4 * 2) + (p3 * 2) + (p2 * 2) + p1 + p0 + q0 + q1 + q2 + 8) >> 4);
+                dst[offset + (strideB * -3)] = (ushort)((p6 + p6 + p6 + p5 + p4 + (p3 * 2) + (p2 * 2) + (p1 * 2) + p0 + q0 + q1 + q2 + q3 + 8) >> 4);
+                dst[offset + (strideB * -2)] = (ushort)((p6 + p6 + p5 + p4 + p3 + (p2 * 2) + (p1 * 2) + (p0 * 2) + q0 + q1 + q2 + q3 + q4 + 8) >> 4);
+                dst[offset + (strideB * -1)] = (ushort)((p6 + p5 + p4 + p3 + p2 + (p1 * 2) + (p0 * 2) + (q0 * 2) + q1 + q2 + q3 + q4 + q5 + 8) >> 4);
+                dst[offset + (strideB * +0)] = (ushort)((p5 + p4 + p3 + p2 + p1 + (p0 * 2) + (q0 * 2) + (q1 * 2) + q2 + q3 + q4 + q5 + q6 + 8) >> 4);
+                dst[offset + (strideB * +1)] = (ushort)((p4 + p3 + p2 + p1 + p0 + (q0 * 2) + (q1 * 2) + (q2 * 2) + q3 + q4 + q5 + q6 + q6 + 8) >> 4);
+                dst[offset + (strideB * +2)] = (ushort)((p3 + p2 + p1 + p0 + q0 + (q1 * 2) + (q2 * 2) + (q3 * 2) + q4 + q5 + q6 + q6 + q6 + 8) >> 4);
+                dst[offset + (strideB * +3)] = (ushort)((p2 + p1 + p0 + q0 + q1 + (q2 * 2) + (q3 * 2) + (q4 * 2) + q5 + q6 + q6 + q6 + q6 + 8) >> 4);
+                dst[offset + (strideB * +4)] = (ushort)((p1 + p0 + q0 + q1 + q2 + (q3 * 2) + (q4 * 2) + (q5 * 2) + q6 + q6 + q6 + q6 + q6 + 8) >> 4);
+                dst[offset + (strideB * +5)] = (ushort)((p0 + q0 + q1 + q2 + q3 + (q4 * 2) + (q5 * 2) + (q6 * 2) + q6 + q6 + q6 + q6 + q6 + 8) >> 4);
             }
             else if (wd >= 8 && flat8in)
             {
-                dst[offset + (strideB * -3)] = (byte)((p3 + p3 + p3 + (2 * p2) + p1 + p0 + q0 + 4) >> 3);
-                dst[offset + (strideB * -2)] = (byte)((p3 + p3 + p2 + (2 * p1) + p0 + q0 + q1 + 4) >> 3);
-                dst[offset + (strideB * -1)] = (byte)((p3 + p2 + p1 + (2 * p0) + q0 + q1 + q2 + 4) >> 3);
-                dst[offset + (strideB * +0)] = (byte)((p2 + p1 + p0 + (2 * q0) + q1 + q2 + q3 + 4) >> 3);
-                dst[offset + (strideB * +1)] = (byte)((p1 + p0 + q0 + (2 * q1) + q2 + q3 + q3 + 4) >> 3);
-                dst[offset + (strideB * +2)] = (byte)((p0 + q0 + q1 + (2 * q2) + q3 + q3 + q3 + 4) >> 3);
+                dst[offset + (strideB * -3)] = (ushort)((p3 + p3 + p3 + (2 * p2) + p1 + p0 + q0 + 4) >> 3);
+                dst[offset + (strideB * -2)] = (ushort)((p3 + p3 + p2 + (2 * p1) + p0 + q0 + q1 + 4) >> 3);
+                dst[offset + (strideB * -1)] = (ushort)((p3 + p2 + p1 + (2 * p0) + q0 + q1 + q2 + 4) >> 3);
+                dst[offset + (strideB * +0)] = (ushort)((p2 + p1 + p0 + (2 * q0) + q1 + q2 + q3 + 4) >> 3);
+                dst[offset + (strideB * +1)] = (ushort)((p1 + p0 + q0 + (2 * q1) + q2 + q3 + q3 + 4) >> 3);
+                dst[offset + (strideB * +2)] = (ushort)((p0 + q0 + q1 + (2 * q2) + q3 + q3 + q3 + 4) >> 3);
             }
             else if (wd == 6 && flat8in)
             {
-                dst[offset + (strideB * -2)] = (byte)((p2 + (2 * p2) + (2 * p1) + (2 * p0) + q0 + 4) >> 3);
-                dst[offset + (strideB * -1)] = (byte)((p2 + (2 * p1) + (2 * p0) + (2 * q0) + q1 + 4) >> 3);
-                dst[offset + (strideB * +0)] = (byte)((p1 + (2 * p0) + (2 * q0) + (2 * q1) + q2 + 4) >> 3);
-                dst[offset + (strideB * +1)] = (byte)((p0 + (2 * q0) + (2 * q1) + (2 * q2) + q2 + 4) >> 3);
+                dst[offset + (strideB * -2)] = (ushort)((p2 + (2 * p2) + (2 * p1) + (2 * p0) + q0 + 4) >> 3);
+                dst[offset + (strideB * -1)] = (ushort)((p2 + (2 * p1) + (2 * p0) + (2 * q0) + q1 + 4) >> 3);
+                dst[offset + (strideB * +0)] = (ushort)((p1 + (2 * p0) + (2 * q0) + (2 * q1) + q2 + 4) >> 3);
+                dst[offset + (strideB * +1)] = (ushort)((p0 + (2 * q0) + (2 * q1) + (2 * q2) + q2 + 4) >> 3);
             }
             else
             {
@@ -147,5 +147,5 @@ internal static class Av1LoopFilter
 
     private static int ClipDiff(int v) => v < -128 ? -128 : v > 127 ? 127 : v;
 
-    private static byte ClipPixel(int v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
+    private static ushort ClipPixel(int v) => (ushort)(v < 0 ? 0 : v > 255 ? 255 : v);
 }

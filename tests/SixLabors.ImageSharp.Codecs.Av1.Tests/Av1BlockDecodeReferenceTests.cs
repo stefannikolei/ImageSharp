@@ -135,7 +135,7 @@ public class Av1BlockDecodeReferenceTests
         Assert.True(exact >= luma.Length * 95 / 100, $"Only {exact}/{luma.Length} luma samples matched exactly.");
 
         // The all-zero chroma blocks are DC_PRED with no residual, so they reconstruct to exactly 128.
-        byte[] chromaPrediction = new byte[32 * 32];
+        ushort[] chromaPrediction = new ushort[32 * 32];
         Av1IntraPrediction.Dc128Predict(chromaPrediction, 32, 32, 32, 8);
         Assert.All(chromaPrediction, sample => Assert.Equal(128, sample));
     }

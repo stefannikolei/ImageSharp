@@ -53,7 +53,7 @@ public class Av1MultiReferenceDecodeTests
         }
     }
 
-    private static void AssertPlaneMatches(ReadOnlySpan<byte> actual, string expectedBase64, string planeName)
+    private static void AssertPlaneMatches(ReadOnlySpan<ushort> actual, string expectedBase64, string planeName)
     {
         byte[] expected = Convert.FromBase64String(expectedBase64);
         int exact = 0;

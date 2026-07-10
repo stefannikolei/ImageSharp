@@ -19,7 +19,7 @@ internal static class Av1IntraPrediction
     /// <param name="height">The block height.</param>
     /// <param name="above">The row of samples above the block.</param>
     /// <param name="left">The column of samples left of the block.</param>
-    public static void DcPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> above, ReadOnlySpan<byte> left)
+    public static void DcPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> above, ReadOnlySpan<ushort> left)
     {
         uint sum = (uint)((width + height) >> 1);
         for (int x = 0; x < width; x++)
@@ -40,7 +40,7 @@ internal static class Av1IntraPrediction
             dc = (dc * multiplier) >> 16;
         }
 
-        Splat(destination, stride, width, height, (byte)dc);
+        Splat(destination, stride, width, height, (ushort)dc);
     }
 
     /// <summary>DC prediction using only the above row.</summary>
@@ -49,7 +49,7 @@ internal static class Av1IntraPrediction
     /// <param name="width">The block width.</param>
     /// <param name="height">The block height.</param>
     /// <param name="above">The row of samples above the block.</param>
-    public static void DcTopPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> above)
+    public static void DcTopPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> above)
     {
         uint sum = (uint)(width >> 1);
         for (int x = 0; x < width; x++)
@@ -57,7 +57,7 @@ internal static class Av1IntraPrediction
             sum += above[x];
         }
 
-        Splat(destination, stride, width, height, (byte)(sum >> BitOperations.TrailingZeroCount(width)));
+        Splat(destination, stride, width, height, (ushort)(sum >> BitOperations.TrailingZeroCount(width)));
     }
 
     /// <summary>DC prediction using only the left column.</summary>
@@ -66,7 +66,7 @@ internal static class Av1IntraPrediction
     /// <param name="width">The block width.</param>
     /// <param name="height">The block height.</param>
     /// <param name="left">The column of samples left of the block.</param>
-    public static void DcLeftPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> left)
+    public static void DcLeftPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> left)
     {
         uint sum = (uint)(height >> 1);
         for (int y = 0; y < height; y++)
@@ -74,7 +74,7 @@ internal static class Av1IntraPrediction
             sum += left[y];
         }
 
-        Splat(destination, stride, width, height, (byte)(sum >> BitOperations.TrailingZeroCount(height)));
+        Splat(destination, stride, width, height, (ushort)(sum >> BitOperations.TrailingZeroCount(height)));
     }
 
     /// <summary>DC prediction with no available neighbours (mid-grey).</summary>
@@ -83,8 +83,8 @@ internal static class Av1IntraPrediction
     /// <param name="width">The block width.</param>
     /// <param name="height">The block height.</param>
     /// <param name="bitDepth">The sample bit depth.</param>
-    public static void Dc128Predict(Span<byte> destination, int stride, int width, int height, int bitDepth)
-        => Splat(destination, stride, width, height, (byte)(1 << (bitDepth - 1)));
+    public static void Dc128Predict(Span<ushort> destination, int stride, int width, int height, int bitDepth)
+        => Splat(destination, stride, width, height, (ushort)(1 << (bitDepth - 1)));
 
     /// <summary>Vertical prediction: each row is a copy of the above row.</summary>
     /// <param name="destination">The destination block buffer.</param>
@@ -92,7 +92,7 @@ internal static class Av1IntraPrediction
     /// <param name="width">The block width.</param>
     /// <param name="height">The block height.</param>
     /// <param name="above">The row of samples above the block.</param>
-    public static void VerticalPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> above)
+    public static void VerticalPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> above)
     {
         for (int y = 0; y < height; y++)
         {
@@ -106,7 +106,7 @@ internal static class Av1IntraPrediction
     /// <param name="width">The block width.</param>
     /// <param name="height">The block height.</param>
     /// <param name="left">The column of samples left of the block.</param>
-    public static void HorizontalPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> left)
+    public static void HorizontalPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> left)
     {
         for (int y = 0; y < height; y++)
         {
@@ -122,12 +122,12 @@ internal static class Av1IntraPrediction
     /// <param name="above">The row of samples above the block.</param>
     /// <param name="left">The column of samples left of the block.</param>
     /// <param name="topLeft">The top-left corner sample.</param>
-    public static void PaethPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> above, ReadOnlySpan<byte> left, byte topLeft)
+    public static void PaethPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> above, ReadOnlySpan<ushort> left, ushort topLeft)
     {
         for (int y = 0; y < height; y++)
         {
             int leftValue = left[y];
-            Span<byte> row = destination.Slice(y * stride, width);
+            Span<ushort> row = destination.Slice(y * stride, width);
             for (int x = 0; x < width; x++)
             {
                 int top = above[x];
@@ -137,8 +137,8 @@ internal static class Av1IntraPrediction
                 int topLeftDiff = Math.Abs(topLeft - @base);
 
                 row[x] = leftDiff <= topDiff && leftDiff <= topLeftDiff
-                    ? (byte)leftValue
-                    : topDiff <= topLeftDiff ? (byte)top : topLeft;
+                    ? (ushort)leftValue
+                    : topDiff <= topLeftDiff ? (ushort)top : topLeft;
             }
         }
     }
@@ -150,7 +150,7 @@ internal static class Av1IntraPrediction
     /// <param name="height">The block height.</param>
     /// <param name="above">The row of samples above the block.</param>
     /// <param name="left">The column of samples left of the block.</param>
-    public static void SmoothPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> above, ReadOnlySpan<byte> left)
+    public static void SmoothPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> above, ReadOnlySpan<ushort> left)
     {
         ReadOnlySpan<byte> weightsHorizontal = Av1SmoothWeights.Get(width);
         ReadOnlySpan<byte> weightsVertical = Av1SmoothWeights.Get(height);
@@ -160,12 +160,12 @@ internal static class Av1IntraPrediction
         for (int y = 0; y < height; y++)
         {
             int wv = weightsVertical[y];
-            Span<byte> row = destination.Slice(y * stride, width);
+            Span<ushort> row = destination.Slice(y * stride, width);
             for (int x = 0; x < width; x++)
             {
                 int wh = weightsHorizontal[x];
                 int pred = (wv * above[x]) + ((256 - wv) * bottom) + (wh * left[y]) + ((256 - wh) * right);
-                row[x] = (byte)((pred + 256) >> 9);
+                row[x] = (ushort)((pred + 256) >> 9);
             }
         }
     }
@@ -177,7 +177,7 @@ internal static class Av1IntraPrediction
     /// <param name="height">The block height.</param>
     /// <param name="above">The row of samples above the block.</param>
     /// <param name="left">The column of samples left of the block.</param>
-    public static void SmoothVerticalPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> above, ReadOnlySpan<byte> left)
+    public static void SmoothVerticalPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> above, ReadOnlySpan<ushort> left)
     {
         ReadOnlySpan<byte> weightsVertical = Av1SmoothWeights.Get(height);
         int bottom = left[height - 1];
@@ -185,11 +185,11 @@ internal static class Av1IntraPrediction
         for (int y = 0; y < height; y++)
         {
             int wv = weightsVertical[y];
-            Span<byte> row = destination.Slice(y * stride, width);
+            Span<ushort> row = destination.Slice(y * stride, width);
             for (int x = 0; x < width; x++)
             {
                 int pred = (wv * above[x]) + ((256 - wv) * bottom);
-                row[x] = (byte)((pred + 128) >> 8);
+                row[x] = (ushort)((pred + 128) >> 8);
             }
         }
     }
@@ -201,24 +201,24 @@ internal static class Av1IntraPrediction
     /// <param name="height">The block height.</param>
     /// <param name="above">The row of samples above the block.</param>
     /// <param name="left">The column of samples left of the block.</param>
-    public static void SmoothHorizontalPredict(Span<byte> destination, int stride, int width, int height, ReadOnlySpan<byte> above, ReadOnlySpan<byte> left)
+    public static void SmoothHorizontalPredict(Span<ushort> destination, int stride, int width, int height, ReadOnlySpan<ushort> above, ReadOnlySpan<ushort> left)
     {
         ReadOnlySpan<byte> weightsHorizontal = Av1SmoothWeights.Get(width);
         int right = above[width - 1];
 
         for (int y = 0; y < height; y++)
         {
-            Span<byte> row = destination.Slice(y * stride, width);
+            Span<ushort> row = destination.Slice(y * stride, width);
             for (int x = 0; x < width; x++)
             {
                 int wh = weightsHorizontal[x];
                 int pred = (wh * left[y]) + ((256 - wh) * right);
-                row[x] = (byte)((pred + 128) >> 8);
+                row[x] = (ushort)((pred + 128) >> 8);
             }
         }
     }
 
-    private static void Splat(Span<byte> destination, int stride, int width, int height, byte value)
+    private static void Splat(Span<ushort> destination, int stride, int width, int height, ushort value)
     {
         for (int y = 0; y < height; y++)
         {

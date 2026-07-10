@@ -553,7 +553,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             int srcBase = y * width;
             for (int x = 0; x < width; x++)
             {
-                destination.Samples[dstBase + x] = (byte)Math.Clamp((intermediate0[srcBase + x] + intermediate1[srcBase + x] + 16) >> 5, 0, 255);
+                destination.Samples[dstBase + x] = (ushort)Math.Clamp((intermediate0[srcBase + x] + intermediate1[srcBase + x] + 16) >> 5, 0, 255);
             }
         }
     }
@@ -573,14 +573,14 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             {
                 int diff = tmp1[srcBase + x] - tmp2[srcBase + x];
                 int m = Math.Min(38 + ((Math.Abs(diff) + 8) >> 8), 64);
-                destination.Samples[dstBase + x] = (byte)Math.Clamp(((diff * m) + (tmp2[srcBase + x] * 64) + 512) >> 10, 0, 255);
+                destination.Samples[dstBase + x] = (ushort)Math.Clamp(((diff * m) + (tmp2[srcBase + x] * 64) + 512) >> 10, 0, 255);
 
                 if (ssHor != 0)
                 {
                     x++;
                     int diff2 = tmp1[srcBase + x] - tmp2[srcBase + x];
                     int n = Math.Min(38 + ((Math.Abs(diff2) + 8) >> 8), 64);
-                    destination.Samples[dstBase + x] = (byte)Math.Clamp(((diff2 * n) + (tmp2[srcBase + x] * 64) + 512) >> 10, 0, 255);
+                    destination.Samples[dstBase + x] = (ushort)Math.Clamp(((diff2 * n) + (tmp2[srcBase + x] * 64) + 512) >> 10, 0, 255);
 
                     if ((remaining & ssVer) != 0)
                     {
@@ -619,7 +619,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             for (int x = 0; x < width; x++)
             {
                 int m = mask[maskBase + x];
-                destination.Samples[dstBase + x] = (byte)Math.Clamp(((tmp1[srcBase + x] * m) + (tmp2[srcBase + x] * (64 - m)) + 512) >> 10, 0, 255);
+                destination.Samples[dstBase + x] = (ushort)Math.Clamp(((tmp1[srcBase + x] * m) + (tmp2[srcBase + x] * (64 - m)) + 512) >> 10, 0, 255);
             }
         }
     }
@@ -737,7 +737,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     ];
 
     // Scratch buffer for the overlapped neighbour predictions (dav1d t->scratch.lap).
-    private readonly byte[] obmcLap = new byte[64 * 32];
+    private readonly ushort[] obmcLap = new ushort[64 * 32];
 
     // Overlapped block motion compensation for one plane (dav1d's obmc): the top quarter-to-half of
     // the block is re-predicted from up to four above neighbours' motion vectors and blended in, then
@@ -751,7 +751,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         int vMul = 4 >> ssY;
         int w4 = Math.Min(bw4, this.miColumns - col);
         int h4 = Math.Min(bh4, this.miRows - row);
-        byte[] lap = this.obmcLap;
+        ushort[] lap = this.obmcLap;
         int dstBase = ((row >> ssY) * 4 * destination.Width) + ((col >> ssX) * 4);
 
         // The chroma minimum-size condition gates only the above pass (dav1d obmc); the left pass
@@ -828,7 +828,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         int y = (row >> ssY) * 4;
 
         int intraMode = info.InterIntraMode == 3 ? 9 : info.InterIntraMode;
-        byte[] intra = new byte[width * height];
+        ushort[] intra = new ushort[width * height];
         this.Predict(plane, x, y, width, height, intraMode, 0, -1, 0, intra);
 
         byte[]? mask;
@@ -861,7 +861,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             {
                 int m = mask is null ? 32 : mask[maskBase + dx];
                 int value = plane.Samples[dstBase + dx];
-                plane.Samples[dstBase + dx] = (byte)(((value * (64 - m)) + (intra[srcBase + dx] * m) + 32) >> 6);
+                plane.Samples[dstBase + dx] = (ushort)(((value * (64 - m)) + (intra[srcBase + dx] * m) + 32) >> 6);
             }
         }
     }
@@ -875,9 +875,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
 
     // dav1d blend_h: blends the neighbour prediction over the top (3/4 of height) rows, the weight
     // decreasing with the distance from the shared edge.
-    private static void BlendFromAbove(Av1Plane destination, int offset, byte[] overlap, int width, int height)
+    private static void BlendFromAbove(Av1Plane destination, int offset, ushort[] overlap, int width, int height)
     {
-        byte[] samples = destination.Samples;
+        ushort[] samples = destination.Samples;
         int rows = (height * 3) >> 2;
         for (int y = 0; y < rows; y++)
         {
@@ -885,15 +885,15 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             int rowOffset = offset + (y * destination.Width);
             for (int x = 0; x < width; x++)
             {
-                samples[rowOffset + x] = (byte)(((samples[rowOffset + x] * (64 - m)) + (overlap[(y * width) + x] * m) + 32) >> 6);
+                samples[rowOffset + x] = (ushort)(((samples[rowOffset + x] * (64 - m)) + (overlap[(y * width) + x] * m) + 32) >> 6);
             }
         }
     }
 
     // dav1d blend_v: blends the neighbour prediction over the left (3/4 of width) columns.
-    private static void BlendFromLeft(Av1Plane destination, int offset, byte[] overlap, int width, int height)
+    private static void BlendFromLeft(Av1Plane destination, int offset, ushort[] overlap, int width, int height)
     {
-        byte[] samples = destination.Samples;
+        ushort[] samples = destination.Samples;
         int columns = (width * 3) >> 2;
         for (int y = 0; y < height; y++)
         {
@@ -901,7 +901,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             for (int x = 0; x < columns; x++)
             {
                 int m = ObmcMasks[width + x];
-                samples[rowOffset + x] = (byte)(((samples[rowOffset + x] * (64 - m)) + (overlap[(y * width) + x] * m) + 32) >> 6);
+                samples[rowOffset + x] = (ushort)(((samples[rowOffset + x] * (64 - m)) + (overlap[(y * width) + x] * m) + 32) >> 6);
             }
         }
     }
@@ -941,7 +941,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         Fill(this.interLeftTx, row, height4, (sbyte)(lumaTx.GetHeightLog2() - 2));
     }
 
-    private protected override void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, byte[] prediction)
+    private protected override void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, ushort[] prediction)
     {
         if (!this.currentBlockIsInter)
         {
@@ -954,7 +954,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         {
             for (int rx = 0; rx < width; rx++)
             {
-                byte sample = (x + rx < plane.Width && y + ry < plane.Height) ? plane[x + rx, y + ry] : (byte)0;
+                ushort sample = (x + rx < plane.Width && y + ry < plane.Height) ? plane[x + rx, y + ry] : (ushort)0;
                 prediction[(ry * width) + rx] = sample;
             }
         }

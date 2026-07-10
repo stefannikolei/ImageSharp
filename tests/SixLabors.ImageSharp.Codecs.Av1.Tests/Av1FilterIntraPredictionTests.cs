@@ -18,12 +18,12 @@ public class Av1FilterIntraPredictionTests
     [InlineData(8, 3, 120, "mzTK9U8uIgo=", "hm0NhYtjVJ4=", "kmKcwYJfRC59bYWjj3hlTDlMY4KEfXFhbmFjdHp7dWt9cWxxdXh2cWtsbG5xdHRyXmNmam1wcnKHeXNycXFxcQ==")]
     public void Predict_MatchesDav1d(int size, int filt, int topLeft, string aboveBase64, string leftBase64, string expectedBase64)
     {
-        byte[] above = Convert.FromBase64String(aboveBase64);
-        byte[] left = Convert.FromBase64String(leftBase64);
-        byte[] expected = Convert.FromBase64String(expectedBase64);
+        ushort[] above = Av1TestData.Widen(Convert.FromBase64String(aboveBase64));
+        ushort[] left = Av1TestData.Widen(Convert.FromBase64String(leftBase64));
+        ushort[] expected = Av1TestData.Widen(Convert.FromBase64String(expectedBase64));
 
-        byte[] dst = new byte[size * size];
-        Av1FilterIntraPrediction.Predict(above, left, (byte)topLeft, size, size, filt, dst);
+        ushort[] dst = new ushort[size * size];
+        Av1FilterIntraPrediction.Predict(above, left, (ushort)topLeft, size, size, filt, dst);
 
         Assert.Equal(expected, dst);
     }
@@ -31,11 +31,11 @@ public class Av1FilterIntraPredictionTests
     [Fact]
     public void Predict_Rectangular4x8_MatchesDav1d()
     {
-        byte[] above = Convert.FromBase64String("pmV7Yg==");
-        byte[] left = Convert.FromBase64String("/lhhxl2ppDw=");
-        byte[] expected = Convert.FromBase64String("//D772FRV1BmXmFdyMTGxF5cXVyqqamppaSkpDw8PDw=");
+        ushort[] above = Av1TestData.Widen(Convert.FromBase64String("pmV7Yg=="));
+        ushort[] left = Av1TestData.Widen(Convert.FromBase64String("/lhhxl2ppDw="));
+        ushort[] expected = Av1TestData.Widen(Convert.FromBase64String("//D772FRV1BmXmFdyMTGxF5cXVyqqamppaSkpDw8PDw="));
 
-        byte[] dst = new byte[4 * 8];
+        ushort[] dst = new ushort[4 * 8];
         Av1FilterIntraPrediction.Predict(above, left, 129, 4, 8, 2, dst);
 
         Assert.Equal(expected, dst);

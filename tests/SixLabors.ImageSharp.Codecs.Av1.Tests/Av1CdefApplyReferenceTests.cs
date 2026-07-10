@@ -26,7 +26,7 @@ public class Av1CdefApplyReferenceTests
     public void Decode_AppliesCdef_MatchesDav1d()
     {
         byte[] ivf = Convert.FromBase64String(TinyIvfBase64);
-        byte[] expectedLuma = Convert.FromBase64String(ReferenceLumaBase64);
+        ushort[] expectedLuma = Av1TestData.Widen(Convert.FromBase64String(ReferenceLumaBase64));
 
         using MemoryStream stream = new(ivf);
         Av1TileDecoder decoder = Av1DecoderCore.DecodeFirstFrame(stream);
