@@ -112,10 +112,23 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
                         displayed++;
                     }
                 }
-                else if (header.Type == ObuType.FrameHeader && haveSequenceHeader
-                    && Av1DecoderCore.TryPeekShowExistingSlot(payload, this.sequenceHeader, out _))
+                else if (header.Type == ObuType.FrameHeader && haveSequenceHeader)
                 {
-                    displayed++;
+                    if (Av1DecoderCore.TryPeekShowExistingSlot(payload, this.sequenceHeader, out _))
+                    {
+                        displayed++;
+                    }
+                    else
+                    {
+                        // A standalone frame-header OBU announces a coded frame whose tiles follow in
+                        // tile-group OBUs.
+                        Av1FrameType frameType = Av1DecoderCore.PeekFrameType(payload, this.sequenceHeader);
+                        isKeyFrame |= frameType is Av1FrameType.Key or Av1FrameType.IntraOnly;
+                        if (Av1DecoderCore.PeekShowFrame(payload, this.sequenceHeader))
+                        {
+                            displayed++;
+                        }
+                    }
                 }
             }
 
@@ -169,6 +182,7 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
 
         List<Av1DisplayFrame> outputs = [];
         int offset = 0;
+        Av1DecoderCore.PendingFrame? pending = null;
         while (ObuReader.TryRead(temporalUnit, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
         {
             if (header.Type == ObuType.Frame)
@@ -181,20 +195,44 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
                     outputs.Add(new Av1DisplayFrame(decoded.Luma, decoded.ChromaU, decoded.ChromaV));
                 }
             }
-            else if (header.Type == ObuType.FrameHeader
-                && Av1DecoderCore.TryPeekShowExistingSlot(payload, this.sequenceHeader, out int slot))
+            else if (header.Type == ObuType.FrameHeader)
             {
-                Av1ReferenceFrame shown = this.referenceStore[slot]
-                    ?? throw new InvalidDataException($"show_existing_frame references the empty slot {slot}.");
-                if (shown.IsKeyFrame)
+                if (Av1DecoderCore.TryPeekShowExistingSlot(payload, this.sequenceHeader, out int slot))
                 {
-                    throw new NotSupportedException("show_existing_frame of a key frame (forward key frames) is not supported yet.");
+                    Av1ReferenceFrame shown = this.referenceStore[slot]
+                        ?? throw new InvalidDataException($"show_existing_frame references the empty slot {slot}.");
+                    if (shown.IsKeyFrame)
+                    {
+                        throw new NotSupportedException("show_existing_frame of a key frame (forward key frames) is not supported yet.");
+                    }
+
+                    outputs.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
+                }
+                else
+                {
+                    pending = Av1DecoderCore.ParseFrameHeader(payload, this.sequenceHeader, this.referenceStore);
+                }
+            }
+            else if (header.Type == ObuType.TileGroup)
+            {
+                if (pending is null)
+                {
+                    throw new InvalidDataException("Encountered a tile group OBU without a preceding frame header.");
                 }
 
-                outputs.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
+                if (Av1DecoderCore.AddTileGroupAndTryFinish(pending, payload, this.sequenceHeader, this.referenceStore) is { } decoded)
+                {
+                    if (pending.Header.ShowFrame)
+                    {
+                        outputs.Add(new Av1DisplayFrame(decoded.Luma, decoded.ChromaU, decoded.ChromaV));
+                    }
+
+                    pending = null;
+                }
             }
         }
 
+        Av1DecoderCore.EnsureNoPendingFrame(pending);
         return outputs;
     }
 

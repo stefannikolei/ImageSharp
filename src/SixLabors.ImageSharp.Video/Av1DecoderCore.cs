@@ -63,6 +63,8 @@ internal static class Av1DecoderCore
 
         bool haveSequenceHeader = false;
         ObuSequenceHeader sequenceHeader = default;
+        Av1ReferenceFrameStore referenceStore = new();
+        PendingFrame? pending = null;
         int offset = 0;
         while (ObuReader.TryRead(frame, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
         {
@@ -79,15 +81,25 @@ internal static class Av1DecoderCore
                     throw new InvalidDataException("Encountered a frame OBU before any sequence header.");
                 }
 
-                Av1BitStreamReader reader = new(payload);
-                ObuFrameHeader frameHeader = ObuFrameHeader.ParseIntra(ref reader, sequenceHeader);
+                return DecodeFrame(payload, sequenceHeader, referenceStore, out _);
+            }
+            else if (header.Type == ObuType.FrameHeader && haveSequenceHeader
+                && !TryPeekShowExistingSlot(payload, sequenceHeader, out _))
+            {
+                pending = ParseFrameHeader(payload, sequenceHeader, referenceStore);
+            }
+            else if (header.Type == ObuType.TileGroup)
+            {
+                if (pending is null)
+                {
+                    throw new InvalidDataException("Encountered a tile group OBU without a preceding frame header.");
+                }
 
-                int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
-                ObuTileGroup tileGroup = ObuTileGroup.Parse(payload[tileGroupStart..], frameHeader);
-
-                Av1TileDecoder tileDecoder = new(sequenceHeader, frameHeader);
-                tileDecoder.DecodeTiles(SliceTiles(payload, tileGroupStart, tileGroup));
-                return tileDecoder;
+                AddTileGroup(pending, payload);
+                if (pending.IsComplete)
+                {
+                    return FinishFrame(pending, sequenceHeader, referenceStore);
+                }
             }
         }
 
@@ -121,6 +133,7 @@ internal static class Av1DecoderCore
         while (IvfReader.TryReadFrame(stream, out _, out byte[] frame))
         {
             int offset = 0;
+            PendingFrame? pending = null;
             while (ObuReader.TryRead(frame, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
             {
                 EnsureBaseLayer(header);
@@ -139,7 +152,27 @@ internal static class Av1DecoderCore
                     Av1TileDecoder tileDecoder = DecodeFrame(payload, sequenceHeader, referenceStore, out _);
                     frames.Add(tileDecoder);
                 }
+                else if (header.Type == ObuType.FrameHeader && haveSequenceHeader
+                    && !TryPeekShowExistingSlot(payload, sequenceHeader, out _))
+                {
+                    pending = ParseFrameHeader(payload, sequenceHeader, referenceStore);
+                }
+                else if (header.Type == ObuType.TileGroup)
+                {
+                    if (pending is null)
+                    {
+                        throw new InvalidDataException("Encountered a tile group OBU without a preceding frame header.");
+                    }
+
+                    if (AddTileGroupAndTryFinish(pending, payload, sequenceHeader, referenceStore) is { } tileDecoder)
+                    {
+                        frames.Add(tileDecoder);
+                        pending = null;
+                    }
+                }
             }
+
+            EnsureNoPendingFrame(pending);
         }
 
         if (frames.Count == 0)
@@ -150,13 +183,31 @@ internal static class Av1DecoderCore
         return frames;
     }
 
-    // Parses a frame OBU header (dispatching between the intra and inter parsers), decodes its single
-    // tile (predicting inter frames from the reference store, loading the primary reference's CDF and
-    // header state when the frame has one) and publishes the reconstructed frame with its frame-end
-    // context into the reference slots it refreshes.
+    // Decodes a frame OBU: the frame header followed by a single tile group holding every tile of the
+    // frame (the header-parse and tile-decode halves are shared with the separate FRAME_HEADER +
+    // TILE_GROUP OBU layout).
     internal static Av1TileDecoder DecodeFrame(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader, Av1ReferenceFrameStore referenceStore, out ObuFrameHeader frameHeader)
     {
+        PendingFrame pending = ParseFrameHeader(payload, sequenceHeader, referenceStore);
+        frameHeader = pending.Header;
+
+        int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
+        AddTileGroup(pending, payload[tileGroupStart..]);
+        if (!pending.IsComplete)
+        {
+            throw new InvalidDataException("A frame OBU must contain every tile of the frame.");
+        }
+
+        return FinishFrame(pending, sequenceHeader, referenceStore);
+    }
+
+    // Parses a frame header (dispatching between the intra and inter parsers) and prepares the tile
+    // decoder that will reconstruct the frame: inter frames resolve their references from the store and
+    // start from the primary reference's saved CDF state when they have one.
+    internal static PendingFrame ParseFrameHeader(ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader, Av1ReferenceFrameStore referenceStore)
+    {
         Av1FrameType frameType = PeekFrameType(payload, sequenceHeader);
+        ObuFrameHeader frameHeader;
         Av1TileDecoder tileDecoder;
         if (frameType is Av1FrameType.Key or Av1FrameType.IntraOnly)
         {
@@ -186,17 +237,64 @@ internal static class Av1DecoderCore
             tileDecoder = new Av1InterTileDecoder(sequenceHeader, frameHeader, references, cdfs);
         }
 
-
         // With disable_frame_end_update_cdf the state saved at the frame end is the initial state, not
         // the adaptation the decode performs; snapshot it before decoding.
         Av1FrameCdfSet frameEndCdfs = frameHeader.DisableFrameEndUpdateCdf ? tileDecoder.Cdfs.Clone() : tileDecoder.Cdfs;
 
-        int tileGroupStart = (frameHeader.EndBitPosition + 7) >> 3;
-        ObuTileGroup tileGroup = ObuTileGroup.Parse(payload[tileGroupStart..], frameHeader);
-        tileDecoder.DecodeTiles(SliceTiles(payload, tileGroupStart, tileGroup));
+        return new PendingFrame(frameHeader, tileDecoder, frameEndCdfs);
+    }
+
+    // Collects the tiles of one tile group; the frame is complete once a group ends with the frame's
+    // last tile.
+    internal static void AddTileGroup(PendingFrame pending, ReadOnlySpan<byte> payload)
+    {
+        ObuFrameHeader frameHeader = pending.Header;
+        ObuTileGroup tileGroup = ObuTileGroup.Parse(payload, frameHeader);
+        if (tileGroup.FirstTile != pending.Tiles.Count)
+        {
+            throw new InvalidDataException($"Tile group starts at tile {tileGroup.FirstTile}, expected {pending.Tiles.Count}.");
+        }
+
+        for (int i = 0; i < tileGroup.Count; i++)
+        {
+            (int tileOffset, int tileLength) = tileGroup.GetTile(i);
+            pending.Tiles.Add(payload.Slice(tileOffset, tileLength).ToArray());
+        }
+
+        int numTiles = ((frameHeader.TileColumnStarts?.Length ?? 2) - 1) * ((frameHeader.TileRowStarts?.Length ?? 2) - 1);
+        if (tileGroup.LastTile == numTiles - 1)
+        {
+            pending.IsComplete = true;
+        }
+    }
+
+    // Collects one tile group and, once the frame's last tile arrived, decodes and publishes the frame.
+    internal static Av1TileDecoder? AddTileGroupAndTryFinish(PendingFrame pending, ReadOnlySpan<byte> payload, in ObuSequenceHeader sequenceHeader, Av1ReferenceFrameStore referenceStore)
+    {
+        AddTileGroup(pending, payload);
+        return pending.IsComplete ? FinishFrame(pending, sequenceHeader, referenceStore) : null;
+    }
+
+    // A coded frame's header and all of its tile groups must lie within one temporal unit.
+    internal static void EnsureNoPendingFrame(PendingFrame? pending)
+    {
+        if (pending is not null)
+        {
+            throw new InvalidDataException("The temporal unit ended with an incomplete frame (missing tile groups).");
+        }
+    }
+
+    // Decodes the collected tiles and publishes the reconstructed frame with its frame-end context
+    // (CDFs, header state, motion field) into the reference slots it refreshes.
+    internal static Av1TileDecoder FinishFrame(PendingFrame pending, in ObuSequenceHeader sequenceHeader, Av1ReferenceFrameStore referenceStore)
+    {
+        ObuFrameHeader frameHeader = pending.Header;
+        Av1TileDecoder tileDecoder = pending.Decoder;
+        tileDecoder.DecodeTiles(pending.Tiles);
 
         // The save zeroes every CDF's adaptation counter (dav1d's cdf_thread_update); a frame inheriting
         // the state keeps the adapted probabilities but restarts adaptation at the initial rate.
+        Av1FrameCdfSet frameEndCdfs = pending.FrameEndCdfs;
         frameEndCdfs.ResetCounters();
 
         // An inter frame saves its motion field (save_tmvs) and its own reference order hints so a later
@@ -233,6 +331,37 @@ internal static class Av1DecoderCore
         return tileDecoder;
     }
 
+    /// <summary>
+    /// A coded frame whose header OBU has been parsed but whose tiles are still being collected: the
+    /// FRAME_HEADER + TILE_GROUP OBU layout splits one frame across several OBUs, with the tiles
+    /// possibly spread over multiple tile groups.
+    /// </summary>
+    internal sealed class PendingFrame
+    {
+        public PendingFrame(in ObuFrameHeader header, Av1TileDecoder decoder, Av1FrameCdfSet frameEndCdfs)
+        {
+            this.Header = header;
+            this.Decoder = decoder;
+            this.FrameEndCdfs = frameEndCdfs;
+        }
+
+        /// <summary>Gets the parsed frame header.</summary>
+        public ObuFrameHeader Header { get; }
+
+        /// <summary>Gets the tile decoder prepared for this frame.</summary>
+        public Av1TileDecoder Decoder { get; }
+
+        /// <summary>Gets the CDF set to publish at the frame end (a pre-decode snapshot when the frame
+        /// disables the frame-end CDF update).</summary>
+        public Av1FrameCdfSet FrameEndCdfs { get; }
+
+        /// <summary>Gets the tiles collected so far, in tile order.</summary>
+        public List<ReadOnlyMemory<byte>> Tiles { get; } = [];
+
+        /// <summary>Gets or sets a value indicating whether every tile of the frame has been collected.</summary>
+        public bool IsComplete { get; set; }
+    }
+
     // Multi-layer (scalable) streams carry OBUs for enhancement layers; decoding them into the same
     // reference store would corrupt the base layer, so they are rejected until operating points are
     // supported.
@@ -242,20 +371,6 @@ internal static class Av1DecoderCore
         {
             throw new NotSupportedException("Scalable (multi-layer) streams are not supported yet.");
         }
-    }
-
-    // Copies each tile's compressed bytes out of the tile group (the tile decoder consumes them in
-    // tile raster order).
-    private static ReadOnlyMemory<byte>[] SliceTiles(ReadOnlySpan<byte> payload, int tileGroupStart, in ObuTileGroup tileGroup)
-    {
-        ReadOnlyMemory<byte>[] tiles = new ReadOnlyMemory<byte>[tileGroup.Count];
-        for (int i = 0; i < tiles.Length; i++)
-        {
-            (int tileOffset, int tileLength) = tileGroup.GetTile(i);
-            tiles[i] = payload.Slice(tileGroupStart + tileOffset, tileLength).ToArray();
-        }
-
-        return tiles;
     }
 
     /// <summary>
@@ -284,6 +399,7 @@ internal static class Av1DecoderCore
         while (IvfReader.TryReadFrame(stream, out _, out byte[] temporalUnit))
         {
             int offset = 0;
+            PendingFrame? pending = null;
             while (ObuReader.TryRead(temporalUnit, ref offset, out ObuHeader header, out ReadOnlySpan<byte> payload))
             {
                 EnsureBaseLayer(header);
@@ -305,19 +421,44 @@ internal static class Av1DecoderCore
                         frames.Add(new Av1DisplayFrame(tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV));
                     }
                 }
-                else if (header.Type == ObuType.FrameHeader && haveSequenceHeader
-                    && TryPeekShowExistingSlot(payload, sequenceHeader, out int slot))
+                else if (header.Type == ObuType.FrameHeader && haveSequenceHeader)
                 {
-                    Av1ReferenceFrame shown = referenceStore[slot]
-                        ?? throw new InvalidDataException($"show_existing_frame references the empty slot {slot}.");
-                    if (shown.IsKeyFrame)
+                    if (TryPeekShowExistingSlot(payload, sequenceHeader, out int slot))
                     {
-                        throw new NotSupportedException("show_existing_frame of a key frame (forward key frames) is not supported yet.");
+                        Av1ReferenceFrame shown = referenceStore[slot]
+                            ?? throw new InvalidDataException($"show_existing_frame references the empty slot {slot}.");
+                        if (shown.IsKeyFrame)
+                        {
+                            throw new NotSupportedException("show_existing_frame of a key frame (forward key frames) is not supported yet.");
+                        }
+
+                        frames.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
+                    }
+                    else
+                    {
+                        pending = ParseFrameHeader(payload, sequenceHeader, referenceStore);
+                    }
+                }
+                else if (header.Type == ObuType.TileGroup)
+                {
+                    if (pending is null)
+                    {
+                        throw new InvalidDataException("Encountered a tile group OBU without a preceding frame header.");
                     }
 
-                    frames.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
+                    if (AddTileGroupAndTryFinish(pending, payload, sequenceHeader, referenceStore) is { } tileDecoder)
+                    {
+                        if (pending.Header.ShowFrame)
+                        {
+                            frames.Add(new Av1DisplayFrame(tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV));
+                        }
+
+                        pending = null;
+                    }
                 }
             }
+
+            EnsureNoPendingFrame(pending);
         }
 
         if (frames.Count == 0)
