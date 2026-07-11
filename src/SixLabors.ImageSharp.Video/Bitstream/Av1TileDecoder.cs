@@ -1603,18 +1603,33 @@ internal class Av1TileDecoder
         this.chromaEdgeSmooth = IsSmoothMode(this.aboveUvMode[col >> this.subsamplingX]) || IsSmoothMode(this.leftUvMode[row >> this.subsamplingY]);
 
         // luma transform-block loop.
-        this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode, 0);
-
-        // chroma transform-block loop (single transform per plane for the sizes handled here).
-        if (hasChroma)
+        // Blocks wider or taller than 64 pixels are processed in 64x64 chunks, each decoding its luma
+        // transforms and then its chroma transforms (dav1d recon_b_intra's init_x/init_y loops); the
+        // interleave matters both for the coefficient neighbour contexts and for CfL, which reads
+        // reconstructed luma per chunk.
+        Av1TransformSize chromaTxSize = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
+        int chromaRow4 = row >> this.subsamplingY;
+        int chromaCol4 = col >> this.subsamplingX;
+        int uvModeForTxtp = uvMode;
+        Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => Av1ChromaTransformType.FromIntra(t, uvModeForTxtp);
+        for (int initY = 0; initY < height4; initY += 16)
         {
-            Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
-            int chromaRow = row >> this.subsamplingY;
-            int chromaCol = col >> this.subsamplingX;
-            int uvModeForTxtp = uvMode;
-            Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => Av1ChromaTransformType.FromIntra(t, uvModeForTxtp);
-            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1, cflAlphaU, chromaTransformTypeProvider: ChromaTxtp);
-            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, uvMode, uvAngleDelta, -1, cflAlphaV, chromaTransformTypeProvider: ChromaTxtp);
+            for (int initX = 0; initX < width4; initX += 16)
+            {
+                this.DecodePlane(
+                    this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode, 0,
+                    chunkX4: initX, chunkY4: initY, chunkEndX4: initX + 16, chunkEndY4: initY + 16);
+
+                if (hasChroma)
+                {
+                    int cx0 = initX >> this.subsamplingX;
+                    int cy0 = initY >> this.subsamplingY;
+                    int cx1 = (initX + 16) >> this.subsamplingX;
+                    int cy1 = (initY + 16) >> this.subsamplingY;
+                    this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow4, chromaCol4, bsize, chromaTxSize, uvMode, uvAngleDelta, -1, cflAlphaU, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1);
+                    this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow4, chromaCol4, bsize, chromaTxSize, uvMode, uvAngleDelta, -1, cflAlphaV, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1);
+                }
+            }
         }
 
         // record block-level neighbour contexts.
@@ -1698,17 +1713,19 @@ internal class Av1TileDecoder
         return tx;
     }
 
-    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, bool skip = false, Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader = null, Func<Av1TransformSize, int, int, Av1TransformType>? chromaTransformTypeProvider = null)
+    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, bool skip = false, Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader = null, Func<Av1TransformSize, int, int, Av1TransformType>? chromaTransformTypeProvider = null, int chunkX4 = 0, int chunkY4 = 0, int chunkEndX4 = int.MaxValue, int chunkEndY4 = int.MaxValue)
     {
         int blockWidth4 = planeIndex == 0 ? bsize.GetWidth4() : (bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX;
         int blockHeight4 = planeIndex == 0 ? bsize.GetHeight4() : (bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY;
         int txWidth4 = tx.GetWidth() >> 2;
         int txHeight4 = tx.GetHeight() >> 2;
         bool blockEqualsTx = blockWidth4 == txWidth4 && blockHeight4 == txHeight4;
+        int endX4 = Math.Min(blockWidth4, chunkEndX4);
+        int endY4 = Math.Min(blockHeight4, chunkEndY4);
 
-        for (int dy = 0; dy < blockHeight4; dy += txHeight4)
+        for (int dy = chunkY4; dy < endY4; dy += txHeight4)
         {
-            for (int dx = 0; dx < blockWidth4; dx += txWidth4)
+            for (int dx = chunkX4; dx < endX4; dx += txWidth4)
             {
                 this.DecodeTransformBlock(
                     plane, levels, planeIndex, miCol + dx, miRow + dy, bsize, tx, blockEqualsTx,
@@ -1792,6 +1809,11 @@ internal class Av1TileDecoder
         if (planeIndex == 0)
         {
             this.RecordLumaTransformType(txCol, txRow, txWidth4, txHeight4, txType);
+        }
+
+        if (Environment.GetEnvironmentVariable("IMAGESHARP_AV1_SYM_DBG") == "1")
+        {
+            File.AppendAllText("/tmp/hbd/ours_sym.txt", $"cf-blk[pl={planeIndex},tx={(int)tx},txtp={(int)txType},eob={eob}]: r={this.decoder.Range} @({txCol},{txRow})\n");
         }
 
         this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);

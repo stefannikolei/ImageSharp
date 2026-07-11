@@ -416,9 +416,10 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         this.currentBlockIsInter = true;
         Av1TransformSize maxLumaTx = bsize.GetMaxTransformSize();
         bool variableTransform = this.frameHeader.TxMode == 2 && !blockSkip && maxLumaTx != Av1TransformSize.Size4x4;
+        ushort[]? txSplitMasks = null;
         if (variableTransform)
         {
-            this.DecodeLumaVariableTransform(row, col, bsize, maxLumaTx);
+            txSplitMasks = this.ReadLumaTransformTree(row, col, bsize, maxLumaTx);
         }
         else
         {
@@ -426,17 +427,47 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             // later block's variable-transform tree sees it.
             Fill(this.interAboveTx, col, width4, (sbyte)(maxLumaTx.GetWidthLog2() - 2));
             Fill(this.interLeftTx, row, height4, (sbyte)(maxLumaTx.GetHeightLog2() - 2));
-            this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, maxLumaTx, 0, 0, -1, 0, blockSkip, this.ReadInterLumaTransformType);
         }
 
-        if (hasChroma)
+        // Coefficients are read in 64x64 chunks, each chunk's luma before its chroma (dav1d
+        // recon_b_inter); the interleave matters for blocks wider or taller than 64 pixels.
+        Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
+        int chromaRow = row >> this.subsamplingY;
+        int chromaCol = col >> this.subsamplingX;
+        Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => this.InterChromaTransformType(row, col, chromaRow, chromaCol, t, tc, tr);
+        int ytxW4 = maxLumaTx.GetWidth() >> 2;
+        int ytxH4 = maxLumaTx.GetHeight() >> 2;
+        for (int initY = 0; initY < height4; initY += 16)
         {
-            Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
-            int chromaRow = row >> this.subsamplingY;
-            int chromaCol = col >> this.subsamplingX;
-            Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => this.InterChromaTransformType(row, col, chromaRow, chromaCol, t, tc, tr);
-            this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip, chromaTransformTypeProvider: ChromaTxtp);
-            this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip, chromaTransformTypeProvider: ChromaTxtp);
+            for (int initX = 0; initX < width4; initX += 16)
+            {
+                if (variableTransform)
+                {
+                    for (int y = initY; y < Math.Min(height4, initY + 16); y += ytxH4)
+                    {
+                        for (int x = initX; x < Math.Min(width4, initX + 16); x += ytxW4)
+                        {
+                            this.ReconstructLumaTree(maxLumaTx, 0, txSplitMasks!, x / ytxW4, y / ytxH4, col + x, row + y, bsize);
+                        }
+                    }
+                }
+                else
+                {
+                    this.DecodePlane(
+                        this.luma, this.lumaLevels, 0, row, col, bsize, maxLumaTx, 0, 0, -1, 0, blockSkip, this.ReadInterLumaTransformType,
+                        chunkX4: initX, chunkY4: initY, chunkEndX4: initX + 16, chunkEndY4: initY + 16);
+                }
+
+                if (hasChroma)
+                {
+                    int cx0 = initX >> this.subsamplingX;
+                    int cy0 = initY >> this.subsamplingY;
+                    int cx1 = (initX + 16) >> this.subsamplingX;
+                    int cy1 = (initY + 16) >> this.subsamplingY;
+                    this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1);
+                    this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow, chromaCol, bsize, chromaTx, 0, 0, -1, 0, blockSkip, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1);
+                }
+            }
         }
 
         this.currentBlockIsInter = false;
@@ -1014,7 +1045,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // Reads the variable-transform split tree for the block, then reconstructs the luma residual by
     // walking the same tree and decoding each variable-sized transform leaf (a port of read_vartx_tree
     // followed by read_coef_tree). The tree read updates the transform-size neighbour arrays at the leaves.
-    private void DecodeLumaVariableTransform(int row, int col, Av1BlockSize bsize, Av1TransformSize maxLumaTx)
+    private ushort[] ReadLumaTransformTree(int row, int col, Av1BlockSize bsize, Av1TransformSize maxLumaTx)
     {
         int bw4 = bsize.GetWidth4();
         int bh4 = bsize.GetHeight4();
@@ -1034,15 +1065,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             }
         }
 
-        yOff = 0;
-        for (int y = 0; y < bh4; y += ytxH4, yOff++)
-        {
-            int xOff = 0;
-            for (int x = 0; x < bw4; x += ytxW4, xOff++)
-            {
-                this.ReconstructLumaTree(maxLumaTx, 0, masks, xOff, yOff, col + x, row + y, bsize);
-            }
-        }
+        return masks;
     }
 
     private void ReconstructLumaTree(Av1TransformSize tx, int depth, ushort[] masks, int xOffset, int yOffset, int txCol, int txRow, Av1BlockSize bsize)
