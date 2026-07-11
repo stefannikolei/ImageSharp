@@ -490,14 +490,21 @@ internal readonly struct ObuFrameHeader
         }
 
         int[] refFrameIndices = new int[7];
-        if (sequenceHeader.EnableOrderHint && reader.ReadBoolean())
+        bool shortSignaling = sequenceHeader.EnableOrderHint && reader.ReadBoolean();
+        if (shortSignaling)
         {
-            throw new NotSupportedException("frame_ref_short_signaling is not supported yet.");
+            int last = (int)reader.ReadLiteral(3);
+            int golden = (int)reader.ReadLiteral(3);
+            refFrameIndices = DeriveShortSignalingReferences(sequenceHeader.OrderHintBits, orderHint, referenceOrderHints, last, golden);
         }
 
         for (int i = 0; i < 7; i++)
         {
-            refFrameIndices[i] = (int)reader.ReadLiteral(3);
+            if (!shortSignaling)
+            {
+                refFrameIndices[i] = (int)reader.ReadLiteral(3);
+            }
+
             if (sequenceHeader.FrameIdNumbersPresent)
             {
                 reader.ReadLiteral(sequenceHeader.DeltaFrameIdLength); // delta_frame_id_minus_1
@@ -763,6 +770,102 @@ internal readonly struct ObuFrameHeader
         public int UpscaledWidth { get; }
 
         public int SuperresDenominator { get; }
+    }
+
+    /// <summary>
+    /// Derives the seven reference slots from the coded LAST and GOLDEN slots and the slots' order
+    /// hints (<c>frame_ref_short_signaling</c>; a port of dav1d's <c>set_frame_refs</c> in
+    /// <c>obu.c</c>): ALTREF takes the latest future slot, BWDREF and ALTREF2 the two earliest
+    /// remaining future slots, and the remaining forward references fill with the latest remaining
+    /// past slots (falling back to the overall earliest slot).
+    /// </summary>
+    /// <param name="orderHintBits">The sequence's order-hint bit count.</param>
+    /// <param name="orderHint">The current frame's order hint.</param>
+    /// <param name="slotOrderHints">The eight reference slots' order hints.</param>
+    /// <param name="last">The coded LAST slot.</param>
+    /// <param name="golden">The coded GOLDEN slot.</param>
+    /// <returns>The seven reference slots by reference name.</returns>
+    internal static int[] DeriveShortSignalingReferences(int orderHintBits, int orderHint, int[] slotOrderHints, int last, int golden)
+    {
+        int[] refidx = [last, -1, -1, golden, -1, -1, -1];
+
+        // Index -1 stores of unused selections land in the dummy first element (dav1d's
+        // frame_offset_mem[8+1] trick).
+        int[] offsetMem = new int[9];
+        Span<int> offset = offsetMem.AsSpan(1);
+        int earliestRef = -1;
+        int earliestOffset = int.MaxValue;
+        for (int i = 0; i < 8; i++)
+        {
+            int diff = GetOrderHintDiff(orderHintBits, slotOrderHints[i], orderHint);
+            offset[i] = diff;
+            if (diff < earliestOffset)
+            {
+                earliestOffset = diff;
+                earliestRef = i;
+            }
+        }
+
+        offsetMem[1 + last] = int.MinValue;
+        offsetMem[1 + golden] = int.MinValue;
+
+        // ALTREF: the latest future slot (largest non-negative difference).
+        int pick = -1;
+        for (int i = 0, latest = 0; i < 8; i++)
+        {
+            if (offset[i] >= latest)
+            {
+                latest = offset[i];
+                pick = i;
+            }
+        }
+
+        offsetMem[1 + pick] = int.MinValue;
+        refidx[6] = pick;
+
+        // BWDREF and ALTREF2: the two earliest remaining future slots (unsigned comparison rejects
+        // past slots and used markers).
+        for (int i = 4; i < 6; i++)
+        {
+            uint earliest = byte.MaxValue;
+            pick = -1;
+            for (int j = 0; j < 8; j++)
+            {
+                uint hint = (uint)offset[j];
+                if (hint < earliest)
+                {
+                    earliest = hint;
+                    pick = j;
+                }
+            }
+
+            offsetMem[1 + pick] = int.MinValue;
+            refidx[i] = pick;
+        }
+
+        // Remaining forward references: the latest remaining past slots.
+        for (int i = 1; i < 7; i++)
+        {
+            pick = refidx[i];
+            if (pick < 0)
+            {
+                uint latest = unchecked((uint)~byte.MaxValue);
+                for (int j = 0; j < 8; j++)
+                {
+                    uint hint = (uint)offset[j];
+                    if (hint >= latest)
+                    {
+                        latest = hint;
+                        pick = j;
+                    }
+                }
+
+                offsetMem[1 + pick] = int.MinValue;
+                refidx[i] = pick >= 0 ? pick : earliestRef;
+            }
+        }
+
+        return refidx;
     }
 
     // dav1d read_frame_size for inter, including the frame_size_with_refs found-reference path: the
