@@ -45,7 +45,8 @@ internal static class Av1MotionVectorFinder
         Av1MotionVector globalMv,
         bool globalMvSubstitution,
         ReadOnlySpan<int> signBias,
-        Av1TemporalMvContext? temporal = null)
+        Av1TemporalMvContext? temporal = null,
+        bool intraBlockCopy = false)
     {
         int bw4 = blockSize.GetWidth4();
         int bh4 = blockSize.GetHeight4();
@@ -171,8 +172,9 @@ internal static class Av1MotionVectorFinder
 
         stack.Sort(nearestCount);
 
-        // Single-reference extended candidates to fill towards two entries.
-        if (stack.Count < 2 && referenceFrame > 0)
+        // Single-reference extended candidates to fill towards two entries (not for intra block
+        // copy, whose reference is the frame itself: dav1d gates this on ref.ref[0] > 0).
+        if (stack.Count < 2 && referenceFrame > 0 && !intraBlockCopy)
         {
             int sign = signBias[referenceFrame - 1];
             int sz4 = Math.Min(w4, h4);

@@ -559,6 +559,75 @@ internal static class Av1Convolve
         }
     }
 
+    /// <summary>
+    /// Motion-compensates one block with the bilinear filter (dav1d's <c>put_bilin_c</c>), used by
+    /// intra block copy for the chroma half-pel positions a whole-pel luma vector produces. The
+    /// source window is read with clamped edge replication.
+    /// </summary>
+    /// <param name="dst">The destination samples.</param>
+    /// <param name="dstOffset">The offset of the block's top-left destination sample.</param>
+    /// <param name="dstStride">The destination row stride.</param>
+    /// <param name="refPlane">The source plane samples.</param>
+    /// <param name="refWidth">The source width the edge clamp uses.</param>
+    /// <param name="refHeight">The source height the edge clamp uses.</param>
+    /// <param name="refStride">The source row stride.</param>
+    /// <param name="dx">The integer source column.</param>
+    /// <param name="dy">The integer source row.</param>
+    /// <param name="w">The block width.</param>
+    /// <param name="h">The block height.</param>
+    /// <param name="mx">The horizontal sub-pel offset in 1/16 units.</param>
+    /// <param name="my">The vertical sub-pel offset in 1/16 units.</param>
+    /// <param name="bitDepth">The stream bit depth.</param>
+    public static void PredictBilinBlock(ushort[] dst, int dstOffset, int dstStride, ushort[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int bitDepth = 8)
+    {
+        int intermediateBits = IntermediateBits(bitDepth);
+        int intermediateRound = (1 << intermediateBits) >> 1;
+        int maxValue = (1 << bitDepth) - 1;
+
+        // Gather the (w+1)x(h+1) source window with clamped edge replication.
+        int bufStride = w + 1;
+        ushort[] buffer = new ushort[bufStride * (h + 1)];
+        for (int r = 0; r <= h; r++)
+        {
+            int sy = Clamp(dy + r, 0, refHeight - 1) * refStride;
+            for (int c = 0; c <= w; c++)
+            {
+                buffer[(r * bufStride) + c] = refPlane[sy + Clamp(dx + c, 0, refWidth - 1)];
+            }
+        }
+
+        for (int y = 0; y < h; y++)
+        {
+            int srcBase = y * bufStride;
+            int dstBase = dstOffset + (y * dstStride);
+            for (int x = 0; x < w; x++)
+            {
+                int value;
+                if (mx != 0 && my != 0)
+                {
+                    int top = ((16 * buffer[srcBase + x]) + (mx * (buffer[srcBase + x + 1] - buffer[srcBase + x])) + ((1 << (4 - intermediateBits)) >> 1)) >> (4 - intermediateBits);
+                    int bottom = ((16 * buffer[srcBase + bufStride + x]) + (mx * (buffer[srcBase + bufStride + x + 1] - buffer[srcBase + bufStride + x])) + ((1 << (4 - intermediateBits)) >> 1)) >> (4 - intermediateBits);
+                    value = ((16 * top) + (my * (bottom - top)) + ((1 << (4 + intermediateBits)) >> 1)) >> (4 + intermediateBits);
+                }
+                else if (mx != 0)
+                {
+                    int px = ((16 * buffer[srcBase + x]) + (mx * (buffer[srcBase + x + 1] - buffer[srcBase + x])) + ((1 << (4 - intermediateBits)) >> 1)) >> (4 - intermediateBits);
+                    value = (px + intermediateRound) >> intermediateBits;
+                }
+                else if (my != 0)
+                {
+                    value = ((16 * buffer[srcBase + x]) + (my * (buffer[srcBase + bufStride + x] - buffer[srcBase + x])) + 8) >> 4;
+                }
+                else
+                {
+                    value = buffer[srcBase + x];
+                }
+
+                dst[dstBase + x] = ClipPixel(value, maxValue);
+            }
+        }
+    }
+
     /// <summary>Gets dav1d's <c>get_intermediate_bits</c>: 4 for 8/10-bit, 2 for 12-bit.</summary>
     internal static int IntermediateBits(int bitDepth) => bitDepth == 8 ? 4 : 14 - bitDepth;
 

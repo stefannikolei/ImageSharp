@@ -213,7 +213,12 @@ internal static class Av1DecoderCore
         {
             Av1BitStreamReader reader = new(payload);
             frameHeader = ObuFrameHeader.ParseIntra(ref reader, sequenceHeader);
-            tileDecoder = new Av1TileDecoder(sequenceHeader, frameHeader);
+
+            // An intra frame with intra block copy reconstructs through the inter tile decoder,
+            // which carries the displacement-vector grid and the inter-style residual machinery.
+            tileDecoder = frameHeader.AllowIntraBlockCopy
+                ? new Av1InterTileDecoder(sequenceHeader, frameHeader)
+                : new Av1TileDecoder(sequenceHeader, frameHeader);
         }
         else
         {
@@ -298,10 +303,11 @@ internal static class Av1DecoderCore
         frameEndCdfs.ResetCounters();
 
         // An inter frame saves its motion field (save_tmvs) and its own reference order hints so a later
-        // frame's temporal motion-vector prediction can project them.
+        // frame's temporal motion-vector prediction can project them. An intra frame with intra block
+        // copy also decodes through the inter tile decoder but has no references and saves no field.
         Av1TemporalMvs? temporalMvs = null;
         int[]? referenceOrderHints = null;
-        if (tileDecoder is Av1InterTileDecoder interDecoder)
+        if (tileDecoder is Av1InterTileDecoder interDecoder && frameHeader.ReferenceFrameIndices is not null)
         {
             int[] storeHints = referenceStore.GetOrderHints();
             referenceOrderHints = new int[7];

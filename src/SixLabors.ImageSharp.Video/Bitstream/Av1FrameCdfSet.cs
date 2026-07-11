@@ -104,6 +104,8 @@ internal sealed class Av1FrameCdfSet
             Av1CdfTables.ResetCounters(plane);
         }
 
+        Av1CdfTables.ResetCounter(m.IntraBlockCopy);
+
         Av1CoefficientCdfContext c = this.Coefficient;
         Av1CdfTables.ResetCounters(c.Skip);
         Av1CdfTables.ResetCounters(c.DcSign);

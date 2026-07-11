@@ -95,13 +95,6 @@ public class Av1UnsupportedFeatureGuardTests
     }
 
     [Fact]
-    public void TileDecoder_IntraBlockCopy_Throws()
-    {
-        (ObuSequenceHeader sequence, ObuFrameHeader frame) = ParseHeaders();
-        Assert.Throws<NotSupportedException>(() => new Av1TileDecoder(sequence, frame with { AllowIntraBlockCopy = true }));
-    }
-
-    [Fact]
     public void EnsureBaseLayer_EnhancementLayer_Throws()
     {
         ObuHeader temporal = new(ObuType.Frame, hasExtension: true, hasSize: true, temporalId: 1, spatialId: 0);

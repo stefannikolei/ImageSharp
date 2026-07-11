@@ -18,7 +18,7 @@ namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 internal class Av1TileDecoder
 {
     // Intra mode context lookup (dav1d_intra_mode_context).
-    private static readonly int[] IntraModeContext = [0, 1, 2, 3, 4, 4, 4, 4, 3, 0, 1, 2, 0];
+    private protected static readonly int[] IntraModeContext = [0, 1, 2, 3, 4, 4, 4, 4, 3, 0, 1, 2, 0];
 
     private static readonly int[][] SkipContextTable =
     [
@@ -89,8 +89,8 @@ internal class Av1TileDecoder
     private readonly byte[] leftPartition;
     private protected readonly byte[] aboveSkip;
     private protected readonly byte[] leftSkip;
-    private readonly byte[] aboveMode;
-    private readonly byte[] leftMode;
+    private protected readonly byte[] aboveMode;
+    private protected readonly byte[] leftMode;
     private readonly byte[] aboveUvMode;
     private readonly byte[] leftUvMode;
     private protected readonly sbyte[] aboveTx;
@@ -285,11 +285,6 @@ internal class Av1TileDecoder
         if (frameHeader.CodedLossless)
         {
             throw new NotSupportedException("Lossless coding is not supported yet.");
-        }
-
-        if (frameHeader.AllowIntraBlockCopy)
-        {
-            throw new NotSupportedException("Intra block copy is not supported yet.");
         }
 
         this.segmentation = frameHeader.SegmentationParams ?? ObuSegmentationParams.Disabled;

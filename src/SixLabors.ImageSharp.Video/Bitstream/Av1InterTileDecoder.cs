@@ -52,6 +52,10 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // substitutes the motion-compensated samples instead of an intra prediction.
     private bool currentBlockIsInter;
 
+    // Whether this decoder reconstructs an intra frame with intra block copy: blocks read the
+    // intrabc flag and copy from the frame's own reconstruction instead of coding inter syntax.
+    private readonly bool intraBcFrame;
+
     private protected override bool CurrentBlockIsInter => this.currentBlockIsInter;
 
     // Per reference: the derived shear parameters of an applicable global-motion warp model, or null
@@ -80,6 +84,16 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame?[] references)
         : this(sequenceHeader, frameHeader, references, Av1FrameCdfSet.CreateDefault(frameHeader.BaseQIndex))
     {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class for an
+    /// intra frame with intra block copy (no reference frames; blocks copy from the frame itself).</summary>
+    /// <param name="sequenceHeader">The sequence header.</param>
+    /// <param name="frameHeader">The intra frame header (with <c>allow_intrabc</c>).</param>
+    public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader)
+        : this(sequenceHeader, frameHeader, new Av1ReferenceFrame?[7], Av1FrameCdfSet.CreateDefault(frameHeader.BaseQIndex))
+    {
+        this.intraBcFrame = true;
     }
 
     /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class.</summary>
@@ -241,6 +255,12 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
 
     private protected override void DecodeBlock(int row, int col, Av1BlockSize bsize, bool topRightAvailable)
     {
+        if (this.intraBcFrame)
+        {
+            this.DecodeIntraBcFrameBlock(row, col, bsize, topRightAvailable);
+            return;
+        }
+
         int width4 = bsize.GetWidth4();
         int height4 = bsize.GetHeight4();
         bool haveTop = row > this.tileBounds.RowStart;
@@ -426,6 +446,167 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         }
 
         this.DecodeInterResidual(row, col, bsize, skip, info, hasChroma);
+    }
+
+    // Decodes one block of an intra frame with intra block copy (dav1d decode_b's intrabc branch):
+    // the skip flag, then the intrabc flag; an intra block follows the key-frame path, an intrabc
+    // block derives its displacement vector from the spatial candidates, clips it to the decoded
+    // wavefront, copies from the frame's own reconstruction and adds an inter-style residual.
+    private void DecodeIntraBcFrameBlock(int row, int col, Av1BlockSize bsize, bool topRightAvailable)
+    {
+        int width4 = bsize.GetWidth4();
+        int height4 = bsize.GetHeight4();
+        int skip = this.ReadSkipFlag(row, col, width4, height4);
+        bool useIntraBc = this.decoder.ReadSymbol(this.modeCdf.IntraBlockCopy) != 0;
+        if (!useIntraBc)
+        {
+            int aboveModeContext = IntraModeContext[this.aboveMode[col]];
+            int leftModeContext = IntraModeContext[this.leftMode[row]];
+            int yMode = this.decoder.ReadSymbol(this.modeCdf.KeyFrameYMode[aboveModeContext][leftModeContext]);
+            this.DecodeIntraBlockBody(row, col, bsize, skip, yMode);
+            return;
+        }
+
+        bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
+                         (width4 > this.subsamplingX || (col & 1) != 0) &&
+                         (height4 > this.subsamplingY || (row & 1) != 0);
+
+        // Displacement-vector prediction: the spatial candidate scan over earlier intrabc blocks,
+        // with the fixed fallback pointing one superblock up or left (dav1d decode_b).
+        Av1MotionVectorStack stack = new();
+        Av1MotionVectorFinder.Find(
+            this.grid, stack, col, row, bsize, 1, this.options.Bounds, topRightAvailable,
+            this.options.ImageWidth4, this.options.ImageHeight4, default, false, this.options.SignBias, null, intraBlockCopy: true);
+        Span<Av1MotionVectorCandidate> candidates = stackalloc Av1MotionVectorCandidate[8];
+        stack.CopyTo(candidates);
+
+        int sb128 = this.sequenceHeader.Use128x128Superblock ? 1 : 0;
+        Av1MotionVector predictor;
+        if (candidates[0].MotionVector.X != 0 || candidates[0].MotionVector.Y != 0)
+        {
+            predictor = candidates[0].MotionVector;
+        }
+        else if (candidates[1].MotionVector.X != 0 || candidates[1].MotionVector.Y != 0)
+        {
+            predictor = candidates[1].MotionVector;
+        }
+        else if (row - (16 << sb128) < this.tileBounds.RowStart)
+        {
+            predictor = new Av1MotionVector(0, (short)(-(512 << sb128) - 2048));
+        }
+        else
+        {
+            predictor = new Av1MotionVector((short)(-(512 << sb128)), 0);
+        }
+
+        Av1MotionVector mv = Av1MotionVectorReader.ReadResidual(this.decoder, this.mvCdf, predictor, precision: -1);
+
+        // Clip the vector to the decoded parts of the current tile, keeping the 256-pixel wavefront
+        // lag to the current superblock (dav1d decode_b).
+        int borderLeft = this.tileBounds.ColumnStart * 4;
+        int borderTop = this.tileBounds.RowStart * 4;
+        if (hasChroma)
+        {
+            if (width4 < 2 && this.subsamplingX != 0)
+            {
+                borderLeft += 4;
+            }
+
+            if (height4 < 2 && this.subsamplingY != 0)
+            {
+                borderTop += 4;
+            }
+        }
+
+        int srcLeft = (col * 4) + (mv.X >> 3);
+        int srcTop = (row * 4) + (mv.Y >> 3);
+        int srcRight = srcLeft + (width4 * 4);
+        int srcBottom = srcTop + (height4 * 4);
+        int borderRight = ((this.tileBounds.ColumnEnd + (width4 - 1)) & ~(width4 - 1)) * 4;
+
+        if (srcLeft < borderLeft)
+        {
+            srcRight += borderLeft - srcLeft;
+            srcLeft = borderLeft;
+        }
+        else if (srcRight > borderRight)
+        {
+            srcLeft -= srcRight - borderRight;
+            srcRight = borderRight;
+        }
+
+        if (srcTop < borderTop)
+        {
+            srcBottom += borderTop - srcTop;
+            srcTop = borderTop;
+        }
+
+        int sbx = (col >> (4 + sb128)) << (6 + sb128);
+        int sby = (row >> (4 + sb128)) << (6 + sb128);
+        int sbSize = 1 << (6 + sb128);
+        if (srcBottom > sby && srcRight > sbx)
+        {
+            if (srcTop - borderTop >= srcBottom - sby)
+            {
+                srcTop -= srcBottom - sby;
+                srcBottom = sby;
+            }
+            else if (srcLeft - borderLeft >= srcRight - sbx)
+            {
+                srcLeft -= srcRight - sbx;
+                srcRight = sbx;
+            }
+        }
+
+        if (srcBottom > sby + sbSize)
+        {
+            srcTop -= srcBottom - (sby + sbSize);
+            srcBottom = sby + sbSize;
+        }
+
+        if (srcBottom > sby && srcRight > sbx)
+        {
+            throw new InvalidDataException("An intra-block-copy vector overlaps the current superblock.");
+        }
+
+        mv = new Av1MotionVector((short)((srcTop - (row * 4)) * 8), (short)((srcLeft - (col * 4)) * 8));
+
+        // Copy the block from the frame's own reconstruction: whole-pel luma, and chroma at the
+        // half-pel positions an odd luma vector produces (the bilinear filter, dav1d
+        // FILTER_2D_BILINEAR). The source clamp covers the mi-aligned reconstruction.
+        int lumaReadWidth = this.miColumns * 4;
+        int lumaReadHeight = this.miRows * 4;
+        Prediction.Av1Convolve.PredictBilinBlock(
+            this.luma.Samples, ((row * 4) * this.luma.Width) + (col * 4), this.luma.Width,
+            this.luma.Samples, lumaReadWidth, lumaReadHeight, this.luma.Width,
+            (col * 4) + (mv.X >> 3), (row * 4) + (mv.Y >> 3), width4 * 4, height4 * 4, 0, 0, this.sequenceHeader.BitDepth);
+        if (hasChroma)
+        {
+            int ssX = this.subsamplingX;
+            int ssY = this.subsamplingY;
+            int cbx = (col & ~ssX) * 4 >> ssX;
+            int cby = (row & ~ssY) * 4 >> ssY;
+            int cw = ((width4 << (width4 == ssX ? 1 : 0)) * 4) >> ssX;
+            int ch = ((height4 << (height4 == ssY ? 1 : 0)) * 4) >> ssY;
+            int cdx = (((col & ~ssX) * 4) >> ssX) + (mv.X >> (3 + ssX));
+            int cdy = (((row & ~ssY) * 4) >> ssY) + (mv.Y >> (3 + ssY));
+            int mx = (mv.X & (15 >> (ssX == 0 ? 1 : 0))) << (ssX == 0 ? 1 : 0);
+            int my = (mv.Y & (15 >> (ssY == 0 ? 1 : 0))) << (ssY == 0 ? 1 : 0);
+            foreach (Av1Plane plane in new[] { this.chromaU, this.chromaV })
+            {
+                Prediction.Av1Convolve.PredictBilinBlock(
+                    plane.Samples, (cby * plane.Width) + cbx, plane.Width,
+                    plane.Samples, lumaReadWidth >> ssX, lumaReadHeight >> ssY, plane.Width,
+                    cdx, cdy, cw, ch, mx, my, this.sequenceHeader.BitDepth);
+            }
+        }
+
+        // Inter-style residual and neighbour-context recording, then the vector splat for later
+        // candidate scans (dav1d splat_intrabc_mv).
+        Av1InterBlockInfo info = new(0, Av1InterPredictionMode.NewMv, 0, mv, 0, 0, Av1MotionMode.Translation);
+        this.DecodeInterResidual(row, col, bsize, skip, info, hasChroma);
+        Av1RefMvsBlock gridBlock = new(mv, default, 1, -1, bsize, isNewMv: false, isGlobalMv: false, isIntra: false);
+        this.grid.Fill(row, col, width4, height4, gridBlock);
     }
 
     // Adds the residual through the shared transform-block loop (substituting the motion-compensated

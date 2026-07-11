@@ -87,6 +87,9 @@ internal sealed class Av1ModeInfoCdfContext
     /// neighbour-pattern context.</summary>
     public ushort[][][][] PaletteColorMap { get; private set; } = default!;
 
+    /// <summary>Gets the intra-block-copy flag CDF.</summary>
+    public ushort[] IntraBlockCopy { get; private set; } = default!;
+
     /// <summary>
     /// Creates a mode-info CDF context initialized from the default tables.
     /// </summary>
@@ -117,6 +120,7 @@ internal sealed class Av1ModeInfoCdfContext
         PaletteUv = Clone(Av1DefaultModeInfoCdf.PaletteUv),
         PaletteSize = Clone(Av1DefaultModeInfoCdf.PaletteSize),
         PaletteColorMap = Clone(Av1DefaultModeInfoCdf.PaletteColorMap),
+        IntraBlockCopy = (ushort[])Av1DefaultModeInfoCdf.IntraBlockCopy.Clone(),
     };
 
     /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
@@ -147,6 +151,7 @@ internal sealed class Av1ModeInfoCdfContext
         PaletteUv = Clone(this.PaletteUv),
         PaletteSize = Clone(this.PaletteSize),
         PaletteColorMap = Clone(this.PaletteColorMap),
+        IntraBlockCopy = (ushort[])this.IntraBlockCopy.Clone(),
     };
 
     private static ushort[][] Clone(ushort[][] group)

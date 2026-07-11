@@ -495,4 +495,7 @@ internal static class Av1DefaultModeInfoCdf
         ],
     ];
 
+    /// <summary>dav1d <c>intrabc</c>: whether a block in an intra-block-copy frame copies from the frame.</summary>
+    public static readonly ushort[] IntraBlockCopy = [2237, 0, 0];
+
 }
