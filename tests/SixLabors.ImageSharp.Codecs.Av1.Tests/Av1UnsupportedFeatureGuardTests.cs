@@ -27,12 +27,13 @@ public class Av1UnsupportedFeatureGuardTests
     }
 
     [Fact]
-    public void SequenceHeader_TwelveBit_Throws()
+    public void SequenceHeader_TwelveBit_Parses()
     {
-        // seq_profile 2 with high_bitdepth = 1 and twelve_bit = 1 selects 12-bit.
+        // seq_profile 2 with high_bitdepth = 1 and twelve_bit = 1 selects 12-bit, which the decoder
+        // supports.
         byte[] payload = [0x58, 0x15, 0x7F, 0xBC, 0x0C, 0x61];
-        NotSupportedException ex = Assert.Throws<NotSupportedException>(() => ObuSequenceHeader.Parse(payload));
-        Assert.Contains("12-bit", ex.Message);
+        ObuSequenceHeader header = ObuSequenceHeader.Parse(payload);
+        Assert.Equal(12, header.BitDepth);
     }
 
     [Fact]
