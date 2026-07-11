@@ -67,26 +67,6 @@ public class Av1UnsupportedFeatureGuardTests
         Assert.Equal(1, header.SubsamplingY);
     }
 
-    // A real key-frame sequence/frame header pair (from Av1IntraTileDecoderTests); the frame header
-    // is mutated per feature to trigger each tile-decoder guard.
-    private static readonly byte[] SequencePayload = Convert.FromHexString("00000002afff9b5f3008");
-
-    private static readonly byte[] FramePayload = Convert.FromHexString("1000d00000028800001ff8195e23effcafeea34da6");
-
-    private static (ObuSequenceHeader Sequence, ObuFrameHeader Frame) ParseHeaders()
-    {
-        ObuSequenceHeader sequenceHeader = ObuSequenceHeader.Parse(SequencePayload);
-        Av1BitStreamReader reader = new(FramePayload);
-        return (sequenceHeader, ObuFrameHeader.ParseIntra(ref reader, sequenceHeader));
-    }
-
-    [Fact]
-    public void TileDecoder_CodedLossless_Throws()
-    {
-        (ObuSequenceHeader sequence, ObuFrameHeader frame) = ParseHeaders();
-        Assert.Throws<NotSupportedException>(() => new Av1TileDecoder(sequence, frame with { CodedLossless = true }));
-    }
-
     [Fact]
     public void EnsureBaseLayer_EnhancementLayer_Throws()
     {

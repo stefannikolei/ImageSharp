@@ -57,4 +57,7 @@ internal enum Av1TransformType
 
     /// <summary>Identity vertical, FLIPADST horizontal.</summary>
     HorizontalFlipAdst,
+
+    /// <summary>Walsh-Hadamard vertical and horizontal (lossless blocks only).</summary>
+    WhtWht,
 }

@@ -618,8 +618,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         int height4 = bsize.GetHeight4();
         bool blockSkip = skip != 0;
         this.currentBlockIsInter = true;
-        Av1TransformSize maxLumaTx = bsize.GetMaxTransformSize();
-        bool variableTransform = this.frameHeader.TxMode == 2 && !blockSkip && maxLumaTx != Av1TransformSize.Size4x4;
+        bool lossless = this.CurrentBlockLossless;
+        Av1TransformSize maxLumaTx = lossless ? Av1TransformSize.Size4x4 : bsize.GetMaxTransformSize();
+        bool variableTransform = this.frameHeader.TxMode == 2 && !blockSkip && !lossless && maxLumaTx != Av1TransformSize.Size4x4;
         ushort[]? txSplitMasks = null;
         if (variableTransform)
         {
@@ -635,10 +636,11 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
 
         // Coefficients are read in 64x64 chunks, each chunk's luma before its chroma (dav1d
         // recon_b_inter); the interleave matters for blocks wider or taller than 64 pixels.
-        Av1TransformSize chromaTx = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
+        Av1TransformSize chromaTx = lossless ? Av1TransformSize.Size4x4 : bsize.GetMaxChromaTransformSize(this.sequenceHeader);
         int chromaRow = row >> this.subsamplingY;
         int chromaCol = col >> this.subsamplingX;
-        Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => this.InterChromaTransformType(row, col, chromaRow, chromaCol, t, tc, tr);
+        Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr)
+            => lossless ? Av1TransformType.WhtWht : this.InterChromaTransformType(row, col, chromaRow, chromaCol, t, tc, tr);
         int ytxW4 = maxLumaTx.GetWidth() >> 2;
         int ytxH4 = maxLumaTx.GetHeight() >> 2;
         for (int initY = 0; initY < height4; initY += 16)
@@ -1311,6 +1313,13 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // (zero-quantizer) block implies DCT_DCT and codes no transform type.
     private Av1TransformType ReadInterLumaTransformType(Av1TransformSize transformSize)
     {
+        // A lossless block always uses the Walsh-Hadamard transform; a block whose segment-adjusted
+        // quantizer is zero without being lossless gets an implicit DCT (dav1d decode_coefs).
+        if (this.CurrentBlockLossless)
+        {
+            return Av1TransformType.WhtWht;
+        }
+
         int maxCategory = Math.Max(transformSize.GetWidthLog2() - 2, transformSize.GetHeightLog2() - 2);
         if (maxCategory >= 4 || this.frameHeader.BaseQIndex == 0)
         {

@@ -46,6 +46,30 @@ internal static class Av1InverseTransform2d
         int sw = Math.Min(w, 32);
         int sh = Math.Min(h, 32);
 
+        // The lossless Walsh-Hadamard transform (dav1d inv_txfm_add_wht_wht_4x4): the dequantized
+        // coefficients carry a factor of four that the >> 2 removes, and the 1D passes are exact.
+        if (transformType == Av1TransformType.WhtWht)
+        {
+            Span<int> wht = stackalloc int[16];
+            for (int y = 0; y < 4; y++)
+            {
+                for (int x = 0; x < 4; x++)
+                {
+                    wht[(y * 4) + x] = coefficients[(y * 4) + x] >> 2;
+                }
+
+                InverseWht4(wht.Slice(y * 4, 4), 1);
+            }
+
+            for (int x = 0; x < 4; x++)
+            {
+                InverseWht4(wht[x..], 4);
+            }
+
+            wht.CopyTo(residual);
+            return;
+        }
+
         int shift = RowShift[(int)transformSize];
         int round = (1 << shift) >> 1;
         bool isRect2 = (w * 2 == h) || (h * 2 == w);
@@ -109,4 +133,24 @@ internal static class Av1InverseTransform2d
     }
 
     private static int Clamp(int value, int min, int max) => Math.Clamp(value, min, max);
+    // dav1d inv_wht4_1d.
+    private static void InverseWht4(Span<int> c, int stride)
+    {
+        int in0 = c[0];
+        int in1 = c[stride];
+        int in2 = c[2 * stride];
+        int in3 = c[3 * stride];
+
+        int t0 = in0 + in1;
+        int t2 = in2 - in3;
+        int t4 = (t0 - t2) >> 1;
+        int t3 = t4 - in3;
+        int t1 = t4 - in1;
+
+        c[0] = t0 - t3;
+        c[stride] = t3;
+        c[2 * stride] = t1;
+        c[3 * stride] = t2 + t1;
+    }
+
 }

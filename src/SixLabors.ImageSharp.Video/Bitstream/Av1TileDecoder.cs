@@ -171,6 +171,12 @@ internal class Av1TileDecoder
     private readonly byte[] segmentMap;
     private int currentSegmentId;
 
+    // Whether each segment codes losslessly (4x4 Walsh-Hadamard transforms, dav1d's
+    // segmentation.lossless array).
+    private readonly bool[] losslessSegments = new bool[8];
+
+    private protected bool CurrentBlockLossless => this.losslessSegments[this.currentSegmentId];
+
     // Per-superblock quantizer/loop-filter delta state (dav1d ts->last_qidx / last_delta_lf), reset per
     // tile, and the current block's effective per-plane DC/AC quantizer indices.
     private int currentQIndex;
@@ -277,13 +283,21 @@ internal class Av1TileDecoder
 
         this.tileBounds = new Av1TileBounds(0, miCols, 0, miRows);
 
-        if (frameHeader.CodedLossless)
-        {
-            throw new NotSupportedException("Lossless coding is not supported yet.");
-        }
-
         this.segmentation = frameHeader.SegmentationParams ?? ObuSegmentationParams.Disabled;
         this.segmentMap = new byte[miCols * miRows];
+
+        // Per-segment lossless (dav1d segmentation.lossless): the segment-adjusted base quantizer is
+        // zero and no per-plane quantizer delta applies; such blocks use 4x4 Walsh-Hadamard
+        // transforms.
+        bool zeroDeltas = frameHeader.DeltaQYDc == 0 && frameHeader.DeltaQUDc == 0 && frameHeader.DeltaQUAc == 0
+            && frameHeader.DeltaQVDc == 0 && frameHeader.DeltaQVAc == 0;
+        for (int seg = 0; seg < 8; seg++)
+        {
+            int qidx = this.segmentation.Enabled
+                ? Math.Clamp(frameHeader.BaseQIndex + this.segmentation.DeltaQ[seg], 0, 255)
+                : frameHeader.BaseQIndex;
+            this.losslessSegments[seg] = qidx == 0 && zeroDeltas;
+        }
         if (this.segmentation.Enabled)
         {
             if (!this.segmentation.UpdateMap || this.segmentation.TemporalUpdate)
@@ -1600,6 +1614,7 @@ internal class Av1TileDecoder
         int leftModeContext = IntraModeContext[this.leftMode[row]];
         int yMode = this.decoder.ReadSymbol(this.modeCdf.KeyFrameYMode[aboveModeContext][leftModeContext]);
 
+
         this.DecodeIntraBlockBody(row, col, bsize, skip, yMode);
     }
 
@@ -1615,14 +1630,19 @@ internal class Av1TileDecoder
         EnsureSupportedMode(yMode);
         int yAngleDelta = this.ReadAngleDelta(yMode, bsize);
 
+
         // Chroma is decoded once per chroma unit; sub-sampled sub-8x8 luma blocks share it (dav1d
         // has_chroma).
         bool hasChroma = this.sequenceHeader.NumPlanes > 1 &&
                          (width4 > this.subsamplingX || (col & 1) != 0) &&
                          (height4 > this.subsamplingY || (row & 1) != 0);
 
-        // chroma intra mode.
-        bool cflAllowed = bsize.GetWidth4() <= 8 && bsize.GetHeight4() <= 8;
+        // chroma intra mode. For a lossless block CfL is only allowed when the chroma unit is a
+        // single 4x4 block (dav1d: cbw4 == 1 && cbh4 == 1); otherwise the usual up-to-32x32 rule.
+        bool lossless = this.CurrentBlockLossless;
+        bool cflAllowed = lossless
+            ? ((width4 + this.subsamplingX) >> this.subsamplingX) == 1 && ((height4 + this.subsamplingY) >> this.subsamplingY) == 1
+            : bsize.GetWidth4() <= 8 && bsize.GetHeight4() <= 8;
         int uvMode = 0;
         int uvAngleDelta = 0;
         int cflAlphaU = 0;
@@ -1630,6 +1650,7 @@ internal class Av1TileDecoder
         if (hasChroma)
         {
             uvMode = this.decoder.ReadSymbol(this.modeCdf.UvMode[cflAllowed ? 1 : 0][yMode]);
+
             if (uvMode == 13)
             {
                 this.ReadCflAlphas(out cflAlphaU, out cflAlphaV);
@@ -1727,11 +1748,12 @@ internal class Av1TileDecoder
         // transforms and then its chroma transforms (dav1d recon_b_intra's init_x/init_y loops); the
         // interleave matters both for the coefficient neighbour contexts and for CfL, which reads
         // reconstructed luma per chunk.
-        Av1TransformSize chromaTxSize = bsize.GetMaxChromaTransformSize(this.sequenceHeader);
+        Av1TransformSize chromaTxSize = lossless ? Av1TransformSize.Size4x4 : bsize.GetMaxChromaTransformSize(this.sequenceHeader);
         int chromaRow4 = row >> this.subsamplingY;
         int chromaCol4 = col >> this.subsamplingX;
         int uvModeForTxtp = uvMode;
-        Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => Av1ChromaTransformType.FromIntra(t, uvModeForTxtp);
+        Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr)
+            => lossless ? Av1TransformType.WhtWht : Av1ChromaTransformType.FromIntra(t, uvModeForTxtp);
         int chromaW4 = (width4 + this.subsamplingX) >> this.subsamplingX;
         int chromaH4 = (height4 + this.subsamplingY) >> this.subsamplingY;
         for (int initY = 0; initY < height4; initY += 16)
@@ -1744,6 +1766,7 @@ internal class Av1TileDecoder
                 bool sbHasBl = initX == 0 && (initY + 16 < height4 || (this.blockIntraEdgeFlags & Av1IntraEdgeFlags.I444LeftHasBottom) != 0);
                 this.DecodePlane(
                     this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode, 0,
+                    interTransformTypeReader: lossless ? static _ => Av1TransformType.WhtWht : null,
                     chunkX4: initX, chunkY4: initY, chunkEndX4: initX + 16, chunkEndY4: initY + 16,
                     sbHasTopRight: sbHasTr, sbHasBottomLeft: sbHasBl);
 
@@ -2133,6 +2156,12 @@ internal class Av1TileDecoder
 
     private Av1TransformSize ReadTransformSize(int row, int col, Av1BlockSize bsize)
     {
+        // A lossless block (and TX_MODE_ONLY_4X4) always uses 4x4 transforms.
+        if (this.CurrentBlockLossless || this.frameHeader.TxMode == 0)
+        {
+            return Av1TransformSize.Size4x4;
+        }
+
         Av1TransformSize maxTx = bsize.GetMaxTransformSize();
         int lw = maxTx.GetWidthLog2() - 2;
         int lh = maxTx.GetHeightLog2() - 2;
@@ -2260,6 +2289,7 @@ internal class Av1TileDecoder
         {
             this.RecordLumaTransformType(txCol, txRow, txWidth4, txHeight4, txType);
         }
+
 
         this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);
 
