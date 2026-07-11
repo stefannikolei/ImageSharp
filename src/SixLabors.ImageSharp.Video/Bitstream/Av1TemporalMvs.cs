@@ -173,40 +173,45 @@ internal sealed class Av1TemporalMvContext
             pocDiff[i] = Math.Clamp(Av1TemporalMvs.GetOrderHintDifference(bits, poc, refPoc[i]), -MaxProjectionDistance, MaxProjectionDistance);
         }
 
+        int stride8 = (frameHeader.ModeInfoColumns + 1) >> 1;
+        int rows8 = (frameHeader.ModeInfoRows + 1) >> 1;
+
+        // A reference's saved field is only usable when its coded dimensions match the current
+        // frame's coded dimensions (dav1d only binds ref_mvs when ref_w == f->bw && ref_h == f->bh).
+        Av1TemporalMvs? UsableMvs(Av1ReferenceFrame? reference)
+            => reference?.TemporalMvs is { } mvs && mvs.Stride8 == stride8 && mvs.Rows8 == rows8 ? mvs : null;
+
         // Motion-field reference selection: LAST (unless its ALTREF was the current GOLDEN), then up to
         // two future references (BWDREF, ALTREF2, ALTREF), topped up with LAST2.
         Span<int> fieldRefs = stackalloc int[3];
         int fieldCount = 0;
         int total = 2;
-        Av1TemporalMvs? lastMvs = references[0]?.TemporalMvs;
+        Av1TemporalMvs? lastMvs = UsableMvs(references[0]);
         if (lastMvs is not null && references[0]!.ReferenceOrderHints[6] != refPoc[3])
         {
             fieldRefs[fieldCount++] = 0;
             total = 3;
         }
 
-        if (references[4]?.TemporalMvs is not null && Av1TemporalMvs.GetOrderHintDifference(bits, refPoc[4], poc) > 0)
+        if (UsableMvs(references[4]) is not null && Av1TemporalMvs.GetOrderHintDifference(bits, refPoc[4], poc) > 0)
         {
             fieldRefs[fieldCount++] = 4;
         }
 
-        if (references[5]?.TemporalMvs is not null && Av1TemporalMvs.GetOrderHintDifference(bits, refPoc[5], poc) > 0)
+        if (UsableMvs(references[5]) is not null && Av1TemporalMvs.GetOrderHintDifference(bits, refPoc[5], poc) > 0)
         {
             fieldRefs[fieldCount++] = 5;
         }
 
-        if (fieldCount < total && references[6]?.TemporalMvs is not null && Av1TemporalMvs.GetOrderHintDifference(bits, refPoc[6], poc) > 0)
+        if (fieldCount < total && UsableMvs(references[6]) is not null && Av1TemporalMvs.GetOrderHintDifference(bits, refPoc[6], poc) > 0)
         {
             fieldRefs[fieldCount++] = 6;
         }
 
-        if (fieldCount < total && references[1]?.TemporalMvs is not null)
+        if (fieldCount < total && UsableMvs(references[1]) is not null)
         {
             fieldRefs[fieldCount++] = 1;
         }
-
-        int stride8 = (frameHeader.ModeInfoColumns + 1) >> 1;
-        int rows8 = (frameHeader.ModeInfoRows + 1) >> 1;
         Av1TemporalMvBlock[]? projected = fieldCount > 0 ? new Av1TemporalMvBlock[stride8 * rows8] : null;
 
         for (int n = 0; n < fieldCount; n++)

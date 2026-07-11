@@ -323,7 +323,16 @@ internal static class Av1DecoderCore
             tileDecoder.ChromaU,
             tileDecoder.ChromaV,
             frameEndCdfs,
-            new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas, frameHeader.GlobalMotionParams, frameHeader.SegmentationParams, frameHeader.FilmGrain),
+            new ObuPrimaryReferenceState(
+                lf.RefDeltas,
+                lf.ModeDeltas,
+                frameHeader.GlobalMotionParams,
+                frameHeader.SegmentationParams,
+                frameHeader.FilmGrain,
+                frameHeader.UpscaledWidth,
+                frameHeader.FrameHeight,
+                frameHeader.RenderWidth,
+                frameHeader.RenderHeight),
             temporalMvs,
             referenceOrderHints,
             frameHeader.FrameType == Av1FrameType.Key);

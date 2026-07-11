@@ -402,6 +402,163 @@ internal static class Av1Convolve
            (f[3] * src[x]) + (f[4] * src[x + stride]) + (f[5] * src[x + (2 * stride)]) +
            (f[6] * src[x + (3 * stride)]) + (f[7] * src[x + (4 * stride)]);
 
+    /// <summary>
+    /// Motion-compensates one block from a reference of a different resolution (a port of dav1d's
+    /// <c>put_8tap_scaled_c</c>): the source position advances by a 10-bit fixed-point step per output
+    /// sample, with the sub-pixel filter chosen per position. The source window (with its 3-sample
+    /// border) is gathered with clamped edge extension first (dav1d's <c>emu_edge</c>).
+    /// </summary>
+    /// <param name="dst">The destination samples.</param>
+    /// <param name="dstOffset">The offset of the first destination sample.</param>
+    /// <param name="dstStride">The destination row stride.</param>
+    /// <param name="refPlane">The reference plane samples.</param>
+    /// <param name="refWidth">The reference plane visible width.</param>
+    /// <param name="refHeight">The reference plane visible height.</param>
+    /// <param name="refStride">The reference plane row stride.</param>
+    /// <param name="posX">The horizontal source position in 1/1024-pel units.</param>
+    /// <param name="posY">The vertical source position in 1/1024-pel units.</param>
+    /// <param name="stepX">The horizontal source step per output sample in 1/1024-pel units.</param>
+    /// <param name="stepY">The vertical source step per output row in 1/1024-pel units.</param>
+    /// <param name="w">The block width.</param>
+    /// <param name="h">The block height.</param>
+    /// <param name="filterType">The combined 2D filter type.</param>
+    /// <param name="bitDepth">The stream bit depth.</param>
+    public static void PredictScaledBlock(ushort[] dst, int dstOffset, int dstStride, ushort[] refPlane, int refWidth, int refHeight, int refStride, int posX, int posY, int stepX, int stepY, int w, int h, int filterType, int bitDepth = 8)
+    {
+        ushort[] buffer = GatherScaled(refPlane, refWidth, refHeight, refStride, posX, posY, stepX, stepY, w, h, out int bufStride);
+        ScaledCore(dst, dstOffset, dstStride, null, buffer, (3 * bufStride) + 3, bufStride, w, h, posX & 0x3ff, posY & 0x3ff, stepX, stepY, filterType, bitDepth);
+    }
+
+    /// <summary>Produces the 16-bit compound intermediate from a scaled reference (dav1d <c>prep_8tap_scaled_c</c>).</summary>
+    /// <param name="tmp">The 16-bit intermediate buffer (dense, stride w).</param>
+    /// <param name="refPlane">The reference plane samples.</param>
+    /// <param name="refWidth">The reference plane visible width.</param>
+    /// <param name="refHeight">The reference plane visible height.</param>
+    /// <param name="refStride">The reference plane row stride.</param>
+    /// <param name="posX">The horizontal source position in 1/1024-pel units.</param>
+    /// <param name="posY">The vertical source position in 1/1024-pel units.</param>
+    /// <param name="stepX">The horizontal source step per output sample.</param>
+    /// <param name="stepY">The vertical source step per output row.</param>
+    /// <param name="w">The block width.</param>
+    /// <param name="h">The block height.</param>
+    /// <param name="filterType">The combined 2D filter type.</param>
+    /// <param name="bitDepth">The stream bit depth.</param>
+    public static void PrepScaledBlock(short[] tmp, ushort[] refPlane, int refWidth, int refHeight, int refStride, int posX, int posY, int stepX, int stepY, int w, int h, int filterType, int bitDepth = 8)
+    {
+        ushort[] buffer = GatherScaled(refPlane, refWidth, refHeight, refStride, posX, posY, stepX, stepY, w, h, out int bufStride);
+        ScaledCore(null, 0, 0, tmp, buffer, (3 * bufStride) + 3, bufStride, w, h, posX & 0x3ff, posY & 0x3ff, stepX, stepY, filterType, bitDepth);
+    }
+
+    private static ushort[] GatherScaled(ushort[] refPlane, int refWidth, int refHeight, int refStride, int posX, int posY, int stepX, int stepY, int w, int h, out int bufStride)
+    {
+        int left = posX >> 10;
+        int top = posY >> 10;
+        int right = ((posX + ((w - 1) * stepX)) >> 10) + 1;
+        int bottom = ((posY + ((h - 1) * stepY)) >> 10) + 1;
+        bufStride = right - left + 7;
+        int bufHeight = bottom - top + 7;
+        ushort[] buffer = new ushort[bufStride * bufHeight];
+        for (int r = 0; r < bufHeight; r++)
+        {
+            int sy = Clamp(top - 3 + r, 0, refHeight - 1) * refStride;
+            int rowBase = r * bufStride;
+            for (int c = 0; c < bufStride; c++)
+            {
+                buffer[rowBase + c] = refPlane[sy + Clamp(left - 3 + c, 0, refWidth - 1)];
+            }
+        }
+
+        return buffer;
+    }
+
+    // The shared scaled convolution: an 8-row ring of horizontally-filtered lines feeds the vertical
+    // taps, with per-position filter selection (dav1d put/prep_8tap_scaled_c).
+    private static void ScaledCore(ushort[]? dst, int dstOffset, int dstStride, short[]? tmp, ushort[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int dx, int dy, int filterType, int bitDepth)
+    {
+        int intermediateBits = IntermediateBits(bitDepth);
+        int intermediateRound = (1 << intermediateBits) >> 1;
+        int prepBias = bitDepth == 8 ? 0 : 8192;
+        int maxValue = (1 << bitDepth) - 1;
+
+        short[][] mid = new short[8][];
+        for (int i = 0; i < 8; i++)
+        {
+            mid[i] = new short[w];
+        }
+
+        int inY = -8;
+        int srcRow = srcOffset - (3 * srcStride);
+
+        for (int y = 0; y < h; y++)
+        {
+            int srcY = my >> 10;
+            int myFrac = (my & 0x3ff) >> 6;
+            sbyte[]? fv = myFrac == 0 ? null : (h > 4 ? SubpelFilters[filterType >> 2][myFrac - 1] : SubpelFilters[3 + ((filterType >> 2) & 1)][myFrac - 1]);
+
+            while (inY < srcY)
+            {
+                short[] rotated = mid[0];
+                for (int i = 0; i < 7; i++)
+                {
+                    mid[i] = mid[i + 1];
+                }
+
+                mid[7] = rotated;
+
+                int imx = mx;
+                int ioff = 0;
+                for (int x = 0; x < w; x++)
+                {
+                    int mxFrac = imx >> 6;
+                    sbyte[]? fh = mxFrac == 0 ? null : (w > 4 ? SubpelFilters[filterType & 3][mxFrac - 1] : SubpelFilters[3 + (filterType & 1)][mxFrac - 1]);
+                    rotated[x] = fh is not null
+                        ? (short)((Filter(src, srcRow + ioff, fh, 1) + ((1 << (6 - intermediateBits)) >> 1)) >> (6 - intermediateBits))
+                        : (short)(src[srcRow + ioff] << intermediateBits);
+                    imx += dx;
+                    ioff += imx >> 10;
+                    imx &= 0x3ff;
+                }
+
+                srcRow += srcStride;
+                inY++;
+            }
+
+            for (int x = 0; x < w; x++)
+            {
+                int v;
+                if (fv is not null)
+                {
+                    int sum = 0;
+                    for (int t = 0; t < 8; t++)
+                    {
+                        sum += fv[t] * mid[t][x];
+                    }
+
+                    if (dst is not null)
+                    {
+                        v = (sum + ((1 << (6 + intermediateBits)) >> 1)) >> (6 + intermediateBits);
+                        dst[dstOffset + (y * dstStride) + x] = ClipPixel(v, maxValue);
+                    }
+                    else
+                    {
+                        tmp![(y * w) + x] = (short)(((sum + 32) >> 6) - prepBias);
+                    }
+                }
+                else if (dst is not null)
+                {
+                    v = (mid[3][x] + intermediateRound) >> intermediateBits;
+                    dst[dstOffset + (y * dstStride) + x] = ClipPixel(v, maxValue);
+                }
+                else
+                {
+                    tmp![(y * w) + x] = (short)(mid[3][x] - prepBias);
+                }
+            }
+
+            my += dy;
+        }
+    }
+
     /// <summary>Gets dav1d's <c>get_intermediate_bits</c>: 4 for 8/10-bit, 2 for 12-bit.</summary>
     internal static int IntermediateBits(int bitDepth) => bitDepth == 8 ? 4 : 14 - bitDepth;
 

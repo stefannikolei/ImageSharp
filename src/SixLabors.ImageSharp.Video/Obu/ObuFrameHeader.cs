@@ -289,7 +289,7 @@ internal readonly struct ObuFrameHeader
         if (sequenceHeader.EnableSuperResolution && reader.ReadBoolean())
         {
             superresDenomIntra = (int)reader.ReadLiteral(3) + 9;
-            frameWidth = ((upscaledWidthIntra * 8) + (superresDenomIntra / 2)) / superresDenomIntra;
+            frameWidth = Math.Max(((upscaledWidthIntra * 8) + (superresDenomIntra / 2)) / superresDenomIntra, Math.Min(16, upscaledWidthIntra));
         }
 
         // render_size().
@@ -493,14 +493,7 @@ internal readonly struct ObuFrameHeader
         }
 
         bool useRef = !errorResilientMode && frameSizeOverride;
-        FrameSizeResult size = ReadFrameSizeInter(ref reader, sequenceHeader, useRef, frameSizeOverride);
-        if (size.SuperresDenominator > 8)
-        {
-            // Inter frames at a reduced super-resolution width predict from upscaled references,
-            // which requires scaled motion compensation.
-            throw new NotSupportedException("Super-resolution on inter frames is not supported yet.");
-        }
-
+        FrameSizeResult size = ReadFrameSizeInter(ref reader, sequenceHeader, useRef, frameSizeOverride, refFrameIndices, slotStates);
 
         bool allowHighPrecisionMv = !forceIntegerMv && reader.ReadBoolean();
         int interpolationFilter = reader.ReadBoolean() ? 4 : (int)reader.ReadLiteral(2);
@@ -757,8 +750,10 @@ internal readonly struct ObuFrameHeader
         public int SuperresDenominator { get; }
     }
 
-    // dav1d read_frame_size for inter (the use_ref found-reference path is not yet supported).
-    private static FrameSizeResult ReadFrameSizeInter(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool useRef, bool frameSizeOverride)
+    // dav1d read_frame_size for inter, including the frame_size_with_refs found-reference path: the
+    // frame inherits the first flagged reference's stored size and render size, then codes its own
+    // superres_params against that inherited upscaled width.
+    private static FrameSizeResult ReadFrameSizeInter(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, bool useRef, bool frameSizeOverride, int[] refFrameIndices, ObuPrimaryReferenceState?[]? slotStates)
     {
         if (useRef)
         {
@@ -766,7 +761,24 @@ internal readonly struct ObuFrameHeader
             {
                 if (reader.ReadBoolean())
                 {
-                    throw new NotSupportedException("frame_size_with_refs (found_ref) is not supported yet.");
+                    ObuPrimaryReferenceState reference = slotStates?[refFrameIndices[i]]
+                        ?? throw new InvalidDataException("frame_size_with_refs points at an empty reference slot.");
+                    int inheritedUpscaledWidth = reference.UpscaledWidth;
+                    int inheritedHeight = reference.FrameHeight;
+                    if (inheritedUpscaledWidth == 0 || inheritedHeight == 0)
+                    {
+                        throw new InvalidDataException("frame_size_with_refs points at a reference without a stored size.");
+                    }
+
+                    int codedWidth = inheritedUpscaledWidth;
+                    int denom = 8;
+                    if (sequenceHeader.EnableSuperResolution && reader.ReadBoolean())
+                    {
+                        denom = (int)reader.ReadLiteral(3) + 9;
+                        codedWidth = Math.Max(((inheritedUpscaledWidth * 8) + (denom / 2)) / denom, Math.Min(16, inheritedUpscaledWidth));
+                    }
+
+                    return new FrameSizeResult(codedWidth, inheritedHeight, reference.RenderWidth, reference.RenderHeight, inheritedUpscaledWidth, denom);
                 }
             }
         }
@@ -789,7 +801,7 @@ internal readonly struct ObuFrameHeader
         if (sequenceHeader.EnableSuperResolution && reader.ReadBoolean())
         {
             superresDenom = (int)reader.ReadLiteral(3) + 9;
-            frameWidth = ((upscaledWidth * 8) + (superresDenom / 2)) / superresDenom;
+            frameWidth = Math.Max(((upscaledWidth * 8) + (superresDenom / 2)) / superresDenom, Math.Min(16, upscaledWidth));
         }
 
         int renderWidth = upscaledWidth;

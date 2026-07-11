@@ -122,8 +122,12 @@ internal static class Av1SelfGuidedFilter
             return buf[(row * stride) + ax];
         }
 
+        // A stripe of odd height (only the frame-last stripe can be odd) needs one extra box5 a/b row
+        // centred at stripeEnd, whose 5-row window reaches stripeEnd+2; the row clamp replicates the
+        // last source row there, matching the reference decoder's padding of the sum rows.
+        int oddHeight = (stripeEnd - stripeTop) & 1;
         int rowTop = stripeTop - 3;
-        int rowBottom = stripeEnd + 1;
+        int rowBottom = stripeEnd + 1 + oddHeight;
         int rowCount = rowBottom - rowTop + 1;
         int[][] h5Sum = useBox5 ? new int[rowCount][] : null!;
         int[][] h5SumSq = useBox5 ? new int[rowCount][] : null!;
@@ -184,8 +188,9 @@ internal static class Av1SelfGuidedFilter
 
         int height = stripeEnd - stripeTop;
 
-        // box5 a/b at odd-offset centre rows (stripeTop-1, +1, +3, ...).
-        int box5Count = (height / 2) + 1;
+        // box5 a/b at odd-offset centre rows (stripeTop-1, +1, +3, ...; one extra for an odd height,
+        // whose last output row pairs the rows centred at stripeEnd-2 and stripeEnd).
+        int box5Count = (height / 2) + 1 + oddHeight;
         int[][] a5 = useBox5 ? new int[box5Count][] : null!;
         int[][] b5 = useBox5 ? new int[box5Count][] : null!;
         if (useBox5)

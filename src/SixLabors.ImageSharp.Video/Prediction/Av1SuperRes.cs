@@ -105,10 +105,19 @@ internal static class Av1SuperRes
     /// <param name="source">The coded-resolution plane.</param>
     /// <param name="outWidth">The upscaled visible width.</param>
     /// <param name="bitDepth">The stream bit depth.</param>
+    /// <param name="readWidth">The source width the kernel's edge clamp uses. The reference decoder
+    /// clamps at the 4x4-aligned coded width (<c>src_w = 4*f->bw >> ss_hor</c>), so the kernel reads
+    /// real reconstructed samples beyond an unaligned crop width; the step and phase still derive
+    /// from the cropped width. Zero uses the crop width.</param>
     /// <returns>The upscaled plane.</returns>
-    public static Av1Plane Upscale(Av1Plane source, int outWidth, int bitDepth)
+    public static Av1Plane Upscale(Av1Plane source, int outWidth, int bitDepth, int readWidth = 0)
     {
         int srcWidth = source.CropWidth;
+        if (readWidth == 0)
+        {
+            readWidth = srcWidth;
+        }
+
         int step = ComputeStep(srcWidth, outWidth);
         int start = ComputeStart(srcWidth, outWidth, step);
         int allocWidth = Math.Max(outWidth, (outWidth + 7) & ~7);
@@ -127,7 +136,7 @@ internal static class Av1SuperRes
                 int sum = 0;
                 for (int t = 0; t < 8; t++)
                 {
-                    sum += f[t] * source.Samples[srcRow + Math.Clamp(srcX - 3 + t, 0, srcWidth - 1)];
+                    sum += f[t] * source.Samples[srcRow + Math.Clamp(srcX - 3 + t, 0, readWidth - 1)];
                 }
 
                 dst.Samples[dstRow + x] = (ushort)Math.Clamp((-sum + 64) >> 7, 0, maxValue);

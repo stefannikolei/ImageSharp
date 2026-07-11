@@ -132,7 +132,8 @@ internal static class Av1InterModeInfoDecoder
             Av1WarpDerivation.FindMatchingRef(
                 grid, bx4, by4, bw4, bh4, w4, h4, haveLeft, haveTop, topRightAvailable,
                 options.Bounds.ColumnEnd, reference, masks);
-            bool allowWarp = !options.ForceIntegerMv
+            bool allowWarp = !options.ReferenceIsScaled[reference]
+                && !options.ForceIntegerMv
                 && options.AllowWarpedMotion
                 && (masks[0] | masks[1]) != 0;
 

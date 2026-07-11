@@ -9,8 +9,8 @@ namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 /// Generates the motion-compensated prediction for a single-reference inter block, deriving the
 /// integer reference position and sub-pixel offsets from the block position and motion vector and
 /// invoking the validated <see cref="Av1Convolve"/> sub-pixel interpolation. This is a port of the
-/// per-plane motion-compensation setup in the reference decoder's <c>mc</c> (<c>recon_tmpl.c</c>) for
-/// non-scaled, single-reference prediction.
+/// per-plane motion-compensation setup in the reference decoder's <c>mc</c> (<c>recon_tmpl.c</c>),
+/// including the scaled path taken when the reference has a different resolution than the frame.
 /// </summary>
 internal static class Av1InterPredictor
 {
@@ -33,6 +33,8 @@ internal static class Av1InterPredictor
     /// <param name="filter1">The second (horizontal) interpolation filter.</param>
     /// <param name="subsamplingX">The horizontal chroma subsampling (0 for luma).</param>
     /// <param name="subsamplingY">The vertical chroma subsampling (0 for luma).</param>
+    /// <param name="scaling">The reference's scaling parameters (unscaled by default).</param>
+    /// <param name="bitDepth">The stream bit depth.</param>
     public static void Predict(
         ushort[] destination,
         int destinationOffset,
@@ -50,8 +52,31 @@ internal static class Av1InterPredictor
         int filter1,
         int subsamplingX,
         int subsamplingY,
+        in Av1ReferenceScaling scaling = default,
         int bitDepth = 8)
     {
+        if (scaling.IsScaled)
+        {
+            ScaledCoordinates s = DeriveScaled(bx4, by4, blockWidth4, blockHeight4, motionVector, filter0, filter1, subsamplingX, subsamplingY, scaling);
+            Av1Convolve.PredictScaledBlock(
+                destination,
+                destinationOffset,
+                destinationStride,
+                reference,
+                referenceWidth,
+                referenceHeight,
+                referenceStride,
+                s.PosX,
+                s.PosY,
+                scaling.StepX,
+                scaling.StepY,
+                s.Width,
+                s.Height,
+                s.FilterType,
+                bitDepth);
+            return;
+        }
+
         Coordinates c = Derive(bx4, by4, blockWidth4, blockHeight4, motionVector, filter0, filter1, subsamplingX, subsamplingY);
         Av1Convolve.PredictBlock(
             destination,
@@ -89,6 +114,8 @@ internal static class Av1InterPredictor
     /// <param name="filter1">The second (horizontal) interpolation filter.</param>
     /// <param name="subsamplingX">The horizontal chroma subsampling (0 for luma).</param>
     /// <param name="subsamplingY">The vertical chroma subsampling (0 for luma).</param>
+    /// <param name="scaling">The reference's scaling parameters (unscaled by default).</param>
+    /// <param name="bitDepth">The stream bit depth.</param>
     public static void Prepare(
         short[] intermediate,
         ushort[] reference,
@@ -104,8 +131,29 @@ internal static class Av1InterPredictor
         int filter1,
         int subsamplingX,
         int subsamplingY,
+        in Av1ReferenceScaling scaling = default,
         int bitDepth = 8)
     {
+        if (scaling.IsScaled)
+        {
+            ScaledCoordinates s = DeriveScaled(bx4, by4, blockWidth4, blockHeight4, motionVector, filter0, filter1, subsamplingX, subsamplingY, scaling);
+            Av1Convolve.PrepScaledBlock(
+                intermediate,
+                reference,
+                referenceWidth,
+                referenceHeight,
+                referenceStride,
+                s.PosX,
+                s.PosY,
+                scaling.StepX,
+                scaling.StepY,
+                s.Width,
+                s.Height,
+                s.FilterType,
+                bitDepth);
+            return;
+        }
+
         Coordinates c = Derive(bx4, by4, blockWidth4, blockHeight4, motionVector, filter0, filter1, subsamplingX, subsamplingY);
         Av1Convolve.PrepBlock(
             intermediate,
@@ -151,12 +199,59 @@ internal static class Av1InterPredictor
         };
     }
 
+    // The scaled-reference position derivation of the reference decoder's mc(): the block position and
+    // motion vector combine into a 1/16-pel source position, which the scale maps into the reference's
+    // coordinate space in 1/1024-pel units (dav1d's scale_mv macro, including its +32 half-sample
+    // recentering of the 8-tap kernel).
+    private static ScaledCoordinates DeriveScaled(
+        int bx4,
+        int by4,
+        int blockWidth4,
+        int blockHeight4,
+        Av1MotionVector motionVector,
+        int filter0,
+        int filter1,
+        int subsamplingX,
+        int subsamplingY,
+        in Av1ReferenceScaling scaling)
+    {
+        int horizontalMultiplier = 4 >> subsamplingX;
+        int verticalMultiplier = 4 >> subsamplingY;
+        int origPosX = ((bx4 * horizontalMultiplier) << 4) + (motionVector.X * (subsamplingX == 0 ? 2 : 1));
+        int origPosY = ((by4 * verticalMultiplier) << 4) + (motionVector.Y * (subsamplingY == 0 ? 2 : 1));
+
+        return new ScaledCoordinates
+        {
+            PosX = ScaleMv(origPosX, scaling.ScaleX),
+            PosY = ScaleMv(origPosY, scaling.ScaleY),
+            Width = blockWidth4 * horizontalMultiplier,
+            Height = blockHeight4 * verticalMultiplier,
+            FilterType = filter1 | (filter0 << 2),
+        };
+    }
+
+    private static int ScaleMv(int value, int scale)
+    {
+        long tmp = ((long)value * scale) + ((scale - 0x4000L) * 8);
+        int magnitude = (int)((Math.Abs(tmp) + 128) >> 8);
+        return (tmp < 0 ? -magnitude : magnitude) + 32;
+    }
+
     private struct Coordinates
     {
         public int Dx;
         public int Dy;
         public int Mx;
         public int My;
+        public int Width;
+        public int Height;
+        public int FilterType;
+    }
+
+    private struct ScaledCoordinates
+    {
+        public int PosX;
+        public int PosY;
         public int Width;
         public int Height;
         public int FilterType;

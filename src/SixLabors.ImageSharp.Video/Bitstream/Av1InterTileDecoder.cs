@@ -17,8 +17,10 @@ namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 /// the shared intra body. Frames may inherit their CDF state via <c>primary_ref_frame</c> and predict
 /// motion vectors temporally via <c>use_ref_frame_mvs</c>. Single-reference prediction covers
 /// translation, global and local warp, overlapped and inter-intra blocks; compound prediction covers
-/// the average, distance-agnostic masked (segmented and wedge) blends and skip mode. Only
-/// distance-weighted compound remains guarded behind its sequence flag.
+/// the average, distance-agnostic masked (segmented and wedge) blends and skip mode. References of a
+/// different resolution than the frame (super-resolution or frame-size changes) are predicted through
+/// the scaled motion-compensation path. Only distance-weighted compound remains guarded behind its
+/// sequence flag.
 /// </summary>
 internal sealed class Av1InterTileDecoder : Av1TileDecoder
 {
@@ -55,6 +57,10 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // Per reference: the derived shear parameters of an applicable global-motion warp model, or null
     // when the reference's model is identity/translation or too sheared to warp.
     private readonly short[]?[] globalWarpShear = new short[7][];
+
+    // Per reference: the scaling factors of a reference whose stored resolution differs from the
+    // frame's coded resolution (dav1d's f->svc); unscaled references carry the default.
+    private readonly Av1ReferenceScaling[] referenceScaling = new Av1ReferenceScaling[7];
 
     /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class with a single
     /// reference frame used for every reference name (two-frame clips, where all slots hold the key frame).</summary>
@@ -108,6 +114,19 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         this.grid = new Av1MotionVectorGrid(columns4, rows4);
         this.interNeighbours = new Av1InterNeighbourContext(columns4, rows4);
 
+        // Scaled references: a reference stored at a different resolution than this frame's coded size
+        // (super-resolution or an explicit size change) is motion-compensated through the scaled path.
+        bool[] referenceIsScaled = new bool[7];
+        for (int i = 0; i < 7; i++)
+        {
+            if (references[i] is { } scaledRef)
+            {
+                this.referenceScaling[i] = Av1ReferenceScaling.Compute(
+                    scaledRef.Luma.CropWidth, scaledRef.Luma.CropHeight, frameHeader.FrameWidth, frameHeader.FrameHeight);
+                referenceIsScaled[i] = this.referenceScaling[i].IsScaled;
+            }
+        }
+
         // Sign bias: whether each reference lies in the future of the current frame.
         int[] signBias = new int[7];
         int orderHintBits = sequenceHeader.OrderHintBits;
@@ -134,14 +153,16 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             frameHeader.AllowWarpedMotion,
             Av1TemporalMvContext.Create(sequenceHeader, frameHeader, references),
             sequenceHeader.EnableMaskedCompound,
-            sequenceHeader.EnableInterIntraCompound);
+            sequenceHeader.EnableInterIntraCompound,
+            referenceIsScaled);
 
         // Whether each reference's global-motion model can be applied as a warp (dav1d
-        // gmv_warp_allowed): a non-translation model whose shear parameters are within limits.
+        // gmv_warp_allowed): a non-translation model whose shear parameters are within limits,
+        // and an unscaled reference (warp does not apply across resolutions).
         for (int i = 0; i < 7; i++)
         {
             Av1WarpedMotionParams model = frameHeader.GlobalMotionParams[i];
-            if (!frameHeader.ForceIntegerMv && model.Type > Av1WarpModelType.Translation)
+            if (!frameHeader.ForceIntegerMv && model.Type > Av1WarpModelType.Translation && !referenceIsScaled[i])
             {
                 short[] shear = new short[4];
                 if (!Prediction.Av1WarpedMotion.TryGetShearParams(model.Matrix, shear))
@@ -544,7 +565,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             {
                 Av1InterPredictor.Prepare(
                     intermediate, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
-                    col, row, width4, height4, motionVector, info.Filter0, info.Filter1, ssX, ssY, this.sequenceHeader.BitDepth);
+                    col, row, width4, height4, motionVector, info.Filter0, info.Filter1, ssX, ssY, this.referenceScaling[reference], this.sequenceHeader.BitDepth);
             }
         }
 
@@ -770,8 +791,8 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     private void ChromaMcPiece(int reference, int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)
     {
         Av1ReferenceFrame referenceFrame = this.GetReference(reference);
-        this.ChromaMcPlane(this.chromaU, referenceFrame.ChromaU!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
-        this.ChromaMcPlane(this.chromaV, referenceFrame.ChromaV!, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
+        this.ChromaMcPlane(this.chromaU, referenceFrame.ChromaU!, reference, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
+        this.ChromaMcPlane(this.chromaV, referenceFrame.ChromaV!, reference, pieceCol, pieceRow, width4, height4, motionVector, filter0, filter1, dstX, dstY);
     }
 
     // dav1d obmc_masks: the overlapped-prediction blend weights, indexed by the blend dimension.
@@ -826,7 +847,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                     Av1Plane referencePlane = this.GetReferencePlane(aboveBlock.Reference0 - 1, plane);
                     Av1InterPredictor.Predict(
                         lap, 0, ow4 * hMul, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
-                        col + x, row, ow4, ((oh4 * 3) + 3) >> 2, aboveBlock.MotionVector0, f0, f1, ssX, ssY, this.sequenceHeader.BitDepth);
+                        col + x, row, ow4, ((oh4 * 3) + 3) >> 2, aboveBlock.MotionVector0, f0, f1, ssX, ssY, this.referenceScaling[aboveBlock.Reference0 - 1], this.sequenceHeader.BitDepth);
                     BlendFromAbove(destination, dstBase + (x * hMul), lap, ow4 * hMul, oh4 * vMul);
                     i++;
                 }
@@ -855,7 +876,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                     Av1Plane referencePlane = this.GetReferencePlane(leftBlock.Reference0 - 1, plane);
                     Av1InterPredictor.Predict(
                         lap, 0, ow4 * hMul, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
-                        col, row + y, ow4, oh4, leftBlock.MotionVector0, f0, f1, ssX, ssY, this.sequenceHeader.BitDepth);
+                        col, row + y, ow4, oh4, leftBlock.MotionVector0, f0, f1, ssX, ssY, this.referenceScaling[leftBlock.Reference0 - 1], this.sequenceHeader.BitDepth);
                     BlendFromLeft(destination, dstBase + (y * vMul * destination.Width), lap, ow4 * hMul, oh4 * vMul);
                     i++;
                 }
@@ -956,7 +977,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         }
     }
 
-    private void ChromaMcPlane(Av1Plane destination, Av1Plane reference, int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)
+    private void ChromaMcPlane(Av1Plane destination, Av1Plane reference, int referenceIndex, int pieceCol, int pieceRow, int width4, int height4, Av1MotionVector motionVector, int filter0, int filter1, int dstX, int dstY)
         => Av1InterPredictor.Predict(
             destination.Samples,
             (dstY * destination.Width) + dstX,
@@ -974,6 +995,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             filter1,
             this.subsamplingX,
             this.subsamplingY,
+            this.referenceScaling[referenceIndex],
             this.sequenceHeader.BitDepth);
 
     private protected override void OnIntraBlockDecoded(int row, int col, Av1BlockSize bsize, int skip, int yMode, Av1TransformSize lumaTx)
@@ -1139,6 +1161,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             info.Filter1,
             subsamplingX,
             subsamplingY,
+            this.referenceScaling[info.Reference],
             this.sequenceHeader.BitDepth);
     }
 }

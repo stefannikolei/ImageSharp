@@ -37,7 +37,8 @@ internal readonly struct Av1InterModeInfoOptions
         bool allowWarpedMotion = false,
         Av1TemporalMvContext? temporal = null,
         bool enableMaskedCompound = false,
-        bool enableInterIntra = false)
+        bool enableInterIntra = false,
+        bool[]? referenceIsScaled = null)
     {
         this.AllowWarpedMotion = allowWarpedMotion;
         this.EnableMaskedCompound = enableMaskedCompound;
@@ -53,6 +54,7 @@ internal readonly struct Av1InterModeInfoOptions
         this.GlobalMotion = globalMotion;
         this.SignBias = signBias;
         this.Temporal = temporal;
+        this.ReferenceIsScaled = referenceIsScaled ?? new bool[7];
     }
 
     /// <summary>Gets the tile bounds in 4x4 units.</summary>
@@ -97,6 +99,10 @@ internal readonly struct Av1InterModeInfoOptions
     /// <summary>Gets the temporal motion-vector prediction state, or <see langword="null"/>.</summary>
     public Av1TemporalMvContext? Temporal { get; }
 
+    /// <summary>Gets, per zero-based reference, whether the reference is scaled (which disallows
+    /// the WARP motion mode for blocks predicting from it).</summary>
+    public bool[] ReferenceIsScaled { get; }
+
     /// <summary>Returns a copy of these options with the tile bounds replaced (per-tile decoding).</summary>
     /// <param name="bounds">The new tile bounds.</param>
     /// <returns>The re-bounded options.</returns>
@@ -114,5 +120,6 @@ internal readonly struct Av1InterModeInfoOptions
         this.AllowWarpedMotion,
         this.Temporal,
         this.EnableMaskedCompound,
-        this.EnableInterIntra);
+        this.EnableInterIntra,
+        this.ReferenceIsScaled);
 }

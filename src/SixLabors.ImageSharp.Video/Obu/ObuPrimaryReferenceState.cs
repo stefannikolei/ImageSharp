@@ -16,7 +16,12 @@ namespace SixLabors.ImageSharp.Formats.Av1.Obu;
 /// feature data inherits this table).</param>
 /// <param name="FilmGrain">The frame's film-grain parameters (referenced by a later frame's
 /// <c>film_grain_params_ref_idx</c>), or <see langword="null"/>.</param>
-internal sealed record ObuPrimaryReferenceState(int[] LoopFilterRefDeltas, int[] LoopFilterModeDeltas, Av1WarpedMotionParams[] GlobalMotion, ObuSegmentationParams Segmentation, ObuFilmGrainParams? FilmGrain = null)
+/// <param name="UpscaledWidth">The frame's stored (post-super-resolution) width, inherited by a later
+/// frame's <c>frame_size_with_refs</c>.</param>
+/// <param name="FrameHeight">The frame's height.</param>
+/// <param name="RenderWidth">The frame's render width.</param>
+/// <param name="RenderHeight">The frame's render height.</param>
+internal sealed record ObuPrimaryReferenceState(int[] LoopFilterRefDeltas, int[] LoopFilterModeDeltas, Av1WarpedMotionParams[] GlobalMotion, ObuSegmentationParams Segmentation, ObuFilmGrainParams? FilmGrain = null, int UpscaledWidth = 0, int FrameHeight = 0, int RenderWidth = 0, int RenderHeight = 0)
 {
     /// <summary>Creates the specification-default state (<c>setup_past_independence</c>).</summary>
     /// <returns>The default state.</returns>

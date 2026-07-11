@@ -214,9 +214,12 @@ internal class Av1TileDecoder
         // The intra tx-size context is initialised to -1 at the frame edge (dav1d's tx_intra reset),
         // so an unavailable neighbour never satisfies the ">= current tx category" comparison.
         Array.Fill(this.aboveTx, (sbyte)-1);
+        // The chroma context length is the subsampled-and-rounded-up mi count ((f->bw + ss_hor) >>
+        // ss_hor): the reference decoder clips context stores there, so a transform overhanging the
+        // frame edge leaves the cells beyond it at the baseline for later context reads.
         this.lumaLevels = new LevelContext(miCols, miRows);
-        this.chromaULevels = new LevelContext((miCols >> this.subsamplingX) + 1, (miRows >> this.subsamplingY) + 1);
-        this.chromaVLevels = new LevelContext((miCols >> this.subsamplingX) + 1, (miRows >> this.subsamplingY) + 1);
+        this.chromaULevels = new LevelContext((miCols + this.subsamplingX) >> this.subsamplingX, (miRows + this.subsamplingY) >> this.subsamplingY);
+        this.chromaVLevels = new LevelContext((miCols + this.subsamplingX) >> this.subsamplingX, (miRows + this.subsamplingY) >> this.subsamplingY);
 
         this.miColumns = miCols;
         this.miRows = miRows;
@@ -462,12 +465,14 @@ internal class Av1TileDecoder
         if (this.frameHeader.UseSuperres)
         {
             int bitDepth = this.sequenceHeader.BitDepth;
-            this.luma = Av1SuperRes.Upscale(this.luma, this.frameHeader.UpscaledWidth, bitDepth);
+            int lumaReadWidth = this.frameHeader.ModeInfoColumns << 2;
+            int chromaReadWidth = lumaReadWidth >> this.subsamplingX;
+            this.luma = Av1SuperRes.Upscale(this.luma, this.frameHeader.UpscaledWidth, bitDepth, lumaReadWidth);
             if (this.sequenceHeader.NumPlanes > 1)
             {
                 int upscaledChroma = (this.frameHeader.UpscaledWidth + this.subsamplingX) >> this.subsamplingX;
-                this.chromaU = Av1SuperRes.Upscale(this.chromaU, upscaledChroma, bitDepth);
-                this.chromaV = Av1SuperRes.Upscale(this.chromaV, upscaledChroma, bitDepth);
+                this.chromaU = Av1SuperRes.Upscale(this.chromaU, upscaledChroma, bitDepth, chromaReadWidth);
+                this.chromaV = Av1SuperRes.Upscale(this.chromaV, upscaledChroma, bitDepth, chromaReadWidth);
             }
 
             for (int pl = 0; pl < 3; pl++)
@@ -477,7 +482,7 @@ internal class Av1TileDecoder
                     int upscaled = pl == 0
                         ? this.frameHeader.UpscaledWidth
                         : (this.frameHeader.UpscaledWidth + this.subsamplingX) >> this.subsamplingX;
-                    this.deblockSnapshot[pl] = Av1SuperRes.Upscale(snapshot, upscaled, bitDepth);
+                    this.deblockSnapshot[pl] = Av1SuperRes.Upscale(snapshot, upscaled, bitDepth, pl == 0 ? lumaReadWidth : chromaReadWidth);
                 }
             }
         }
