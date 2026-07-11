@@ -5,7 +5,7 @@ namespace SixLabors.ImageSharp.Formats.Av1.Prediction;
 
 /// <summary>
 /// The Wiener loop-restoration filter (specification section 7.17.3), a port of dav1d's separable
-/// <c>wiener_filter_h</c> / <c>wiener_filter_v</c> kernels for 8-bit samples. The horizontal pass
+/// <c>wiener_filter_h</c> / <c>wiener_filter_v</c> kernels. The horizontal pass
 /// produces a rounded 16-bit intermediate row; the vertical pass combines seven such rows into the final
 /// restored sample. The surrounding restoration-unit driver (row-window management with top/bottom edge
 /// extension) builds on these kernels.
@@ -24,8 +24,7 @@ internal static class Av1WienerFilter
     }
 
     /// <summary>
-    /// Applies the horizontal Wiener pass to a single row (a port of dav1d's <c>wiener_filter_h</c> for
-    /// 8-bit). Produces a rounded 16-bit intermediate value per sample. When the right edge is available
+    /// Applies the horizontal Wiener pass to a single row (a port of dav1d's <c>wiener_filter_h</c>). Produces a rounded 16-bit intermediate value per sample. When the right edge is available
     /// the kernel reads up to three samples past the row (<paramref name="src"/> must include them, as in
     /// dav1d's restoration-unit buffer); otherwise the rightmost sample is replicated.
     /// </summary>
@@ -36,19 +35,20 @@ internal static class Av1WienerFilter
     /// <param name="fh">The seven horizontal filter taps.</param>
     /// <param name="w">The row width.</param>
     /// <param name="edges">The available horizontal edges.</param>
-    public static void FilterHorizontal(Span<ushort> dst, ReadOnlySpan<ushort> src, int srcOffset, ReadOnlySpan<ushort> left, ReadOnlySpan<short> fh, int w, EdgeFlags edges)
+    public static void FilterHorizontal(Span<ushort> dst, ReadOnlySpan<ushort> src, int srcOffset, ReadOnlySpan<ushort> left, ReadOnlySpan<short> fh, int w, EdgeFlags edges, int bitDepth = 8)
     {
-        const int bitdepth = 8;
-        const int roundBitsH = 3;
-        const int roundingOffH = 1 << (roundBitsH - 1);
-        const int clipLimit = 1 << (bitdepth + 1 + 7 - roundBitsH);
+        int roundBitsH = 3 + ((bitDepth == 12) ? 2 : 0);
+        int roundingOffH = 1 << (roundBitsH - 1);
+        int clipLimit = 1 << (bitDepth + 1 + 7 - roundBitsH);
         bool haveLeft = (edges & EdgeFlags.Left) != 0;
         bool haveRight = (edges & EdgeFlags.Right) != 0;
         bool hasLeftBuffer = left.Length > 0;
 
         for (int x = 0; x < w; x++)
         {
-            int sum = (1 << (bitdepth + 6)) + (src[srcOffset + x] * 128);
+            // For 8-bit the +128 centre-tap boost is applied separately (dav1d keeps it out of the
+            // taps to stay within 16-bit SIMD); for high bit depth it is baked into fh[3].
+            int sum = (1 << (bitDepth + 6)) + (bitDepth == 8 ? src[srcOffset + x] * 128 : 0);
             for (int i = 0; i < 7; i++)
             {
                 int idx = x + i - 3;
@@ -75,19 +75,19 @@ internal static class Av1WienerFilter
 
     /// <summary>
     /// Applies the vertical Wiener pass for one output row from seven horizontally-filtered rows (a port
-    /// of dav1d's <c>wiener_filter_v</c>/<c>hv</c> accumulation for 8-bit).
+    /// of dav1d's <c>wiener_filter_v</c>/<c>hv</c> accumulation).
     /// </summary>
     /// <param name="dst">The restored output samples.</param>
     /// <param name="dstOffset">The offset of the row's first output sample.</param>
     /// <param name="rows">The seven intermediate rows, top to bottom.</param>
     /// <param name="fv">The seven vertical filter taps.</param>
     /// <param name="w">The row width.</param>
-    public static void FilterVertical(Span<ushort> dst, int dstOffset, ushort[][] rows, ReadOnlySpan<short> fv, int w)
+    public static void FilterVertical(Span<ushort> dst, int dstOffset, ushort[][] rows, ReadOnlySpan<short> fv, int w, int bitDepth = 8)
     {
-        const int bitdepth = 8;
-        const int roundBitsV = 11;
-        const int roundingOffV = 1 << (roundBitsV - 1);
-        const int roundOffset = 1 << (bitdepth + (roundBitsV - 1));
+        int roundBitsV = 11 - ((bitDepth == 12) ? 2 : 0);
+        int roundingOffV = 1 << (roundBitsV - 1);
+        int roundOffset = 1 << (bitDepth + (roundBitsV - 1));
+        int maxValue = (1 << bitDepth) - 1;
 
         for (int i = 0; i < w; i++)
         {
@@ -97,7 +97,7 @@ internal static class Av1WienerFilter
                 sum += rows[k][i] * fv[k];
             }
 
-            dst[dstOffset + i] = (ushort)Math.Clamp((sum + roundingOffV) >> roundBitsV, 0, 255);
+            dst[dstOffset + i] = (ushort)Math.Clamp((sum + roundingOffV) >> roundBitsV, 0, maxValue);
         }
     }
 
@@ -123,11 +123,11 @@ internal static class Av1WienerFilter
     public static void Stripe(
         ushort[] dst, ushort[] cdef, ushort[] deblock, int stride,
         int x0, int unitWidth, int stripeTop, int stripeEnd,
-        bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int[] filterH, int[] filterV)
+        bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int[] filterH, int[] filterV, int bitDepth = 8)
     {
         short h0 = (short)filterH[0], h1 = (short)filterH[1], h2 = (short)filterH[2];
         short v0 = (short)filterV[0], v1 = (short)filterV[1], v2 = (short)filterV[2];
-        short[] fh = [h0, h1, h2, (short)(-(h0 + h1 + h2) * 2), h2, h1, h0];
+        short[] fh = [h0, h1, h2, (short)((-(h0 + h1 + h2) * 2) + (bitDepth == 8 ? 0 : 128)), h2, h1, h0];
         short[] fv = [v0, v1, v2, (short)(128 - ((v0 + v1 + v2) * 2)), v2, v1, v0];
 
         EdgeFlags edges = (haveLeft ? EdgeFlags.Left : 0) | (haveRight ? EdgeFlags.Right : 0);
@@ -178,7 +178,7 @@ internal static class Av1WienerFilter
             }
 
             ushort[] hr = new ushort[unitWidth];
-            FilterHorizontal(hr, buf, (row * stride) + x0, left, fh, unitWidth, edges);
+            FilterHorizontal(hr, buf, (row * stride) + x0, left, fh, unitWidth, edges, bitDepth);
             hor[ri - rowTop] = hr;
         }
 
@@ -190,7 +190,7 @@ internal static class Av1WienerFilter
                 rows7[k] = hor[r - 3 + k - rowTop];
             }
 
-            FilterVertical(dst, (r * stride) + x0, rows7, fv, unitWidth);
+            FilterVertical(dst, (r * stride) + x0, rows7, fv, unitWidth, bitDepth);
         }
     }
 }

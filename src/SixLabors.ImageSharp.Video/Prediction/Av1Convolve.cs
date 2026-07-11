@@ -5,7 +5,7 @@ namespace SixLabors.ImageSharp.Formats.Av1.Prediction;
 
 /// <summary>
 /// The 8-tap sub-pixel motion-compensation convolution (specification section 7.11.3), a port of dav1d's
-/// <c>put_8tap_c</c> for 8-bit samples. Produces a full-block translational inter prediction from a
+/// <c>put_8tap_c</c>. Produces a full-block translational inter prediction from a
 /// reference plane given the sub-pixel offsets (mx, my) in sixteenths and the 2D filter type. The caller
 /// supplies a source pointer whose surrounding 3-sample border is valid (the reference frame's edge
 /// extension), matching dav1d's convolution buffer.
@@ -138,7 +138,7 @@ internal static class Av1Convolve
     /// <param name="mx">The horizontal sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="my">The vertical sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="filterType">The combined 2D filter type.</param>
-    public static void PredictBlock(ushort[] dst, int dstOffset, int dstStride, ushort[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType)
+    public static void PredictBlock(ushort[] dst, int dstOffset, int dstStride, ushort[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType, int bitDepth = 8)
     {
         int bw = w + 7;
         int bh = h + 7;
@@ -153,7 +153,7 @@ internal static class Av1Convolve
             }
         }
 
-        Predict(dst, dstOffset, dstStride, buffer, (3 * bw) + 3, bw, w, h, mx, my, filterType);
+        Predict(dst, dstOffset, dstStride, buffer, (3 * bw) + 3, bw, w, h, mx, my, filterType, bitDepth);
     }
 
     private static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
@@ -173,9 +173,10 @@ internal static class Av1Convolve
     /// <param name="mx">The horizontal sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="my">The vertical sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="filterType">The combined 2D filter type.</param>
-    public static void Predict(ushort[] dst, int dstOffset, int dstStride, ushort[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType)
+    public static void Predict(ushort[] dst, int dstOffset, int dstStride, ushort[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType, int bitDepth = 8)
     {
-        const int intermediateBits = 4;
+        int intermediateBits = IntermediateBits(bitDepth);
+        int maxValue = (1 << bitDepth) - 1;
         int intermediateRound = 32 + ((1 << (6 - intermediateBits)) >> 1);
 
         sbyte[]? fh = mx == 0 ? null : (w > 4 ? SubpelFilters[filterType & 3][mx - 1] : SubpelFilters[3 + (filterType & 1)][mx - 1]);
@@ -201,7 +202,7 @@ internal static class Av1Convolve
                 {
                     for (int x = 0; x < w; x++)
                     {
-                        dst[dstOffset + (r * dstStride) + x] = ClipPixel((FilterMid(mid, ((r + 3) * w) + x, fv, w) + ((1 << (6 + intermediateBits)) >> 1)) >> (6 + intermediateBits));
+                        dst[dstOffset + (r * dstStride) + x] = ClipPixel((FilterMid(mid, ((r + 3) * w) + x, fv, w) + ((1 << (6 + intermediateBits)) >> 1)) >> (6 + intermediateBits), maxValue);
                     }
                 }
             }
@@ -211,7 +212,7 @@ internal static class Av1Convolve
                 {
                     for (int x = 0; x < w; x++)
                     {
-                        dst[dstOffset + (r * dstStride) + x] = ClipPixel((Filter(src, srcOffset + (r * srcStride) + x, fh, 1) + intermediateRound) >> 6);
+                        dst[dstOffset + (r * dstStride) + x] = ClipPixel((Filter(src, srcOffset + (r * srcStride) + x, fh, 1) + intermediateRound) >> 6, maxValue);
                     }
                 }
             }
@@ -222,7 +223,7 @@ internal static class Av1Convolve
             {
                 for (int x = 0; x < w; x++)
                 {
-                    dst[dstOffset + (r * dstStride) + x] = ClipPixel((Filter(src, srcOffset + (r * srcStride) + x, fv, srcStride) + 32) >> 6);
+                    dst[dstOffset + (r * dstStride) + x] = ClipPixel((Filter(src, srcOffset + (r * srcStride) + x, fv, srcStride) + 32) >> 6, maxValue);
                 }
             }
         }
@@ -240,7 +241,7 @@ internal static class Av1Convolve
 
     /// <summary>
     /// Produces the unrounded 16-bit intermediate prediction for one compound (multi-reference) inter
-    /// block (a port of dav1d's <c>prep_8tap</c> for 8-bit). The result is combined by one of the blend
+    /// block (a port of dav1d's <c>prep_8tap</c>). The result is combined by one of the blend
     /// operations rather than written to pixels directly.
     /// </summary>
     /// <param name="tmp">The 16-bit intermediate buffer (dense, stride <paramref name="w"/>).</param>
@@ -252,9 +253,10 @@ internal static class Av1Convolve
     /// <param name="mx">The horizontal sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="my">The vertical sub-pixel offset in sixteenths (0-15).</param>
     /// <param name="filterType">The combined 2D filter type.</param>
-    public static void Prep(short[] tmp, ushort[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType)
+    public static void Prep(short[] tmp, ushort[] src, int srcOffset, int srcStride, int w, int h, int mx, int my, int filterType, int bitDepth = 8)
     {
-        const int intermediateBits = 4;
+        int intermediateBits = IntermediateBits(bitDepth);
+        int prepBias = bitDepth == 8 ? 0 : 8192;
         sbyte[]? fh = mx == 0 ? null : (w > 4 ? SubpelFilters[filterType & 3][mx - 1] : SubpelFilters[3 + (filterType & 1)][mx - 1]);
         sbyte[]? fv = my == 0 ? null : (h > 4 ? SubpelFilters[filterType >> 2][my - 1] : SubpelFilters[3 + ((filterType >> 2) & 1)][my - 1]);
 
@@ -278,7 +280,7 @@ internal static class Av1Convolve
                 {
                     for (int x = 0; x < w; x++)
                     {
-                        tmp[(r * w) + x] = (short)((FilterMid(mid, ((r + 3) * w) + x, fv, w) + 32) >> 6);
+                        tmp[(r * w) + x] = (short)(((FilterMid(mid, ((r + 3) * w) + x, fv, w) + 32) >> 6) - prepBias);
                     }
                 }
             }
@@ -288,7 +290,7 @@ internal static class Av1Convolve
                 {
                     for (int x = 0; x < w; x++)
                     {
-                        tmp[(r * w) + x] = (short)((Filter(src, srcOffset + (r * srcStride) + x, fh, 1) + ((1 << (6 - intermediateBits)) >> 1)) >> (6 - intermediateBits));
+                        tmp[(r * w) + x] = (short)(((Filter(src, srcOffset + (r * srcStride) + x, fh, 1) + ((1 << (6 - intermediateBits)) >> 1)) >> (6 - intermediateBits)) - prepBias);
                     }
                 }
             }
@@ -299,7 +301,7 @@ internal static class Av1Convolve
             {
                 for (int x = 0; x < w; x++)
                 {
-                    tmp[(r * w) + x] = (short)((Filter(src, srcOffset + (r * srcStride) + x, fv, srcStride) + ((1 << (6 - intermediateBits)) >> 1)) >> (6 - intermediateBits));
+                    tmp[(r * w) + x] = (short)(((Filter(src, srcOffset + (r * srcStride) + x, fv, srcStride) + ((1 << (6 - intermediateBits)) >> 1)) >> (6 - intermediateBits)) - prepBias);
                 }
             }
         }
@@ -309,14 +311,14 @@ internal static class Av1Convolve
             {
                 for (int x = 0; x < w; x++)
                 {
-                    tmp[(r * w) + x] = (short)(src[srcOffset + (r * srcStride) + x] << intermediateBits);
+                    tmp[(r * w) + x] = (short)((src[srcOffset + (r * srcStride) + x] << intermediateBits) - prepBias);
                 }
             }
         }
     }
 
     /// <summary>Gathers a bordered reference block (clamped edge extension) and runs <see cref="Prep"/>.</summary>
-    public static void PrepBlock(short[] tmp, ushort[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType)
+    public static void PrepBlock(short[] tmp, ushort[] refPlane, int refWidth, int refHeight, int refStride, int dx, int dy, int w, int h, int mx, int my, int filterType, int bitDepth = 8)
     {
         int bw = w + 7;
         int bh = h + 7;
@@ -331,38 +333,53 @@ internal static class Av1Convolve
             }
         }
 
-        Prep(tmp, buffer, (3 * bw) + 3, bw, w, h, mx, my, filterType);
+        Prep(tmp, buffer, (3 * bw) + 3, bw, w, h, mx, my, filterType, bitDepth);
     }
 
     /// <summary>Averages two compound predictions (dav1d <c>avg</c>).</summary>
-    public static void Average(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h)
+    public static void Average(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h, int bitDepth = 8)
     {
+        int intermediateBits = IntermediateBits(bitDepth);
+        int prepBias = bitDepth == 8 ? 0 : 8192;
+        int sh = intermediateBits + 1;
+        int rnd = (1 << intermediateBits) + (prepBias * 2);
+        int maxValue = (1 << bitDepth) - 1;
         for (int r = 0; r < h; r++)
         {
             for (int x = 0; x < w; x++)
             {
-                dst[dstOffset + (r * dstStride) + x] = ClipPixel((tmp1[(r * w) + x] + tmp2[(r * w) + x] + 16) >> 5);
+                dst[dstOffset + (r * dstStride) + x] = ClipPixel((tmp1[(r * w) + x] + tmp2[(r * w) + x] + rnd) >> sh, maxValue);
             }
         }
     }
 
     /// <summary>Weighted-averages two compound predictions with a weight in [0, 16] (dav1d <c>w_avg</c>).</summary>
-    public static void WeightedAverage(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h, int weight)
+    public static void WeightedAverage(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, int w, int h, int weight, int bitDepth = 8)
     {
+        int intermediateBits = IntermediateBits(bitDepth);
+        int prepBias = bitDepth == 8 ? 0 : 8192;
+        int sh = intermediateBits + 4;
+        int rnd = (8 << intermediateBits) + (prepBias * 16);
+        int maxValue = (1 << bitDepth) - 1;
         for (int r = 0; r < h; r++)
         {
             for (int x = 0; x < w; x++)
             {
                 int t1 = tmp1[(r * w) + x];
                 int t2 = tmp2[(r * w) + x];
-                dst[dstOffset + (r * dstStride) + x] = ClipPixel(((t1 * weight) + (t2 * (16 - weight)) + 128) >> 8);
+                dst[dstOffset + (r * dstStride) + x] = ClipPixel(((t1 * weight) + (t2 * (16 - weight)) + rnd) >> sh, maxValue);
             }
         }
     }
 
     /// <summary>Mask-blends two compound predictions with a per-sample mask in [0, 64] (dav1d <c>mask</c>).</summary>
-    public static void Mask(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, byte[] mask, int w, int h)
+    public static void Mask(ushort[] dst, int dstOffset, int dstStride, short[] tmp1, short[] tmp2, byte[] mask, int w, int h, int bitDepth = 8)
     {
+        int intermediateBits = IntermediateBits(bitDepth);
+        int prepBias = bitDepth == 8 ? 0 : 8192;
+        int sh = intermediateBits + 6;
+        int rnd = (32 << intermediateBits) + (prepBias * 64);
+        int maxValue = (1 << bitDepth) - 1;
         for (int r = 0; r < h; r++)
         {
             for (int x = 0; x < w; x++)
@@ -370,7 +387,7 @@ internal static class Av1Convolve
                 int m = mask[(r * w) + x];
                 int t1 = tmp1[(r * w) + x];
                 int t2 = tmp2[(r * w) + x];
-                dst[dstOffset + (r * dstStride) + x] = ClipPixel(((t1 * m) + (t2 * (64 - m)) + 512) >> 10);
+                dst[dstOffset + (r * dstStride) + x] = ClipPixel(((t1 * m) + (t2 * (64 - m)) + rnd) >> sh, maxValue);
             }
         }
     }
@@ -385,5 +402,8 @@ internal static class Av1Convolve
            (f[3] * src[x]) + (f[4] * src[x + stride]) + (f[5] * src[x + (2 * stride)]) +
            (f[6] * src[x + (3 * stride)]) + (f[7] * src[x + (4 * stride)]);
 
-    private static ushort ClipPixel(int v) => (ushort)(v < 0 ? 0 : v > 255 ? 255 : v);
+    /// <summary>Gets dav1d's <c>get_intermediate_bits</c>: 4 for 8/10-bit, 2 for 12-bit.</summary>
+    internal static int IntermediateBits(int bitDepth) => bitDepth == 8 ? 4 : 14 - bitDepth;
+
+    private static ushort ClipPixel(int v, int maxValue) => (ushort)(v < 0 ? 0 : v > maxValue ? maxValue : v);
 }

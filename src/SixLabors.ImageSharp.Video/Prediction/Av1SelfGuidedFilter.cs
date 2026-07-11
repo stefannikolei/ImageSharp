@@ -57,7 +57,7 @@ internal static class Av1SelfGuidedFilter
     public static void Stripe(
         ushort[] dst, ushort[] cdef, ushort[] deblock, int planeWidth, int stride,
         int x0, int unitWidth, int stripeTop, int stripeEnd,
-        bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int s0, int s1, int w0, int w1)
+        bool haveTop, bool haveBottom, bool haveLeft, bool haveRight, int s0, int s1, int w0, int w1, int bitDepth = 8)
     {
         int n = unitWidth + 2; // A/B width; index j maps to column x = x0 - 1 + j.
         bool useBox5 = s0 != 0;
@@ -205,7 +205,7 @@ internal static class Av1SelfGuidedFilter
                         sumSqV += h5SumSq[k - rowTop][j];
                     }
 
-                    CalcAb(sumSqV, sumV, 25, s0, 164, out a[j], out b[j]);
+                    CalcAb(sumSqV, sumV, 25, s0, 164, bitDepth, out a[j], out b[j]);
                 }
 
                 a5[idx] = a;
@@ -233,7 +233,7 @@ internal static class Av1SelfGuidedFilter
                         sumSqV += h3SumSq[k - rowTop][j];
                     }
 
-                    CalcAb(sumSqV, sumV, 9, s1, 455, out a[j], out b[j]);
+                    CalcAb(sumSqV, sumV, 9, s1, 455, bitDepth, out a[j], out b[j]);
                 }
 
                 a3[c - box3First] = a;
@@ -285,14 +285,19 @@ internal static class Av1SelfGuidedFilter
                     weighted += w1 * tmp3;
                 }
 
-                dst[rowBase + x] = Clip255(src + ((weighted + (1 << 10)) >> 11));
+                dst[rowBase + x] = ClipPixel(src + ((weighted + (1 << 10)) >> 11), (1 << bitDepth) - 1);
             }
         }
     }
 
-    private static void CalcAb(int sumSq, int sum, int n, int s, int oneByX, out int a, out int b)
+    private static void CalcAb(int sumSq, int sum, int n, int s, int oneByX, int bitDepth, out int a, out int b)
     {
-        long p = ((long)sumSq * n) - ((long)sum * sum);
+        // High-bit-depth sums are scaled back to an 8-bit domain before the variance estimate
+        // (dav1d's sgr_calc_row_ab); the projection below still uses the unscaled sum.
+        int bitDepthMin8 = bitDepth - 8;
+        int aScaled = (sumSq + ((1 << (2 * bitDepthMin8)) >> 1)) >> (2 * bitDepthMin8);
+        int bScaled = (sum + ((1 << bitDepthMin8) >> 1)) >> bitDepthMin8;
+        long p = ((long)aScaled * n) - ((long)bScaled * bScaled);
         if (p < 0)
         {
             p = 0;
@@ -304,5 +309,5 @@ internal static class Av1SelfGuidedFilter
         b = x;
     }
 
-    private static ushort Clip255(int v) => (ushort)(v < 0 ? 0 : v > 255 ? 255 : v);
+    private static ushort ClipPixel(int v, int maxValue) => (ushort)(v < 0 ? 0 : v > maxValue ? maxValue : v);
 }

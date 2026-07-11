@@ -49,7 +49,8 @@ internal static class Av1InterPredictor
         int filter0,
         int filter1,
         int subsamplingX,
-        int subsamplingY)
+        int subsamplingY,
+        int bitDepth = 8)
     {
         Coordinates c = Derive(bx4, by4, blockWidth4, blockHeight4, motionVector, filter0, filter1, subsamplingX, subsamplingY);
         Av1Convolve.PredictBlock(
@@ -66,7 +67,8 @@ internal static class Av1InterPredictor
             c.Height,
             c.Mx,
             c.My,
-            c.FilterType);
+            c.FilterType,
+            bitDepth);
     }
 
     /// <summary>
@@ -101,7 +103,8 @@ internal static class Av1InterPredictor
         int filter0,
         int filter1,
         int subsamplingX,
-        int subsamplingY)
+        int subsamplingY,
+        int bitDepth = 8)
     {
         Coordinates c = Derive(bx4, by4, blockWidth4, blockHeight4, motionVector, filter0, filter1, subsamplingX, subsamplingY);
         Av1Convolve.PrepBlock(
@@ -116,7 +119,8 @@ internal static class Av1InterPredictor
             c.Height,
             c.Mx,
             c.My,
-            c.FilterType);
+            c.FilterType,
+            bitDepth);
     }
 
     private static Coordinates Derive(

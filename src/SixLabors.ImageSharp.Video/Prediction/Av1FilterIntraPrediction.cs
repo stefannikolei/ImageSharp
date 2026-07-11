@@ -47,7 +47,7 @@ internal static class Av1FilterIntraPrediction
     /// <param name="height">The block height.</param>
     /// <param name="filterIndex">The filter tap set index (0..4).</param>
     /// <param name="destination">The prediction output buffer (width*height, row-major).</param>
-    public static void Predict(ReadOnlySpan<ushort> above, ReadOnlySpan<ushort> left, ushort topLeft, int width, int height, int filterIndex, Span<ushort> destination)
+    public static void Predict(ReadOnlySpan<ushort> above, ReadOnlySpan<ushort> left, ushort topLeft, int width, int height, int filterIndex, Span<ushort> destination, int bitDepth = 8)
     {
         sbyte[][] filter = Taps[filterIndex];
 
@@ -79,7 +79,7 @@ internal static class Av1FilterIntraPrediction
                     {
                         sbyte[] t = filter[(yy * 4) + xx];
                         int acc = (t[0] * p0) + (t[1] * p1) + (t[2] * p2) + (t[3] * p3) + (t[4] * p4) + (t[5] * p5) + (t[6] * p6);
-                        destination[((y + yy) * width) + x + xx] = (ushort)Math.Clamp((acc + 8) >> 4, 0, 255);
+                        destination[((y + yy) * width) + x + xx] = (ushort)Math.Clamp((acc + 8) >> 4, 0, (1 << bitDepth) - 1);
                     }
                 }
             }

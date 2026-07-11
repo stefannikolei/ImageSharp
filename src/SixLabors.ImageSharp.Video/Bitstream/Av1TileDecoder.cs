@@ -292,6 +292,9 @@ internal class Av1TileDecoder
     public Av1FrameCdfSet Cdfs { get; }
 
     /// <summary>Gets the reconstructed luma plane.</summary>
+    /// <summary>Gets the stream bit depth the planes are reconstructed at.</summary>
+    public int BitDepth => this.sequenceHeader.BitDepth;
+
     public Av1Plane Luma => this.luma;
 
     /// <summary>Gets the reconstructed chroma U plane.</summary>
@@ -368,7 +371,8 @@ internal class Av1TileDecoder
         Array.Clear(this.abovePartition, start >> 1, ((this.tileBounds.ColumnEnd + 1) >> 1) - (start >> 1));
         Array.Clear(this.aboveSkip, start, count);
         Array.Clear(this.aboveMode, start, count);
-        Array.Clear(this.aboveUvMode, start, count);
+        int chromaModeStart = start >> this.subsamplingX;
+        Array.Clear(this.aboveUvMode, chromaModeStart, ((this.tileBounds.ColumnEnd + this.subsamplingX) >> this.subsamplingX) - chromaModeStart);
         Array.Fill(this.aboveTx, (sbyte)-1, start, count);
         this.lumaLevels.ClearAbove(start, count);
         int chromaStart = start >> this.subsamplingX;
@@ -534,11 +538,11 @@ internal class Av1TileDecoder
             {
                 if (unit.Type == 2)
                 {
-                    Av1WienerFilter.Stripe(dst, cdef, deblock, stride, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, unit.FilterH, unit.FilterV);
+                    Av1WienerFilter.Stripe(dst, cdef, deblock, stride, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, unit.FilterH, unit.FilterV, this.sequenceHeader.BitDepth);
                 }
                 else
                 {
-                    Av1SelfGuidedFilter.Stripe(dst, cdef, deblock, width, stride, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, SgrParams[unit.SgrIdx][0], SgrParams[unit.SgrIdx][1], unit.SgrW0, unit.SgrW1);
+                    Av1SelfGuidedFilter.Stripe(dst, cdef, deblock, width, stride, x, unitWidth, stripeTop, stripeEnd, haveTop, haveBottom, haveLeft, haveRight, SgrParams[unit.SgrIdx][0], SgrParams[unit.SgrIdx][1], unit.SgrW0, unit.SgrW1, this.sequenceHeader.BitDepth);
                 }
             }
 
@@ -849,7 +853,7 @@ internal class Av1TileDecoder
                 int py = r4 * 4;
                 if (px < plane.Width && py < plane.Height)
                 {
-                    Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, stride, 1, blimit[level], limit[level], level >> 4, wd);
+                    Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, stride, 1, blimit[level], limit[level], level >> 4, wd, this.sequenceHeader.BitDepth);
                 }
             }
         }
@@ -882,7 +886,7 @@ internal class Av1TileDecoder
                 int py = r4 * 4;
                 if (px < plane.Width && py < plane.Height)
                 {
-                    Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, 1, stride, blimit[level], limit[level], level >> 4, wd);
+                    Av1LoopFilter.FilterEdge(plane.Samples, (py * stride) + px, 1, stride, blimit[level], limit[level], level >> 4, wd, this.sequenceHeader.BitDepth);
                 }
             }
         }
@@ -961,7 +965,7 @@ internal class Av1TileDecoder
                 int variance = 0;
                 if (yPriLevel != 0 || uvPriLevel != 0)
                 {
-                    dir = Av1Cdef.FindDirection(lumaSrc, ((by * 4) * this.luma.Width) + (bx * 4), this.luma.Width, out variance);
+                    dir = Av1Cdef.FindDirection(lumaSrc, ((by * 4) * this.luma.Width) + (bx * 4), this.luma.Width, out variance, this.sequenceHeader.BitDepth);
                 }
 
                 // Luma: 8x8 block, primary strength scaled by the block variance.
@@ -970,12 +974,12 @@ internal class Av1TileDecoder
                     int adjusted = Av1Cdef.AdjustStrength(yPriLevel, variance);
                     if (adjusted != 0 || ySecLevel != 0)
                     {
-                        FilterPlaneBlock(this.luma, lumaSrc, bx * 4, by * 4, 8, 8, adjusted, ySecLevel, dir, damping, edges);
+                        FilterPlaneBlock(this.luma, lumaSrc, this.sequenceHeader.BitDepth, bx * 4, by * 4, 8, 8, adjusted, ySecLevel, dir, damping, edges);
                     }
                 }
                 else if (ySecLevel != 0)
                 {
-                    FilterPlaneBlock(this.luma, lumaSrc, bx * 4, by * 4, 8, 8, 0, ySecLevel, 0, damping, edges);
+                    FilterPlaneBlock(this.luma, lumaSrc, this.sequenceHeader.BitDepth, bx * 4, by * 4, 8, 8, 0, ySecLevel, 0, damping, edges);
                 }
 
                 // Chroma: subsampled block, no variance adjustment, damping reduced by one.
@@ -986,8 +990,8 @@ internal class Av1TileDecoder
                     int ch = 8 >> this.subsamplingY;
                     int cx = (bx * 4) >> this.subsamplingX;
                     int cy = (by * 4) >> this.subsamplingY;
-                    FilterPlaneBlock(this.chromaU, uSrc, cx, cy, cw, ch, uvPriLevel, uvSecLevel, uvDirection, damping - 1, edges);
-                    FilterPlaneBlock(this.chromaV, vSrc, cx, cy, cw, ch, uvPriLevel, uvSecLevel, uvDirection, damping - 1, edges);
+                    FilterPlaneBlock(this.chromaU, uSrc, this.sequenceHeader.BitDepth, cx, cy, cw, ch, uvPriLevel, uvSecLevel, uvDirection, damping - 1, edges);
+                    FilterPlaneBlock(this.chromaV, vSrc, this.sequenceHeader.BitDepth, cx, cy, cw, ch, uvPriLevel, uvSecLevel, uvDirection, damping - 1, edges);
                 }
             }
         }
@@ -1010,7 +1014,7 @@ internal class Av1TileDecoder
     }
 
     // Gathers the pre-filter edge spans for one CDEF block from the plane clone and filters in place.
-    private static void FilterPlaneBlock(Av1Plane plane, ushort[] src, int px, int py, int w, int h, int priStrength, int secStrength, int dir, int damping, Av1Cdef.EdgeFlags edges)
+    private static void FilterPlaneBlock(Av1Plane plane, ushort[] src, int bitDepth, int px, int py, int w, int h, int priStrength, int secStrength, int dir, int damping, Av1Cdef.EdgeFlags edges)
     {
         int stride = plane.Width;
         int clampW = Math.Min(w, plane.Width - px);
@@ -1053,7 +1057,8 @@ internal class Av1TileDecoder
             damping,
             clampW,
             clampH,
-            edges);
+            edges,
+            bitDepth);
     }
 
     private static ushort Sample(ushort[] src, int stride, int width, int height, int x, int y)
@@ -1550,7 +1555,7 @@ internal class Av1TileDecoder
 
         // Smooth-neighbour edge-filter flags (dav1d is_sm): read the not-yet-overwritten neighbour modes.
         this.lumaEdgeSmooth = IsSmoothMode(this.aboveMode[col]) || IsSmoothMode(this.leftMode[row]);
-        this.chromaEdgeSmooth = IsSmoothMode(this.aboveUvMode[col]) || IsSmoothMode(this.leftUvMode[row]);
+        this.chromaEdgeSmooth = IsSmoothMode(this.aboveUvMode[col >> this.subsamplingX]) || IsSmoothMode(this.leftUvMode[row >> this.subsamplingY]);
 
         // luma transform-block loop.
         this.DecodePlane(this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode, 0);
@@ -1574,8 +1579,10 @@ internal class Av1TileDecoder
         Fill(this.leftMode, row, height4, (byte)yMode);
         if (hasChroma)
         {
-            Fill(this.aboveUvMode, col, width4, (byte)uvMode);
-            Fill(this.leftUvMode, row, height4, (byte)uvMode);
+            // The chroma-mode neighbour context lives at chroma granularity (dav1d writes
+            // uvmode[cbx4] over cbw4 cells): two sub-sampled luma cells share one entry.
+            Fill(this.aboveUvMode, col >> this.subsamplingX, (width4 + this.subsamplingX) >> this.subsamplingX, (byte)uvMode);
+            Fill(this.leftUvMode, row >> this.subsamplingY, (height4 + this.subsamplingY) >> this.subsamplingY, (byte)uvMode);
         }
         Fill(this.aboveTx, col, width4, (sbyte)(lumaTx.GetWidthLog2() - 2));
         Fill(this.leftTx, row, height4, (sbyte)(lumaTx.GetHeightLog2() - 2));
@@ -1616,8 +1623,8 @@ internal class Av1TileDecoder
         Fill(this.leftMode, row, height4, 0);
         if (hasChroma)
         {
-            Fill(this.aboveUvMode, col, width4, 0);
-            Fill(this.leftUvMode, row, height4, 0);
+            Fill(this.aboveUvMode, col >> this.subsamplingX, (width4 + this.subsamplingX) >> this.subsamplingX, 0);
+            Fill(this.leftUvMode, row >> this.subsamplingY, (height4 + this.subsamplingY) >> this.subsamplingY, 0);
         }
     }
 
@@ -1806,7 +1813,7 @@ internal class Av1TileDecoder
         if (filterIntraMode >= 0)
         {
             this.PrepareEdges(plane, x, y, width, height, out ushort[] fAbove, out ushort[] fLeft, out ushort fTopLeft);
-            Av1FilterIntraPrediction.Predict(fAbove, fLeft, fTopLeft, width, height, filterIntraMode, prediction);
+            Av1FilterIntraPrediction.Predict(fAbove, fLeft, fTopLeft, width, height, filterIntraMode, prediction, this.sequenceHeader.BitDepth);
             return;
         }
 
@@ -1817,7 +1824,7 @@ internal class Av1TileDecoder
             int[] ac = new int[width * height];
             int lumaOffset = ((y << this.subsamplingY) * this.luma.Width) + (x << this.subsamplingX);
             Av1ChromaFromLuma.ComputeAc(this.luma.Samples, lumaOffset, this.luma.Width, width, height, this.subsamplingX, this.subsamplingY, ac);
-            Av1ChromaFromLuma.Predict(chromaDc, cflAlpha, ac, width, height, prediction);
+            Av1ChromaFromLuma.Predict(chromaDc, cflAlpha, ac, width, height, prediction, this.sequenceHeader.BitDepth);
             return;
         }
 
@@ -1847,7 +1854,8 @@ internal class Av1TileDecoder
                 x > 0,
                 plane.Width - x,
                 plane.Height - y,
-                prediction);
+                prediction,
+                this.sequenceHeader.BitDepth);
             return;
         }
 

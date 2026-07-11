@@ -5,7 +5,7 @@ namespace SixLabors.ImageSharp.Formats.Av1.Prediction;
 
 /// <summary>
 /// The deblocking loop filter sample primitive (specification section 7.14.6), a port of dav1d's
-/// <c>loop_filter</c> for 8-bit samples. A single call filters four consecutive lines across one block
+/// <c>loop_filter</c>. A single call filters four consecutive lines across one block
 /// edge; the surrounding driver selects the filter width and thresholds.
 /// </summary>
 internal static class Av1LoopFilter
@@ -23,9 +23,14 @@ internal static class Av1LoopFilter
     /// <param name="i">The inner limit.</param>
     /// <param name="h">The high-edge-variance threshold.</param>
     /// <param name="wd">The filter width (4, 6, 8 or 16).</param>
-    public static void FilterEdge(Span<ushort> dst, int offset, int strideA, int strideB, int e, int i, int h, int wd)
+    public static void FilterEdge(Span<ushort> dst, int offset, int strideA, int strideB, int e, int i, int h, int wd, int bitDepth = 8)
     {
-        const int f = 1; // 1 << (bitdepth - 8), 8-bit.
+        int bitDepthMin8 = bitDepth - 8;
+        int f = 1 << bitDepthMin8;
+        int maxValue = (1 << bitDepth) - 1;
+        e <<= bitDepthMin8;
+        i <<= bitDepthMin8;
+        h <<= bitDepthMin8;
 
         for (int line = 0; line < 4; line++, offset += strideA)
         {
@@ -122,30 +127,35 @@ internal static class Av1LoopFilter
                 bool hev = Math.Abs(p1 - p0) > h || Math.Abs(q1 - q0) > h;
                 if (hev)
                 {
-                    int diff = ClipDiff(p1 - q1);
-                    diff = ClipDiff((3 * (q0 - p0)) + diff);
-                    int f1 = Math.Min(diff + 4, 127) >> 3;
-                    int f2 = Math.Min(diff + 3, 127) >> 3;
-                    dst[offset + (strideB * -1)] = ClipPixel(p0 + f2);
-                    dst[offset + (strideB * +0)] = ClipPixel(q0 - f1);
+                    int diff = ClipDiff(p1 - q1, bitDepthMin8);
+                    diff = ClipDiff((3 * (q0 - p0)) + diff, bitDepthMin8);
+                    int f1 = Math.Min(diff + 4, (128 << bitDepthMin8) - 1) >> 3;
+                    int f2 = Math.Min(diff + 3, (128 << bitDepthMin8) - 1) >> 3;
+                    dst[offset + (strideB * -1)] = ClipPixel(p0 + f2, maxValue);
+                    dst[offset + (strideB * +0)] = ClipPixel(q0 - f1, maxValue);
                 }
                 else
                 {
-                    int diff = ClipDiff(3 * (q0 - p0));
-                    int f1 = Math.Min(diff + 4, 127) >> 3;
-                    int f2 = Math.Min(diff + 3, 127) >> 3;
-                    dst[offset + (strideB * -1)] = ClipPixel(p0 + f2);
-                    dst[offset + (strideB * +0)] = ClipPixel(q0 - f1);
+                    int diff = ClipDiff(3 * (q0 - p0), bitDepthMin8);
+                    int f1 = Math.Min(diff + 4, (128 << bitDepthMin8) - 1) >> 3;
+                    int f2 = Math.Min(diff + 3, (128 << bitDepthMin8) - 1) >> 3;
+                    dst[offset + (strideB * -1)] = ClipPixel(p0 + f2, maxValue);
+                    dst[offset + (strideB * +0)] = ClipPixel(q0 - f1, maxValue);
 
                     int fr = (f1 + 1) >> 1;
-                    dst[offset + (strideB * -2)] = ClipPixel(p1 + fr);
-                    dst[offset + (strideB * +1)] = ClipPixel(q1 - fr);
+                    dst[offset + (strideB * -2)] = ClipPixel(p1 + fr, maxValue);
+                    dst[offset + (strideB * +1)] = ClipPixel(q1 - fr, maxValue);
                 }
             }
         }
     }
 
-    private static int ClipDiff(int v) => v < -128 ? -128 : v > 127 ? 127 : v;
+    private static int ClipDiff(int v, int bitDepthMin8)
+    {
+        int lo = -128 << bitDepthMin8;
+        int hi = (128 << bitDepthMin8) - 1;
+        return v < lo ? lo : v > hi ? hi : v;
+    }
 
-    private static ushort ClipPixel(int v) => (ushort)(v < 0 ? 0 : v > 255 ? 255 : v);
+    private static ushort ClipPixel(int v, int maxValue) => (ushort)(v < 0 ? 0 : v > maxValue ? maxValue : v);
 }

@@ -258,9 +258,9 @@ internal readonly struct ObuSequenceHeader
         bool enableRestoration = reader.ReadBoolean();
 
         ColorConfig color = ReadColorConfig(ref reader, seqProfile);
-        if (color.BitDepth != 8)
+        if (color.BitDepth == 12)
         {
-            throw new NotSupportedException($"{color.BitDepth}-bit streams are not supported yet (only 8-bit).");
+            throw new NotSupportedException("12-bit streams are not supported yet (only 8- and 10-bit).");
         }
 
         if (color.MonoChrome)

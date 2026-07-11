@@ -85,14 +85,14 @@ internal static class Av1ChromaFromLuma
     /// <param name="width">The chroma block width.</param>
     /// <param name="height">The chroma block height.</param>
     /// <param name="destination">The prediction output buffer (width*height, row-major).</param>
-    public static void Predict(int dc, int alpha, ReadOnlySpan<int> ac, int width, int height, Span<ushort> destination)
+    public static void Predict(int dc, int alpha, ReadOnlySpan<int> ac, int width, int height, Span<ushort> destination, int bitDepth = 8)
     {
         for (int i = 0; i < width * height; i++)
         {
             int diff = alpha * ac[i];
             int magnitude = (Math.Abs(diff) + 32) >> 6;
             int signed = diff < 0 ? -magnitude : magnitude;
-            destination[i] = (ushort)Math.Clamp(dc + signed, 0, 255);
+            destination[i] = (ushort)Math.Clamp(dc + signed, 0, (1 << bitDepth) - 1);
         }
     }
 

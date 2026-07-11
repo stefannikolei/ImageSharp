@@ -7,7 +7,7 @@ namespace SixLabors.ImageSharp.Formats.Av1.Prediction;
 
 /// <summary>
 /// The constrained directional enhancement filter (CDEF, specification section 7.15), a port of
-/// dav1d's <c>cdef_find_dir</c> and <c>cdef_filter_block</c> for 8-bit samples.
+/// dav1d's <c>cdef_find_dir</c> and <c>cdef_filter_block</c>.
 /// </summary>
 internal static class Av1Cdef
 {
@@ -60,7 +60,7 @@ internal static class Av1Cdef
     /// <param name="stride">The row stride.</param>
     /// <param name="variance">Receives the direction variance.</param>
     /// <returns>The best direction in [0, 7].</returns>
-    public static int FindDirection(ReadOnlySpan<ushort> img, int offset, int stride, out int variance)
+    public static int FindDirection(ReadOnlySpan<ushort> img, int offset, int stride, out int variance, int bitDepth = 8)
     {
         int[][] partialSumHv = [new int[8], new int[8]];
         int[][] partialSumDiag = [new int[15], new int[15]];
@@ -70,7 +70,7 @@ internal static class Av1Cdef
         {
             for (int x = 0; x < 8; x++)
             {
-                int px = img[offset + (y * stride) + x] - 128;
+                int px = (img[offset + (y * stride) + x] >> (bitDepth - 8)) - 128;
                 partialSumDiag[0][y + x] += px;
                 partialSumAlt[0][y + (x >> 1)] += px;
                 partialSumHv[0][y] += px;
@@ -167,13 +167,14 @@ internal static class Av1Cdef
         int damping,
         int w,
         int h,
-        EdgeFlags edges)
+        EdgeFlags edges,
+        int bitDepth = 8)
     {
         int[] tmpBuf = new int[TmpStride * (h + 4)];
         int center = (2 * TmpStride) + 2; // tmp pointer origin (corresponds to dst[0]).
         Padding(tmpBuf, center, dst, dstOffset, dstStride, left, top, bottom, w, h, edges);
 
-        int priTap = 4 - (priStrength & 1);
+        int priTap = 4 - ((priStrength >> (bitDepth - 8)) & 1);
         int priShift = Math.Max(0, damping - Log2(priStrength));
         int secShift = secStrength != 0 ? damping - Log2(secStrength) : 0;
 

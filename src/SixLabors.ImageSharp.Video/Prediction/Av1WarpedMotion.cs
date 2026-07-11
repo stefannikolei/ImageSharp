@@ -397,7 +397,7 @@ internal static class Av1WarpedMotion
     /// <param name="shear">The derived shear parameters (alpha, beta, gamma, delta).</param>
     /// <param name="subsamplingX">The plane's horizontal subsampling.</param>
     /// <param name="subsamplingY">The plane's vertical subsampling.</param>
-    public static void WarpPlane(Bitstream.Av1Plane destination, Bitstream.Av1Plane reference, int bx4, int by4, int width4, int height4, ReadOnlySpan<int> matrix, ReadOnlySpan<short> shear, int subsamplingX, int subsamplingY)
+    public static void WarpPlane(Bitstream.Av1Plane destination, Bitstream.Av1Plane reference, int bx4, int by4, int width4, int height4, ReadOnlySpan<int> matrix, ReadOnlySpan<short> shear, int subsamplingX, int subsamplingY, int bitDepth = 8)
     {
         int hMul = 4 >> subsamplingX;
         int vMul = 4 >> subsamplingY;
@@ -435,7 +435,7 @@ internal static class Av1WarpedMotion
                     }
                 }
 
-                Warp8x8(destination, dstX0 + x, dstY0 + y, tile, mx, my, shear);
+                Warp8x8(destination, dstX0 + x, dstY0 + y, tile, mx, my, shear, bitDepth);
             }
         }
     }
@@ -458,7 +458,7 @@ internal static class Av1WarpedMotion
     /// <param name="shear">The derived shear parameters.</param>
     /// <param name="subsamplingX">The plane's horizontal subsampling.</param>
     /// <param name="subsamplingY">The plane's vertical subsampling.</param>
-    public static void WarpPlane16(short[] destination, int destinationStride, Bitstream.Av1Plane reference, int bx4, int by4, int width4, int height4, ReadOnlySpan<int> matrix, ReadOnlySpan<short> shear, int subsamplingX, int subsamplingY)
+    public static void WarpPlane16(short[] destination, int destinationStride, Bitstream.Av1Plane reference, int bx4, int by4, int width4, int height4, ReadOnlySpan<int> matrix, ReadOnlySpan<short> shear, int subsamplingX, int subsamplingY, int bitDepth = 8)
     {
         int hMul = 4 >> subsamplingX;
         int vMul = 4 >> subsamplingY;
@@ -493,13 +493,15 @@ internal static class Av1WarpedMotion
                     }
                 }
 
-                Warp8x8To16(destination, destinationStride, x, y, tile, mx, my, shear);
+                Warp8x8To16(destination, destinationStride, x, y, tile, mx, my, shear, bitDepth);
             }
         }
     }
 
-    private static void Warp8x8To16(short[] destination, int destinationStride, int dstX, int dstY, ReadOnlySpan<ushort> src, int mx, int my, ReadOnlySpan<short> shear)
+    private static void Warp8x8To16(short[] destination, int destinationStride, int dstX, int dstY, ReadOnlySpan<ushort> src, int mx, int my, ReadOnlySpan<short> shear, int bitDepth)
     {
+        int hShift = 7 - Av1Convolve.IntermediateBits(bitDepth);
+        int prepBias = bitDepth == 8 ? 0 : 8192;
         Span<int> mid = stackalloc int[15 * 8];
         for (int y = 0; y < 15; y++, mx += shear[1])
         {
@@ -508,13 +510,13 @@ internal static class Av1WarpedMotion
             for (int x = 0; x < 8; x++, tmx += shear[0])
             {
                 sbyte[] filter = WarpFilter[64 + ((tmx + 512) >> 10)];
-                int sum = (1 << 3) >> 1;
+                int sum = (1 << hShift) >> 1;
                 for (int t = 0; t < 8; t++)
                 {
                     sum += filter[t] * src[srcBase + x - 3 + t];
                 }
 
-                mid[(y * 8) + x] = sum >> 3;
+                mid[(y * 8) + x] = sum >> hShift;
             }
         }
 
@@ -531,13 +533,16 @@ internal static class Av1WarpedMotion
                     sum += filter[t] * mid[((y + t) * 8) + x];
                 }
 
-                destination[dstBase + x] = (short)(sum >> 7);
+                destination[dstBase + x] = (short)((sum >> 7) - prepBias);
             }
         }
     }
 
-    private static void Warp8x8(Bitstream.Av1Plane destination, int dstX, int dstY, ReadOnlySpan<ushort> src, int mx, int my, ReadOnlySpan<short> shear)
+    private static void Warp8x8(Bitstream.Av1Plane destination, int dstX, int dstY, ReadOnlySpan<ushort> src, int mx, int my, ReadOnlySpan<short> shear, int bitDepth)
     {
+        int hShift = 7 - Av1Convolve.IntermediateBits(bitDepth);
+        int vShift = 7 + Av1Convolve.IntermediateBits(bitDepth);
+        int maxValue = (1 << bitDepth) - 1;
         Span<int> mid = stackalloc int[15 * 8];
         for (int y = 0; y < 15; y++, mx += shear[1])
         {
@@ -546,13 +551,13 @@ internal static class Av1WarpedMotion
             for (int x = 0; x < 8; x++, tmx += shear[0])
             {
                 sbyte[] filter = WarpFilter[64 + ((tmx + 512) >> 10)];
-                int sum = (1 << 3) >> 1;
+                int sum = (1 << hShift) >> 1;
                 for (int t = 0; t < 8; t++)
                 {
                     sum += filter[t] * src[srcBase + x - 3 + t];
                 }
 
-                mid[(y * 8) + x] = sum >> 3;
+                mid[(y * 8) + x] = sum >> hShift;
             }
         }
 
@@ -563,13 +568,13 @@ internal static class Av1WarpedMotion
             for (int x = 0; x < 8; x++, tmy += shear[2])
             {
                 sbyte[] filter = WarpFilter[64 + ((tmy + 512) >> 10)];
-                int sum = (1 << 11) >> 1;
+                int sum = (1 << vShift) >> 1;
                 for (int t = 0; t < 8; t++)
                 {
                     sum += filter[t] * mid[((y + t) * 8) + x];
                 }
 
-                destination.Samples[dstBase + x] = (ushort)Math.Clamp(sum >> 11, 0, 255);
+                destination.Samples[dstBase + x] = (ushort)Math.Clamp(sum >> vShift, 0, maxValue);
             }
         }
     }

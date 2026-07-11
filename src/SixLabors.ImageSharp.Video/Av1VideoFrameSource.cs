@@ -56,7 +56,7 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
         where TPixel : unmanaged, IPixel<TPixel>
     {
         Av1DisplayFrame decoded = this.DecodeUpTo(frameIndex);
-        return Av1FrameConverter.ToImage<TPixel>(decoded.Luma, decoded.ChromaU, decoded.ChromaV, configuration);
+        return Av1FrameConverter.ToImage<TPixel>(decoded.Luma, decoded.ChromaU, decoded.ChromaV, configuration, this.sequenceHeader.BitDepth);
     }
 
     /// <inheritdoc/>

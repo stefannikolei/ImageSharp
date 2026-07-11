@@ -24,7 +24,7 @@ internal static class Av1FrameConverter
     /// <returns>The converted image.</returns>
     public static Image<TPixel> ToImage<TPixel>(Av1TileDecoder frame, Configuration configuration)
         where TPixel : unmanaged, IPixel<TPixel>
-        => ToImage<TPixel>(frame.Luma, frame.ChromaU, frame.ChromaV, configuration);
+        => ToImage<TPixel>(frame.Luma, frame.ChromaU, frame.ChromaV, configuration, frame.BitDepth);
 
     /// <summary>
     /// Converts reconstructed YUV planes to an RGB image.
@@ -35,9 +35,10 @@ internal static class Av1FrameConverter
     /// <param name="chromaV">The chroma V plane.</param>
     /// <param name="configuration">The configuration used to allocate the image.</param>
     /// <returns>The converted image.</returns>
-    public static Image<TPixel> ToImage<TPixel>(Av1Plane luma, Av1Plane chromaU, Av1Plane chromaV, Configuration configuration)
+    public static Image<TPixel> ToImage<TPixel>(Av1Plane luma, Av1Plane chromaU, Av1Plane chromaV, Configuration configuration, int bitDepth = 8)
         where TPixel : unmanaged, IPixel<TPixel>
     {
+        int shift = bitDepth - 8;
         int width = luma.CropWidth;
         int height = luma.CropHeight;
 
@@ -56,7 +57,7 @@ internal static class Av1FrameConverter
             for (int x = 0; x < width; x++)
             {
                 int cx = x >> subsampleX;
-                YuvToRgb(luma[x, y], chromaU[cx, cy], chromaV[cx, cy], ref rgba);
+                YuvToRgb(luma[x, y] >> shift, chromaU[cx, cy] >> shift, chromaV[cx, cy] >> shift, ref rgba);
                 row[x] = TPixel.FromRgba32(rgba);
             }
         }
@@ -65,7 +66,7 @@ internal static class Av1FrameConverter
     }
 
     // BT.601 limited-range YUV to RGB conversion (specification's default matrix for 8-bit content).
-    private static void YuvToRgb(ushort yy, ushort uu, ushort vv, ref Rgba32 rgba)
+    private static void YuvToRgb(int yy, int uu, int vv, ref Rgba32 rgba)
     {
         float y = 1.164f * (yy - 16);
         float u = uu - 128;

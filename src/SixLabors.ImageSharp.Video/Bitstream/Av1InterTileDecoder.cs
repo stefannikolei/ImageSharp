@@ -374,7 +374,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         if (warpShear is not null)
         {
             Prediction.Av1WarpedMotion.WarpPlane(
-                this.luma, blockReference.Luma, col, row, width4, height4, warpMatrix, warpShear, 0, 0);
+                this.luma, blockReference.Luma, col, row, width4, height4, warpMatrix, warpShear, 0, 0, this.sequenceHeader.BitDepth);
         }
         else
         {
@@ -505,13 +505,13 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             {
                 Prediction.Av1WarpedMotion.WarpPlane16(
                     intermediate, width, referencePlane, col, row, width4, height4,
-                    this.frameHeader.GlobalMotionParams[reference].Matrix, shear, ssX, ssY);
+                    this.frameHeader.GlobalMotionParams[reference].Matrix, shear, ssX, ssY, this.sequenceHeader.BitDepth);
             }
             else
             {
                 Av1InterPredictor.Prepare(
                     intermediate, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
-                    col, row, width4, height4, motionVector, info.Filter0, info.Filter1, ssX, ssY);
+                    col, row, width4, height4, motionVector, info.Filter0, info.Filter1, ssX, ssY, this.sequenceHeader.BitDepth);
             }
         }
 
@@ -528,11 +528,11 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             {
                 if (plane == 0)
                 {
-                    WMaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask, info.MaskSign ? 1 : 0, this.subsamplingX, this.subsamplingY);
+                    WMaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask, info.MaskSign ? 1 : 0, this.subsamplingX, this.subsamplingY, this.sequenceHeader.BitDepth);
                 }
                 else
                 {
-                    MaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask);
+                    MaskBlend(destination, dstX, dstY, lead, trail, width, height, segMask, this.sequenceHeader.BitDepth);
                 }
             }
             else
@@ -541,27 +541,39 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                 byte[] wedgeMask = plane == 0
                     ? Prediction.Av1WedgeMasks.Luma[wedgeContext][info.WedgeIndex]
                     : Prediction.Av1WedgeMasks.Chroma420[wedgeContext][info.MaskSign ? 1 : 0][info.WedgeIndex];
-                MaskBlend(destination, dstX, dstY, lead, trail, width, height, wedgeMask);
+                MaskBlend(destination, dstX, dstY, lead, trail, width, height, wedgeMask, this.sequenceHeader.BitDepth);
             }
 
             return;
         }
 
+        int intermediateBits = Prediction.Av1Convolve.IntermediateBits(this.sequenceHeader.BitDepth);
+        int prepBias = this.sequenceHeader.BitDepth == 8 ? 0 : 8192;
+        int avgShift = intermediateBits + 1;
+        int avgRound = (1 << intermediateBits) + (prepBias * 2);
+        int pixelMax = (1 << this.sequenceHeader.BitDepth) - 1;
         for (int y = 0; y < height; y++)
         {
             int dstBase = ((dstY + y) * destination.Width) + dstX;
             int srcBase = y * width;
             for (int x = 0; x < width; x++)
             {
-                destination.Samples[dstBase + x] = (ushort)Math.Clamp((intermediate0[srcBase + x] + intermediate1[srcBase + x] + 16) >> 5, 0, 255);
+                destination.Samples[dstBase + x] = (ushort)Math.Clamp((intermediate0[srcBase + x] + intermediate1[srcBase + x] + avgRound) >> avgShift, 0, pixelMax);
             }
         }
     }
 
-    // dav1d w_mask_c (8-bit): blends the luma intermediates by a per-pixel weight derived from their
+    // dav1d w_mask_c: blends the luma intermediates by a per-pixel weight derived from their
     // difference and stores the weight, subsampled to the chroma layout, for the chroma blend.
-    private static void WMaskBlend(Av1Plane destination, int dstX, int dstY, short[] tmp1, short[] tmp2, int width, int height, byte[] mask, int sign, int ssHor, int ssVer)
+    private static void WMaskBlend(Av1Plane destination, int dstX, int dstY, short[] tmp1, short[] tmp2, int width, int height, byte[] mask, int sign, int ssHor, int ssVer, int bitDepth)
     {
+        int intermediateBits = Prediction.Av1Convolve.IntermediateBits(bitDepth);
+        int prepBias = bitDepth == 8 ? 0 : 8192;
+        int sh = intermediateBits + 6;
+        int rnd = (32 << intermediateBits) + (prepBias * 64);
+        int maskSh = bitDepth + intermediateBits - 4;
+        int maskRnd = 1 << (maskSh - 5);
+        int pixelMax = (1 << bitDepth) - 1;
         int maskStride = width >> ssHor;
         int maskBase = 0;
         for (int y = 0; y < height; y++)
@@ -572,15 +584,15 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             for (int x = 0; x < width; x++)
             {
                 int diff = tmp1[srcBase + x] - tmp2[srcBase + x];
-                int m = Math.Min(38 + ((Math.Abs(diff) + 8) >> 8), 64);
-                destination.Samples[dstBase + x] = (ushort)Math.Clamp(((diff * m) + (tmp2[srcBase + x] * 64) + 512) >> 10, 0, 255);
+                int m = Math.Min(38 + ((Math.Abs(diff) + maskRnd) >> maskSh), 64);
+                destination.Samples[dstBase + x] = (ushort)Math.Clamp(((diff * m) + (tmp2[srcBase + x] * 64) + rnd) >> sh, 0, pixelMax);
 
                 if (ssHor != 0)
                 {
                     x++;
                     int diff2 = tmp1[srcBase + x] - tmp2[srcBase + x];
-                    int n = Math.Min(38 + ((Math.Abs(diff2) + 8) >> 8), 64);
-                    destination.Samples[dstBase + x] = (ushort)Math.Clamp(((diff2 * n) + (tmp2[srcBase + x] * 64) + 512) >> 10, 0, 255);
+                    int n = Math.Min(38 + ((Math.Abs(diff2) + maskRnd) >> maskSh), 64);
+                    destination.Samples[dstBase + x] = (ushort)Math.Clamp(((diff2 * n) + (tmp2[srcBase + x] * 64) + rnd) >> sh, 0, pixelMax);
 
                     if ((remaining & ssVer) != 0)
                     {
@@ -608,9 +620,14 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         }
     }
 
-    // dav1d mask_c (8-bit): blends two intermediates by an explicit per-pixel 64-weight mask.
-    private static void MaskBlend(Av1Plane destination, int dstX, int dstY, short[] tmp1, short[] tmp2, int width, int height, byte[] mask)
+    // dav1d mask_c: blends two intermediates by an explicit per-pixel 64-weight mask.
+    private static void MaskBlend(Av1Plane destination, int dstX, int dstY, short[] tmp1, short[] tmp2, int width, int height, byte[] mask, int bitDepth)
     {
+        int intermediateBits = Prediction.Av1Convolve.IntermediateBits(bitDepth);
+        int prepBias = bitDepth == 8 ? 0 : 8192;
+        int sh = intermediateBits + 6;
+        int rnd = (32 << intermediateBits) + (prepBias * 64);
+        int pixelMax = (1 << bitDepth) - 1;
         for (int y = 0; y < height; y++)
         {
             int dstBase = ((dstY + y) * destination.Width) + dstX;
@@ -619,7 +636,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             for (int x = 0; x < width; x++)
             {
                 int m = mask[maskBase + x];
-                destination.Samples[dstBase + x] = (ushort)Math.Clamp(((tmp1[srcBase + x] * m) + (tmp2[srcBase + x] * (64 - m)) + 512) >> 10, 0, 255);
+                destination.Samples[dstBase + x] = (ushort)Math.Clamp(((tmp1[srcBase + x] * m) + (tmp2[srcBase + x] * (64 - m)) + rnd) >> sh, 0, pixelMax);
             }
         }
     }
@@ -665,9 +682,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             {
                 Av1ReferenceFrame referenceFrame = this.GetReference(info.Reference);
                 Prediction.Av1WarpedMotion.WarpPlane(
-                    this.chromaU, referenceFrame.ChromaU!, col, row, width4, height4, warpMatrix, warpShear, this.subsamplingX, this.subsamplingY);
+                    this.chromaU, referenceFrame.ChromaU!, col, row, width4, height4, warpMatrix, warpShear, this.subsamplingX, this.subsamplingY, this.sequenceHeader.BitDepth);
                 Prediction.Av1WarpedMotion.WarpPlane(
-                    this.chromaV, referenceFrame.ChromaV!, col, row, width4, height4, warpMatrix, warpShear, this.subsamplingX, this.subsamplingY);
+                    this.chromaV, referenceFrame.ChromaV!, col, row, width4, height4, warpMatrix, warpShear, this.subsamplingX, this.subsamplingY, this.sequenceHeader.BitDepth);
                 return;
             }
 
@@ -776,7 +793,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                     Av1Plane referencePlane = this.GetReferencePlane(aboveBlock.Reference0 - 1, plane);
                     Av1InterPredictor.Predict(
                         lap, 0, ow4 * hMul, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
-                        col + x, row, ow4, ((oh4 * 3) + 3) >> 2, aboveBlock.MotionVector0, f0, f1, ssX, ssY);
+                        col + x, row, ow4, ((oh4 * 3) + 3) >> 2, aboveBlock.MotionVector0, f0, f1, ssX, ssY, this.sequenceHeader.BitDepth);
                     BlendFromAbove(destination, dstBase + (x * hMul), lap, ow4 * hMul, oh4 * vMul);
                     i++;
                 }
@@ -805,7 +822,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                     Av1Plane referencePlane = this.GetReferencePlane(leftBlock.Reference0 - 1, plane);
                     Av1InterPredictor.Predict(
                         lap, 0, ow4 * hMul, referencePlane.Samples, referencePlane.CropWidth, referencePlane.CropHeight, referencePlane.Width,
-                        col, row + y, ow4, oh4, leftBlock.MotionVector0, f0, f1, ssX, ssY);
+                        col, row + y, ow4, oh4, leftBlock.MotionVector0, f0, f1, ssX, ssY, this.sequenceHeader.BitDepth);
                     BlendFromLeft(destination, dstBase + (y * vMul * destination.Width), lap, ow4 * hMul, oh4 * vMul);
                     i++;
                 }
@@ -923,7 +940,8 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             filter0,
             filter1,
             this.subsamplingX,
-            this.subsamplingY);
+            this.subsamplingY,
+            this.sequenceHeader.BitDepth);
 
     private protected override void OnIntraBlockDecoded(int row, int col, Av1BlockSize bsize, int skip, int yMode, Av1TransformSize lumaTx)
     {
@@ -1095,6 +1113,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             info.Filter0,
             info.Filter1,
             subsamplingX,
-            subsamplingY);
+            subsamplingY,
+            this.sequenceHeader.BitDepth);
     }
 }

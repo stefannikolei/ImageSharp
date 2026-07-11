@@ -18,12 +18,21 @@ public class Av1UnsupportedFeatureGuardTests
     // the colour config starts at bit 36 (high_bitdepth), inside the fifth byte.
 
     [Fact]
-    public void SequenceHeader_TenBit_Throws()
+    public void SequenceHeader_TenBit_Parses()
     {
-        // high_bitdepth = 1 with seq_profile 0 selects 10-bit.
+        // high_bitdepth = 1 with seq_profile 0 selects 10-bit, which the decoder supports.
         byte[] payload = [0x18, 0x15, 0x7F, 0xBC, 0x08, 0x08];
+        ObuSequenceHeader header = ObuSequenceHeader.Parse(payload);
+        Assert.Equal(10, header.BitDepth);
+    }
+
+    [Fact]
+    public void SequenceHeader_TwelveBit_Throws()
+    {
+        // seq_profile 2 with high_bitdepth = 1 and twelve_bit = 1 selects 12-bit.
+        byte[] payload = [0x58, 0x15, 0x7F, 0xBC, 0x0C, 0x61];
         NotSupportedException ex = Assert.Throws<NotSupportedException>(() => ObuSequenceHeader.Parse(payload));
-        Assert.Contains("10-bit", ex.Message);
+        Assert.Contains("12-bit", ex.Message);
     }
 
     [Fact]
