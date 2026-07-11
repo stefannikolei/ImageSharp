@@ -37,12 +37,12 @@ public class Av1UnsupportedFeatureGuardTests
     }
 
     [Fact]
-    public void SequenceHeader_Monochrome_Throws()
+    public void SequenceHeader_Monochrome_Parses()
     {
-        // mono_chrome = 1.
+        // mono_chrome = 1, which the decoder supports.
         byte[] payload = [0x18, 0x15, 0x7F, 0xBC, 0x04, 0x08];
-        NotSupportedException ex = Assert.Throws<NotSupportedException>(() => ObuSequenceHeader.Parse(payload));
-        Assert.Contains("Monochrome", ex.Message);
+        ObuSequenceHeader header = ObuSequenceHeader.Parse(payload);
+        Assert.Equal(1, header.NumPlanes);
     }
 
     [Fact]

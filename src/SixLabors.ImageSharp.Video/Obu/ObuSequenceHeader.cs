@@ -258,10 +258,6 @@ internal readonly struct ObuSequenceHeader
         bool enableRestoration = reader.ReadBoolean();
 
         ColorConfig color = ReadColorConfig(ref reader, seqProfile);
-        if (color.MonoChrome)
-        {
-            throw new NotSupportedException("Monochrome streams are not supported yet.");
-        }
 
         bool filmGrainParamsPresent = reader.ReadBoolean();
 

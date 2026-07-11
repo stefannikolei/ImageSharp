@@ -198,6 +198,14 @@ internal class Av1TileDecoder
         this.chromaU = new Av1Plane(alignedChromaWidth, alignedChromaHeight, chromaWidth, chromaHeight);
         this.chromaV = new Av1Plane(alignedChromaWidth, alignedChromaHeight, chromaWidth, chromaHeight);
 
+        // A monochrome stream codes no chroma: the placeholder planes stay at neutral grey so the
+        // colour conversion of the displayed frame yields grey without a special path.
+        if (sequenceHeader.NumPlanes == 1)
+        {
+            Array.Fill(this.chromaU.Samples, (ushort)this.midGrey);
+            Array.Fill(this.chromaV.Samples, (ushort)this.midGrey);
+        }
+
         int miCols = frameHeader.ModeInfoColumns;
         int miRows = frameHeader.ModeInfoRows;
         this.abovePartition = new byte[(miCols >> 1) + 1];

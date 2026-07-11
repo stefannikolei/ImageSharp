@@ -21,11 +21,15 @@ public class ScratchDump
         using FileStream stream = File.OpenRead(input);
         List<Av1DisplayFrame> frames = Av1DecoderCore.DecodeDisplayFrames(stream);
         using BinaryWriter w = new(File.Create(output));
+        bool lumaOnly = Environment.GetEnvironmentVariable("HBD_LUMA_ONLY") == "1";
         foreach (Av1DisplayFrame f in frames)
         {
             WritePlane(w, f.Luma);
-            WritePlane(w, f.ChromaU);
-            WritePlane(w, f.ChromaV);
+            if (!lumaOnly)
+            {
+                WritePlane(w, f.ChromaU);
+                WritePlane(w, f.ChromaV);
+            }
         }
     }
 
