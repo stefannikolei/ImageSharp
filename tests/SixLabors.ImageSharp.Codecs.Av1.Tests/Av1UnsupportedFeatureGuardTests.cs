@@ -95,13 +95,6 @@ public class Av1UnsupportedFeatureGuardTests
     }
 
     [Fact]
-    public void TileDecoder_ScreenContentTools_Throws()
-    {
-        (ObuSequenceHeader sequence, ObuFrameHeader frame) = ParseHeaders();
-        Assert.Throws<NotSupportedException>(() => new Av1TileDecoder(sequence, frame with { AllowScreenContentTools = true }));
-    }
-
-    [Fact]
     public void TileDecoder_IntraBlockCopy_Throws()
     {
         (ObuSequenceHeader sequence, ObuFrameHeader frame) = ParseHeaders();

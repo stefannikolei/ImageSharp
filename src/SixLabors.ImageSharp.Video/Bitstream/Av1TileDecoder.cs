@@ -102,6 +102,21 @@ internal class Av1TileDecoder
     private bool lumaEdgeSmooth;
     private protected byte blockIntraEdgeFlags = Av1IntraEdgeFlags.AllTrAndBl;
 
+    // Palette neighbour state (dav1d BlockContext.pal_sz, t->pal_sz_uv and t->al_pal): the luma and
+    // chroma palette sizes per 4x4 neighbour cell, and the palette colours (three planes of up to
+    // eight entries per cell) the size caches read from.
+    private readonly byte[] abovePalSize;
+    private readonly byte[] leftPalSize;
+    private readonly byte[] abovePalUvSize;
+    private readonly byte[] leftPalUvSize;
+    private readonly ushort[] abovePalette;
+    private readonly ushort[] leftPalette;
+
+    // Whether the current block painted its planes from a palette: the transform loop then uses the
+    // painted samples as the prediction (dav1d's skip_y_pred/skip_uv_pred).
+    private bool currentBlockPaletteY;
+    private bool currentBlockPaletteUv;
+
     /// <summary>Gets a value indicating whether the block currently decoding is inter-coded (the
     /// inter decoder overrides this; skipped inter blocks deblock no interior transform edges).</summary>
     private protected virtual bool CurrentBlockIsInter => false;
@@ -218,6 +233,12 @@ internal class Av1TileDecoder
         this.leftUvMode = new byte[miRows];
         this.aboveTx = new sbyte[miCols];
         this.leftTx = new sbyte[miRows];
+        this.abovePalSize = new byte[miCols];
+        this.leftPalSize = new byte[miRows];
+        this.abovePalUvSize = new byte[miCols];
+        this.leftPalUvSize = new byte[miRows];
+        this.abovePalette = new ushort[miCols * 24];
+        this.leftPalette = new ushort[miRows * 24];
 
         // The intra tx-size context is initialised to -1 at the frame edge (dav1d's tx_intra reset),
         // so an unavailable neighbour never satisfies the ">= current tx category" comparison.
@@ -264,11 +285,6 @@ internal class Av1TileDecoder
         if (frameHeader.CodedLossless)
         {
             throw new NotSupportedException("Lossless coding is not supported yet.");
-        }
-
-        if (frameHeader.AllowScreenContentTools)
-        {
-            throw new NotSupportedException("Screen-content tools (palette) are not supported yet.");
         }
 
         if (frameHeader.AllowIntraBlockCopy)
@@ -392,6 +408,8 @@ internal class Av1TileDecoder
         int chromaModeStart = start >> this.subsamplingX;
         Array.Clear(this.aboveUvMode, chromaModeStart, ((this.tileBounds.ColumnEnd + this.subsamplingX) >> this.subsamplingX) - chromaModeStart);
         Array.Fill(this.aboveTx, (sbyte)-1, start, count);
+        Array.Clear(this.abovePalSize, start, count);
+        Array.Clear(this.abovePalUvSize, start, count);
         this.lumaLevels.ClearAbove(start, count);
         int chromaStart = start >> this.subsamplingX;
         int chromaCount = ((this.tileBounds.ColumnEnd + this.subsamplingX) >> this.subsamplingX) - chromaStart;
@@ -431,6 +449,8 @@ internal class Av1TileDecoder
             Array.Clear(this.leftSkip);
             Array.Clear(this.leftMode);
             Array.Fill(this.leftTx, (sbyte)-1);
+            Array.Clear(this.leftPalSize);
+            Array.Clear(this.leftPalUvSize);
             this.lumaLevels.ClearLeft();
             this.chromaULevels.ClearLeft();
             this.chromaVLevels.ClearLeft();
@@ -1631,9 +1651,44 @@ internal class Av1TileDecoder
             }
         }
 
-        // filter_intra: coded for DC luma blocks up to 32x32 when enabled.
+        // palette_mode_info: DC blocks of 8x8..64x64 may paint from a coded palette instead of an
+        // intra prediction (dav1d's read_pal_plane/read_pal_uv).
+        int paletteSizeY = 0;
+        int paletteSizeUv = 0;
+        ushort[]? paletteY = null;
+        ushort[]? paletteU = null;
+        ushort[]? paletteV = null;
+        if (this.frameHeader.AllowScreenContentTools
+            && Math.Max(width4, height4) <= 16 && width4 + height4 >= 4)
+        {
+            int sizeContext = bsize.GetWidthLog2() + bsize.GetHeightLog2() - 2;
+            if (yMode == 0)
+            {
+                int palContext = (this.abovePalSize[col] > 0 ? 1 : 0) + (this.leftPalSize[row] > 0 ? 1 : 0);
+                if (this.decoder.ReadSymbol(this.modeCdf.PaletteY[sizeContext][palContext]) != 0)
+                {
+                    paletteY = new ushort[8];
+                    paletteSizeY = this.ReadPalettePlane(paletteY, 0, sizeContext, row, col);
+                }
+            }
+
+            if (hasChroma && uvMode == 0)
+            {
+                int palContext = paletteSizeY > 0 ? 1 : 0;
+                if (this.decoder.ReadSymbol(this.modeCdf.PaletteUv[palContext]) != 0)
+                {
+                    paletteU = new ushort[8];
+                    paletteV = new ushort[8];
+                    paletteSizeUv = this.ReadPalettePlane(paletteU, 1, sizeContext, row, col);
+                    this.ReadPaletteV(paletteV, paletteSizeUv);
+                }
+            }
+        }
+
+        // filter_intra: coded for DC luma blocks up to 32x32 when enabled (never for palette blocks).
         int filterIntraMode = -1;
-        if (this.sequenceHeader.EnableFilterIntra && Math.Max(bsize.GetWidthLog2(), bsize.GetHeightLog2()) <= 3 && yMode == 0)
+        if (this.sequenceHeader.EnableFilterIntra && paletteSizeY == 0
+            && Math.Max(bsize.GetWidthLog2(), bsize.GetHeightLog2()) <= 3 && yMode == 0)
         {
             int useFilterIntra = this.decoder.ReadSymbol(this.modeCdf.UseFilterIntra[(int)bsize]);
             if (useFilterIntra != 0)
@@ -1641,6 +1696,34 @@ internal class Av1TileDecoder
                 filterIntraMode = this.decoder.ReadSymbol(this.modeCdf.FilterIntraMode);
             }
         }
+
+        // Palette index maps (read after filter_intra, before the transform size), then paint the
+        // block; the transform loop uses the painted samples as the prediction.
+        if (paletteSizeY > 0)
+        {
+            int w4 = Math.Min(width4, this.miColumns - col);
+            int h4 = Math.Min(height4, this.miRows - row);
+            byte[] indices = this.ReadPaletteIndices(paletteSizeY, 0, w4, h4, width4, height4);
+            PaintPalette(this.luma, col * 4, row * 4, width4 * 4, height4 * 4, indices, paletteY!);
+        }
+
+        if (paletteSizeUv > 0)
+        {
+            int w4 = Math.Min(width4, this.miColumns - col);
+            int h4 = Math.Min(height4, this.miRows - row);
+            int cw4 = (w4 + this.subsamplingX) >> this.subsamplingX;
+            int ch4 = (h4 + this.subsamplingY) >> this.subsamplingY;
+            int cbw4 = (width4 + this.subsamplingX) >> this.subsamplingX;
+            int cbh4 = (height4 + this.subsamplingY) >> this.subsamplingY;
+            byte[] indices = this.ReadPaletteIndices(paletteSizeUv, 1, cw4, ch4, cbw4, cbh4);
+            int cx = (col >> this.subsamplingX) * 4;
+            int cy = (row >> this.subsamplingY) * 4;
+            PaintPalette(this.chromaU, cx, cy, cbw4 * 4, cbh4 * 4, indices, paletteU!);
+            PaintPalette(this.chromaV, cx, cy, cbw4 * 4, cbh4 * 4, indices, paletteV!);
+        }
+
+        this.currentBlockPaletteY = paletteSizeY > 0;
+        this.currentBlockPaletteUv = paletteSizeUv > 0;
 
         // transform size (TX_MODE_LARGEST forces the largest; TX_MODE_SELECT codes a depth).
         Av1TransformSize lumaTx = this.ReadTransformSize(row, col, bsize);
@@ -1706,10 +1789,319 @@ internal class Av1TileDecoder
         }
         Fill(this.aboveTx, col, width4, (sbyte)(lumaTx.GetWidthLog2() - 2));
         Fill(this.leftTx, row, height4, (sbyte)(lumaTx.GetHeightLog2() - 2));
+        this.RecordPaletteContexts(row, col, width4, height4, hasChroma, paletteSizeY, paletteSizeUv, paletteY, paletteU, paletteV);
+        this.currentBlockPaletteY = false;
+        this.currentBlockPaletteUv = false;
 
         this.RecordLoopFilterLevels(row, col, bsize, hasChroma, reference: 0, modeIndex: 0);
         this.OnIntraBlockDecoded(row, col, bsize, skip, yMode, lumaTx);
     }
+
+
+    // Reads one plane's palette (dav1d read_pal_plane): the size, the reuse flags against the sorted
+    // cache of the neighbour palettes, and the ascending delta-coded new entries, merged sorted.
+    private int ReadPalettePlane(ushort[] palette, int plane, int sizeContext, int row, int col)
+    {
+        int paletteSize = this.decoder.ReadSymbol(this.modeCdf.PaletteSize[plane][sizeContext]) + 2;
+
+        int leftCount = plane == 0 ? this.leftPalSize[row] : this.leftPalUvSize[row];
+        // The above palette is not reused across 64-pixel superblock row boundaries.
+        int aboveCount = (row & 15) != 0 ? (plane == 0 ? this.abovePalSize[col] : this.abovePalUvSize[col]) : 0;
+        int leftBase = (row * 24) + (plane * 8);
+        int aboveBase = (col * 24) + (plane * 8);
+
+        // Merge the two sorted neighbour palettes into a deduplicated cache.
+        Span<ushort> cache = stackalloc ushort[16];
+        int cacheCount = 0;
+        int l = 0;
+        int a = 0;
+        while (l < leftCount && a < aboveCount)
+        {
+            ushort lv = this.leftPalette[leftBase + l];
+            ushort av = this.abovePalette[aboveBase + a];
+            if (lv < av)
+            {
+                if (cacheCount == 0 || cache[cacheCount - 1] != lv)
+                {
+                    cache[cacheCount++] = lv;
+                }
+
+                l++;
+            }
+            else
+            {
+                if (av == lv)
+                {
+                    l++;
+                }
+
+                if (cacheCount == 0 || cache[cacheCount - 1] != av)
+                {
+                    cache[cacheCount++] = av;
+                }
+
+                a++;
+            }
+        }
+
+        for (; l < leftCount; l++)
+        {
+            ushort lv = this.leftPalette[leftBase + l];
+            if (cacheCount == 0 || cache[cacheCount - 1] != lv)
+            {
+                cache[cacheCount++] = lv;
+            }
+        }
+
+        for (; a < aboveCount; a++)
+        {
+            ushort av = this.abovePalette[aboveBase + a];
+            if (cacheCount == 0 || cache[cacheCount - 1] != av)
+            {
+                cache[cacheCount++] = av;
+            }
+        }
+
+        // One reuse flag per cache entry, then the new entries: a raw first value and ascending
+        // deltas (strictly ascending for luma/U via the +1 bias), clamped at the sample maximum.
+        Span<ushort> usedCache = stackalloc ushort[8];
+        int usedCount = 0;
+        for (int n = 0; n < cacheCount && usedCount < paletteSize; n++)
+        {
+            if (this.decoder.ReadBool() != 0)
+            {
+                usedCache[usedCount++] = cache[n];
+            }
+        }
+
+        int i = usedCount;
+        if (i < paletteSize)
+        {
+            int bitDepth = this.sequenceHeader.BitDepth;
+            Span<ushort> fresh = stackalloc ushort[8];
+            int freshBase = i;
+            int prev = fresh[i++] = (ushort)this.decoder.ReadLiteral(bitDepth);
+            if (i < paletteSize)
+            {
+                int bits = bitDepth - 3 + (int)this.decoder.ReadLiteral(2);
+                int max = (1 << bitDepth) - 1;
+                int bias = plane == 0 ? 1 : 0;
+                while (i < paletteSize)
+                {
+                    int delta = (int)this.decoder.ReadLiteral(bits);
+                    prev = Math.Min(prev + delta + bias, max);
+                    fresh[i++] = (ushort)prev;
+                    if (prev + bias >= max)
+                    {
+                        for (; i < paletteSize; i++)
+                        {
+                            fresh[i] = (ushort)max;
+                        }
+
+                        break;
+                    }
+
+                    bits = Math.Min(bits, 1 + Log2(max - prev - bias));
+                }
+            }
+
+            // Merge the used cache entries and the new entries in ascending order.
+            int n2 = 0;
+            int m2 = freshBase;
+            for (i = 0; i < paletteSize; i++)
+            {
+                if (n2 < usedCount && (m2 >= paletteSize || usedCache[n2] <= fresh[m2]))
+                {
+                    palette[i] = usedCache[n2++];
+                }
+                else
+                {
+                    palette[i] = fresh[m2++];
+                }
+            }
+        }
+        else
+        {
+            usedCache[..usedCount].CopyTo(palette);
+        }
+
+        return paletteSize;
+    }
+
+    // Reads the V-plane palette (dav1d read_pal_uv's second half): either signed-delta coded with a
+    // wrap-around, or raw sample values, chosen by an equiprobable bit.
+    private void ReadPaletteV(ushort[] palette, int paletteSize)
+    {
+        int bitDepth = this.sequenceHeader.BitDepth;
+        if (this.decoder.ReadBool() != 0)
+        {
+            int bits = bitDepth - 4 + (int)this.decoder.ReadLiteral(2);
+            int prev = (int)this.decoder.ReadLiteral(bitDepth);
+            palette[0] = (ushort)prev;
+            int max = (1 << bitDepth) - 1;
+            for (int i = 1; i < paletteSize; i++)
+            {
+                int delta = (int)this.decoder.ReadLiteral(bits);
+                if (delta != 0 && this.decoder.ReadBool() != 0)
+                {
+                    delta = -delta;
+                }
+
+                prev = (prev + delta) & max;
+                palette[i] = (ushort)prev;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < paletteSize; i++)
+            {
+                palette[i] = (ushort)this.decoder.ReadLiteral(bitDepth);
+            }
+        }
+    }
+
+    // Reads a block's palette index map (dav1d read_pal_indices): the first sample is near-uniform,
+    // then anti-diagonal wavefronts code each sample against its top/left/top-left neighbour pattern.
+    // The map covers the full block (bw4*4 x bh4*4); samples beyond the frame-clipped w4*4/h4*4 area
+    // replicate the last coded column/row (dav1d pal_idx_finish).
+    private byte[] ReadPaletteIndices(int paletteSize, int plane, int w4, int h4, int bw4, int bh4)
+    {
+        int stride = bw4 * 4;
+        byte[] indices = new byte[stride * (bh4 * 4)];
+        indices[0] = (byte)this.decoder.ReadUniform(paletteSize);
+        ushort[][] colorMapCdf = this.modeCdf.PaletteColorMap[plane][paletteSize - 2];
+        int w = w4 * 4;
+        int h = h4 * 4;
+        Span<byte> order = stackalloc byte[8];
+        for (int i = 1; i < (4 * (w4 + h4)) - 1; i++)
+        {
+            int first = Math.Min(i, w - 1);
+            int last = Math.Max(0, i - h + 1);
+            for (int j = first; j >= last; j--)
+            {
+                int y = i - j;
+                int pos = (y * stride) + j;
+                bool haveLeft = j > 0;
+                bool haveTop = y > 0;
+                int context;
+                int orderCount = 0;
+                int mask = 0;
+                void Add(int v, Span<byte> ord)
+                {
+                    ord[orderCount++] = (byte)v;
+                    mask |= 1 << v;
+                }
+
+                if (!haveLeft)
+                {
+                    context = 0;
+                    Add(indices[pos - stride], order);
+                }
+                else if (!haveTop)
+                {
+                    context = 0;
+                    Add(indices[pos - 1], order);
+                }
+                else
+                {
+                    int left = indices[pos - 1];
+                    int top = indices[pos - stride];
+                    int topLeft = indices[pos - stride - 1];
+                    if (top == left && top == topLeft)
+                    {
+                        context = 4;
+                        Add(top, order);
+                    }
+                    else if (top == left)
+                    {
+                        context = 3;
+                        Add(top, order);
+                        Add(topLeft, order);
+                    }
+                    else if (top == topLeft || left == topLeft)
+                    {
+                        context = 2;
+                        Add(topLeft, order);
+                        Add(top == topLeft ? left : top, order);
+                    }
+                    else
+                    {
+                        context = 1;
+                        Add(Math.Min(top, left), order);
+                        Add(Math.Max(top, left), order);
+                        Add(topLeft, order);
+                    }
+                }
+
+                for (int bit = 0; bit < 8; bit++)
+                {
+                    if ((mask & (1 << bit)) == 0)
+                    {
+                        order[orderCount++] = (byte)bit;
+                    }
+                }
+
+                int colorIndex = this.decoder.ReadSymbol(colorMapCdf[context]);
+                indices[pos] = order[colorIndex];
+            }
+        }
+
+        // Replicate the coded area over the block overhang.
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = w; x < stride; x++)
+            {
+                indices[(y * stride) + x] = indices[(y * stride) + w - 1];
+            }
+        }
+
+        for (int y = h; y < bh4 * 4; y++)
+        {
+            Array.Copy(indices, (h - 1) * stride, indices, y * stride, stride);
+        }
+
+        return indices;
+    }
+
+    // Paints a palette block into the plane (dav1d pal_pred), clamped at the padded plane bounds.
+    private static void PaintPalette(Av1Plane plane, int x0, int y0, int width, int height, byte[] indices, ushort[] palette)
+    {
+        for (int y = 0; y < height && y0 + y < plane.Height; y++)
+        {
+            for (int x = 0; x < width && x0 + x < plane.Width; x++)
+            {
+                plane[x0 + x, y0 + y] = palette[indices[(y * width) + x]];
+            }
+        }
+    }
+
+    // Records the palette sizes (zero for non-palette blocks) and colours into the neighbour state
+    // (dav1d set_ctx pal_sz/pal_sz_uv plus copy_pal_block).
+    private protected void RecordPaletteContexts(int row, int col, int width4, int height4, bool hasChroma, int paletteSizeY, int paletteSizeUv, ushort[]? paletteY = null, ushort[]? paletteU = null, ushort[]? paletteV = null)
+    {
+        Fill(this.abovePalSize, col, width4, (byte)paletteSizeY);
+        Fill(this.leftPalSize, row, height4, (byte)paletteSizeY);
+        Fill(this.abovePalUvSize, col, width4, (byte)(hasChroma ? paletteSizeUv : 0));
+        Fill(this.leftPalUvSize, row, height4, (byte)(hasChroma ? paletteSizeUv : 0));
+
+        for (int i = 0; i < width4 && col + i < this.miColumns; i++)
+        {
+            int cellBase = (col + i) * 24;
+            paletteY?.CopyTo(this.abovePalette, cellBase);
+            paletteU?.CopyTo(this.abovePalette, cellBase + 8);
+            paletteV?.CopyTo(this.abovePalette, cellBase + 16);
+        }
+
+        for (int i = 0; i < height4 && row + i < this.miRows; i++)
+        {
+            int cellBase = (row + i) * 24;
+            paletteY?.CopyTo(this.leftPalette, cellBase);
+            paletteU?.CopyTo(this.leftPalette, cellBase + 8);
+            paletteV?.CopyTo(this.leftPalette, cellBase + 16);
+        }
+    }
+
+    private static int Log2(int value) => 31 - System.Numerics.BitOperations.LeadingZeroCount((uint)Math.Max(value, 1));
 
     // Called after an intra block is fully decoded. The inter decoder overrides this to record the
     // inter-specific neighbour state (intra flag, transform-size context and motion-vector grid) that an
@@ -1735,6 +2127,7 @@ internal class Av1TileDecoder
     // feed the transform-depth context and the smooth-edge filter flags of later intra blocks.
     private protected void RecordInterBlockIntraContexts(int row, int col, Av1BlockSize bsize, bool hasChroma)
     {
+        this.RecordPaletteContexts(row, col, bsize.GetWidth4(), bsize.GetHeight4(), hasChroma, 0, 0);
         int width4 = bsize.GetWidth4();
         int height4 = bsize.GetHeight4();
         Fill(this.aboveTx, col, width4, (sbyte)bsize.GetWidthLog2());
@@ -1938,6 +2331,21 @@ internal class Av1TileDecoder
 
     private protected virtual void Predict(Av1Plane plane, int x, int y, int width, int height, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, ushort[] prediction)
     {
+        // A palette block was painted before the transform loop; those samples are the prediction
+        // (dav1d's skip_y_pred/skip_uv_pred).
+        if (ReferenceEquals(plane, this.luma) ? this.currentBlockPaletteY : this.currentBlockPaletteUv)
+        {
+            for (int ry = 0; ry < height; ry++)
+            {
+                for (int rx = 0; rx < width; rx++)
+                {
+                    prediction[(ry * width) + rx] = x + rx < plane.Width && y + ry < plane.Height ? plane[x + rx, y + ry] : (ushort)0;
+                }
+            }
+
+            return;
+        }
+
         // Filter-intra (luma, DC blocks): predict each square unit from the prepared edges.
         if (filterIntraMode >= 0)
         {

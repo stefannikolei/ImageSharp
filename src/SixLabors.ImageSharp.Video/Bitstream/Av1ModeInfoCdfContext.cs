@@ -74,6 +74,19 @@ internal sealed class Av1ModeInfoCdfContext
     /// <summary>Gets the per-superblock loop-filter-delta token CDFs.</summary>
     public ushort[][] DeltaLf { get; private set; } = default!;
 
+    /// <summary>Gets the luma use-palette CDFs, indexed by block-size context then neighbour context.</summary>
+    public ushort[][][] PaletteY { get; private set; } = default!;
+
+    /// <summary>Gets the chroma use-palette CDFs, indexed by the luma-palette context.</summary>
+    public ushort[][] PaletteUv { get; private set; } = default!;
+
+    /// <summary>Gets the palette-size CDFs, indexed by plane then block-size context.</summary>
+    public ushort[][][] PaletteSize { get; private set; } = default!;
+
+    /// <summary>Gets the palette colour-index CDFs, indexed by plane, palette size minus two and
+    /// neighbour-pattern context.</summary>
+    public ushort[][][][] PaletteColorMap { get; private set; } = default!;
+
     /// <summary>
     /// Creates a mode-info CDF context initialized from the default tables.
     /// </summary>
@@ -100,6 +113,10 @@ internal sealed class Av1ModeInfoCdfContext
         SegPred = Clone(Av1DefaultModeInfoCdf.SegPred),
         DeltaQ = (ushort[])Av1DefaultModeInfoCdf.DeltaQ.Clone(),
         DeltaLf = Clone(Av1DefaultModeInfoCdf.DeltaLf),
+        PaletteY = Clone(Av1DefaultModeInfoCdf.PaletteY),
+        PaletteUv = Clone(Av1DefaultModeInfoCdf.PaletteUv),
+        PaletteSize = Clone(Av1DefaultModeInfoCdf.PaletteSize),
+        PaletteColorMap = Clone(Av1DefaultModeInfoCdf.PaletteColorMap),
     };
 
     /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
@@ -126,6 +143,10 @@ internal sealed class Av1ModeInfoCdfContext
         SegPred = Clone(this.SegPred),
         DeltaQ = (ushort[])this.DeltaQ.Clone(),
         DeltaLf = Clone(this.DeltaLf),
+        PaletteY = Clone(this.PaletteY),
+        PaletteUv = Clone(this.PaletteUv),
+        PaletteSize = Clone(this.PaletteSize),
+        PaletteColorMap = Clone(this.PaletteColorMap),
     };
 
     private static ushort[][] Clone(ushort[][] group)
@@ -142,6 +163,17 @@ internal sealed class Av1ModeInfoCdfContext
     private static ushort[][][] Clone(ushort[][][] group)
     {
         ushort[][][] result = new ushort[group.Length][][];
+        for (int i = 0; i < group.Length; i++)
+        {
+            result[i] = Clone(group[i]);
+        }
+
+        return result;
+    }
+
+    private static ushort[][][][] Clone(ushort[][][][] group)
+    {
+        ushort[][][][] result = new ushort[group.Length][][][];
         for (int i = 0; i < group.Length; i++)
         {
             result[i] = Clone(group[i]);

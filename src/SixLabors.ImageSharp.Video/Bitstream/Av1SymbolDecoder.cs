@@ -102,6 +102,25 @@ internal sealed class Av1SymbolDecoder
     }
 
     /// <summary>
+    /// Reads a value in <c>[0, n)</c> with near-uniform probability (dav1d
+    /// <c>msac_decode_uniform</c>, the specification's <c>NS(n)</c>).
+    /// </summary>
+    /// <param name="n">The exclusive upper bound.</param>
+    /// <returns>The decoded value.</returns>
+    public int ReadUniform(int n)
+    {
+        int l = (32 - System.Numerics.BitOperations.LeadingZeroCount((uint)n - 1)) + ((n & (n - 1)) == 0 ? 1 : 0);
+        if (n == 1)
+        {
+            l = 1;
+        }
+
+        int m = (1 << l) - n;
+        int v = (int)this.ReadLiteral(l - 1);
+        return v < m ? v : (v << 1) - m + this.ReadBool();
+    }
+
+    /// <summary>
     /// Reads an Exp-Golomb coded value, as used by the coefficient base-range syntax
     /// (specification <c>read_golomb</c>).
     /// </summary>

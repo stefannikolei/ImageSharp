@@ -96,6 +96,13 @@ internal sealed class Av1FrameCdfSet
         Av1CdfTables.ResetCounter(m.RestoreWiener);
         Av1CdfTables.ResetCounter(m.RestoreSgrProj);
         Av1CdfTables.ResetCounter(m.RestoreSwitchable);
+        Av1CdfTables.ResetCounters(m.PaletteY);
+        Av1CdfTables.ResetCounters(m.PaletteUv);
+        Av1CdfTables.ResetCounters(m.PaletteSize);
+        foreach (ushort[][][] plane in m.PaletteColorMap)
+        {
+            Av1CdfTables.ResetCounters(plane);
+        }
 
         Av1CoefficientCdfContext c = this.Coefficient;
         Av1CdfTables.ResetCounters(c.Skip);
