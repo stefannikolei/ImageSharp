@@ -125,6 +125,24 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         this.grid = new Av1MotionVectorGrid(columns4, rows4);
         this.interNeighbours = new Av1InterNeighbourContext(columns4, rows4);
 
+        // The previous segment map for temporal prediction (and for frames keeping the map): the
+        // primary reference's map at matching mode-info dimensions (dav1d f->prev_segmap).
+        if (this.segmentation.Enabled && frameHeader.PrimaryRefFrame != ObuFrameHeader.PrimaryReferenceNone
+            && frameHeader.ReferenceFrameIndices is not null
+            && references[frameHeader.PrimaryRefFrame] is { } primary
+            && primary.SegmentMap is not null
+            && primary.SegmentMapColumns == frameHeader.ModeInfoColumns
+            && primary.SegmentMapRows == frameHeader.ModeInfoRows)
+        {
+            this.previousSegmentMap = primary.SegmentMap;
+
+            // A frame that keeps the map (!update_map) shares the previous map's contents.
+            if (!this.segmentation.UpdateMap)
+            {
+                primary.SegmentMap.CopyTo(this.SegmentMap, 0);
+            }
+        }
+
         // Scaled references: a reference stored at a different resolution than this frame's coded size
         // (super-resolution or an explicit size change) is motion-compensated through the scaled path.
         bool[] referenceIsScaled = new bool[7];
@@ -302,10 +320,16 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         bool haveTop = row > this.tileBounds.RowStart;
         bool haveLeft = col > this.tileBounds.ColumnStart;
 
+        // segment id (pre-skip forms): a segment with reference, skip or global-mv features gates
+        // the skip-mode, is-inter, reference and mode syntax below.
+        this.ReadPreSkipSegment(row, col, width4, height4);
+        bool segFeature = this.SegmentFeatureActive;
+        int segId = this.currentSegmentId;
+
         // skip_mode: read before the skip flag; a skip-mode block is a residual-free compound block
         // with the frame's derived reference pair (no further mode syntax).
         bool skipModeBlock = false;
-        if (this.frameHeader.SkipModeEnabled && Math.Min(width4, height4) > 1)
+        if (!segFeature && this.frameHeader.SkipModeEnabled && Math.Min(width4, height4) > 1)
         {
             int skipModeContext = this.interNeighbours.AboveSkipMode(col) + this.interNeighbours.LeftSkipMode(row);
             skipModeBlock = this.decoder.ReadSymbol(this.interCdf.SkipMode[skipModeContext]) != 0;
@@ -316,9 +340,17 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         bool isInter = true;
         if (!skipModeBlock)
         {
-            int intraContext = Av1IsInterReader.GetIntraContext(
-                this.interNeighbours.LeftIntra(row), this.interNeighbours.AboveIntra(col), haveLeft, haveTop);
-            isInter = Av1IsInterReader.ReadIsInter(this.decoder, this.interCdf, intraContext);
+            if (segFeature && (this.segmentation.Reference[segId] >= 0 || this.segmentation.GlobalMv[segId]))
+            {
+                // The segment's reference feature decides intra (reference 0 names INTRA_FRAME).
+                isInter = this.segmentation.Reference[segId] != 0;
+            }
+            else
+            {
+                int intraContext = Av1IsInterReader.GetIntraContext(
+                    this.interNeighbours.LeftIntra(row), this.interNeighbours.AboveIntra(col), haveLeft, haveTop);
+                isInter = Av1IsInterReader.ReadIsInter(this.decoder, this.interCdf, intraContext);
+            }
         }
 
         if (!isInter)
@@ -366,9 +398,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         }
 
         // Compound flag (dav1d: switchable_comp_refs && min(bw4,bh4) > 1); a skip-mode block is
-        // compound by definition.
+        // compound by definition and a segment feature forces single reference.
         bool isCompound = skipModeBlock;
-        if (!skipModeBlock && this.frameHeader.ReferenceSelect && Math.Min(width4, height4) > 1)
+        if (!skipModeBlock && !segFeature && this.frameHeader.ReferenceSelect && Math.Min(width4, height4) > 1)
         {
             int compoundContext = Av1ReferenceContext.ComputeCompoundContext(
                 this.interNeighbours.GetAbove(col), this.interNeighbours.GetLeft(row), haveTop, haveLeft);
@@ -399,6 +431,16 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
         }
         else
         {
+            int forcedReference = -1;
+            bool forceGlobalMv = false;
+            if (segFeature)
+            {
+                // dav1d: seg->ref > 0 forces that reference; a skip or global-mv feature forces
+                // LAST with a GLOBALMV mode.
+                forcedReference = this.segmentation.Reference[segId] > 0 ? this.segmentation.Reference[segId] - 1 : 0;
+                forceGlobalMv = this.segmentation.Skip[segId] || this.segmentation.GlobalMv[segId];
+            }
+
             info = Av1InterModeInfoDecoder.Decode(
                 this.decoder,
                 this.interCdf,
@@ -415,7 +457,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                 haveLeft,
                 topRightAvailable,
                 readMotionMode,
-                skipMode: false);
+                skipMode: false,
+                forcedReference,
+                forceGlobalMv);
         }
 
         // Motion-compensate every plane from the block's reference frame into the output planes. A
@@ -492,6 +536,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     {
         int width4 = bsize.GetWidth4();
         int height4 = bsize.GetHeight4();
+        this.ReadPreSkipSegment(row, col, width4, height4);
         int skip = this.ReadSkipFlag(row, col, width4, height4);
         bool useIntraBc = this.decoder.ReadSymbol(this.modeCdf.IntraBlockCopy) != 0;
         if (!useIntraBc)

@@ -341,7 +341,10 @@ internal static class Av1DecoderCore
                 frameHeader.RenderHeight),
             temporalMvs,
             referenceOrderHints,
-            frameHeader.FrameType == Av1FrameType.Key);
+            frameHeader.FrameType == Av1FrameType.Key,
+            frameHeader.SegmentationEnabled ? tileDecoder.SegmentMap : null,
+            frameHeader.ModeInfoColumns,
+            frameHeader.ModeInfoRows);
         referenceStore.Update(decoded, frameHeader.RefreshFrameFlags);
         return tileDecoder;
     }

@@ -51,7 +51,9 @@ internal static class Av1InterModeInfoDecoder
         bool haveLeft,
         bool topRightAvailable,
         bool readMotionMode,
-        bool skipMode)
+        bool skipMode,
+        int forcedReference = -1,
+        bool forceGlobalMv = false)
     {
         int bw4 = blockSize.GetWidth4();
         int bh4 = blockSize.GetHeight4();
@@ -59,9 +61,17 @@ internal static class Av1InterModeInfoDecoder
         Av1ReferenceNeighbour above = neighbours.GetAbove(bx4);
         Av1ReferenceNeighbour left = neighbours.GetLeft(by4);
 
-        // Reference frame (zero-based).
-        int[] referenceContexts = Av1ReferenceContext.ComputeSingleReferenceContexts(above, left, haveTop, haveLeft);
-        int reference = Av1ReferenceFrameReader.ReadSingleReference(decoder, interCdf, referenceContexts);
+        // Reference frame (zero-based), or the segment feature's forced reference.
+        int reference;
+        if (forcedReference >= 0)
+        {
+            reference = forcedReference;
+        }
+        else
+        {
+            int[] referenceContexts = Av1ReferenceContext.ComputeSingleReferenceContexts(above, left, haveTop, haveLeft);
+            reference = Av1ReferenceFrameReader.ReadSingleReference(decoder, interCdf, referenceContexts);
+        }
 
         // The block's global-motion vector for its reference (dav1d tgmv): the predictor list fills
         // towards it, GLOBALMV blocks resolve to it, and neighbours coded as GLOBALMV substitute it when
@@ -81,7 +91,7 @@ internal static class Av1InterModeInfoDecoder
         stack.CopyTo(candidates);
 
         (Av1InterPredictionMode mode, int drlIndex) = Av1InterModeReader.ReadMode(
-            decoder, interCdf, modeContext, candidateCount, candidates, forceGlobalMv: false);
+            decoder, interCdf, modeContext, candidateCount, candidates, forceGlobalMv);
 
         // Resolve the motion vector.
         Av1MotionVector motionVector = ResolveMotionVector(

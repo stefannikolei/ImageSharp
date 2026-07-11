@@ -167,9 +167,25 @@ internal class Av1TileDecoder
 
     // Segmentation state: the frame's parameters, the segment map coded by this frame (4x4 resolution)
     // and the current block's segment id.
-    private readonly ObuSegmentationParams segmentation;
+    private protected readonly ObuSegmentationParams segmentation;
     private readonly byte[] segmentMap;
-    private int currentSegmentId;
+    private protected int currentSegmentId;
+
+    /// <summary>Gets the frame's 4x4 segment map (published to the reference store).</summary>
+    internal byte[] SegmentMap => this.segmentMap;
+
+    // The primary reference's segment map at matching dimensions (dav1d f->prev_segmap), for
+    // temporal segment prediction and for frames that keep the previous map (!update_map).
+    private protected byte[]? previousSegmentMap;
+
+    // The temporal segment-prediction flag neighbour contexts (dav1d BlockContext.seg_pred).
+    private readonly byte[] aboveSegPred;
+    private readonly byte[] leftSegPred;
+
+    // The current block's coded seg_pred flag (written into the neighbour contexts) and whether the
+    // segment id was already resolved before the skip flag (pre-skip features or a kept map).
+    private byte blockSegPred;
+    private protected bool segmentResolvedPreSkip;
 
     // Whether each segment codes losslessly (4x4 Walsh-Hadamard transforms, dav1d's
     // segmentation.lossless array).
@@ -239,6 +255,8 @@ internal class Av1TileDecoder
         this.leftUvMode = new byte[miRows];
         this.aboveTx = new sbyte[miCols];
         this.leftTx = new sbyte[miRows];
+        this.aboveSegPred = new byte[miCols];
+        this.leftSegPred = new byte[miRows];
         this.abovePalSize = new byte[miCols];
         this.leftPalSize = new byte[miRows];
         this.abovePalUvSize = new byte[miCols];
@@ -297,26 +315,6 @@ internal class Av1TileDecoder
                 ? Math.Clamp(frameHeader.BaseQIndex + this.segmentation.DeltaQ[seg], 0, 255)
                 : frameHeader.BaseQIndex;
             this.losslessSegments[seg] = qidx == 0 && zeroDeltas;
-        }
-        if (this.segmentation.Enabled)
-        {
-            if (!this.segmentation.UpdateMap || this.segmentation.TemporalUpdate)
-            {
-                throw new NotSupportedException("Segment maps predicted from a previous frame are not supported yet.");
-            }
-
-            if (this.segmentation.PreSkip)
-            {
-                throw new NotSupportedException("The segmentation reference, skip and global-mv features are not supported yet.");
-            }
-
-            for (int i = 0; i <= this.segmentation.LastActiveSegmentId; i++)
-            {
-                if (Math.Clamp(frameHeader.BaseQIndex + this.segmentation.DeltaQ[i], 0, 255) == 0)
-                {
-                    throw new NotSupportedException("Lossless segments are not supported yet.");
-                }
-            }
         }
 
         this.currentQIndex = frameHeader.BaseQIndex;
@@ -414,6 +412,7 @@ internal class Av1TileDecoder
         Array.Fill(this.aboveTx, (sbyte)-1, start, count);
         Array.Clear(this.abovePalSize, start, count);
         Array.Clear(this.abovePalUvSize, start, count);
+        Array.Clear(this.aboveSegPred, start, count);
         this.lumaLevels.ClearAbove(start, count);
         int chromaStart = start >> this.subsamplingX;
         int chromaCount = ((this.tileBounds.ColumnEnd + this.subsamplingX) >> this.subsamplingX) - chromaStart;
@@ -455,6 +454,7 @@ internal class Av1TileDecoder
             Array.Fill(this.leftTx, (sbyte)-1);
             Array.Clear(this.leftPalSize);
             Array.Clear(this.leftPalUvSize);
+            Array.Clear(this.leftSegPred);
             this.lumaLevels.ClearLeft();
             this.chromaULevels.ClearLeft();
             this.chromaVLevels.ClearLeft();
@@ -1395,22 +1395,38 @@ internal class Av1TileDecoder
         {
             skip = forced;
         }
+        else if (this.segmentResolvedPreSkip && this.segmentation.Skip[this.currentSegmentId])
+        {
+            // A pre-skip segment with the skip feature implies the skip flag (dav1d seg->skip).
+            skip = 1;
+        }
         else
         {
             int skipContext = this.aboveSkip[col] + this.leftSkip[row];
             skip = this.decoder.ReadSymbol(this.modeCdf.Skip[skipContext]);
         }
 
-        // Post-skip segment id: predicted from the neighbouring map cells; a skipped block takes the
-        // prediction without coding a symbol (the pre-skip position is rejected at construction).
-        if (this.segmentation.Enabled)
+        // Post-skip segment id: temporally predicted from the previous map, or spatially predicted
+        // from the neighbouring map cells (a skipped block takes the spatial prediction without
+        // coding a symbol). Pre-skip segments were resolved before the skip flag.
+        if (this.segmentation.Enabled && this.segmentation.UpdateMap && !this.segmentation.PreSkip)
         {
-            this.ReadSegmentId(row, col, width4, height4, skip);
+            if (skip == 0 && this.segmentation.TemporalUpdate
+                && this.ReadSegmentPredictionFlag(col, row))
+            {
+                this.SetSegmentIdFromPreviousMap(row, col, width4, height4);
+            }
+            else
+            {
+                this.ReadSegmentId(row, col, width4, height4, skip);
+            }
         }
-        else
+        else if (!this.segmentResolvedPreSkip)
         {
             this.currentSegmentId = 0;
         }
+
+        this.RecordSegmentContexts(row, col, width4, height4);
 
         // cdef index: read once per 64x64 region at its first non-skip block, then propagated to every
         // 64x64 cell the block covers (dav1d reads cdef_idx per 64x64, even within a 128x128 superblock).
@@ -1442,6 +1458,104 @@ internal class Av1TileDecoder
         this.UpdateBlockQIndex();
         return skip;
     }
+
+    // Resolves the segment id before the skip flag when the frame keeps the previous map or codes
+    // pre-skip segment features (dav1d decode_b's first segment_id branch). Returns through
+    // segmentResolvedPreSkip so the skip and mode syntax can apply the segment's features.
+    private protected void ReadPreSkipSegment(int row, int col, int width4, int height4)
+    {
+        this.blockSegPred = 0;
+        this.segmentResolvedPreSkip = false;
+        if (!this.segmentation.Enabled)
+        {
+            this.currentSegmentId = 0;
+            return;
+        }
+
+        if (!this.segmentation.UpdateMap)
+        {
+            this.SetSegmentIdFromPreviousMap(row, col, width4, height4);
+            this.segmentResolvedPreSkip = true;
+            return;
+        }
+
+        if (!this.segmentation.PreSkip)
+        {
+            return;
+        }
+
+        if (this.segmentation.TemporalUpdate && this.ReadSegmentPredictionFlag(col, row))
+        {
+            this.SetSegmentIdFromPreviousMap(row, col, width4, height4);
+        }
+        else
+        {
+            this.ReadSegmentId(row, col, width4, height4, skip: 0);
+        }
+
+        this.segmentResolvedPreSkip = true;
+    }
+
+    // Reads the temporal segment-prediction flag with its neighbour context.
+    private bool ReadSegmentPredictionFlag(int col, int row)
+    {
+        int context = this.aboveSegPred[col] + this.leftSegPred[row];
+        this.blockSegPred = (byte)this.decoder.ReadSymbol(this.modeCdf.SegPred[context]);
+        return this.blockSegPred != 0;
+    }
+
+    // Takes the minimum segment id over the block's area of the previous frame's map (dav1d
+    // get_prev_frame_segid) and splats it into the current map.
+    private void SetSegmentIdFromPreviousMap(int row, int col, int width4, int height4)
+    {
+        int segId = 0;
+        if (this.previousSegmentMap is { } prev)
+        {
+            segId = 8;
+            int w = Math.Min(width4, this.miColumns - col);
+            int h = Math.Min(height4, this.miRows - row);
+            for (int dy = 0; dy < h && segId != 0; dy++)
+            {
+                int rowBase = (row + dy) * this.miColumns;
+                for (int dx = 0; dx < w; dx++)
+                {
+                    segId = Math.Min(segId, prev[rowBase + col + dx]);
+                }
+            }
+
+            if (segId >= 8)
+            {
+                throw new InvalidDataException("The temporally predicted segment id is out of range.");
+            }
+        }
+
+        this.currentSegmentId = segId;
+        for (int dy = 0; dy < height4 && row + dy < this.miRows; dy++)
+        {
+            int rowBase = (row + dy) * this.miColumns;
+            for (int dx = 0; dx < width4 && col + dx < this.miColumns; dx++)
+            {
+                this.segmentMap[rowBase + col + dx] = (byte)segId;
+            }
+        }
+    }
+
+    // Records the temporal-prediction flag into the neighbour contexts (dav1d writes seg_pred for
+    // every block, zero when it was not coded). The pre-skip resolution state stays live for the
+    // block's remaining mode syntax and resets at the next block's pre-skip read.
+    private void RecordSegmentContexts(int row, int col, int width4, int height4)
+    {
+        Fill(this.aboveSegPred, col, width4, this.blockSegPred);
+        Fill(this.leftSegPred, row, height4, this.blockSegPred);
+    }
+
+    // Whether the pre-skip-resolved segment forces reference, skip or global-mv behaviour
+    // (dav1d's seg feature gates).
+    private protected bool SegmentFeatureActive
+        => this.segmentResolvedPreSkip
+           && (this.segmentation.Reference[this.currentSegmentId] != -1
+               || this.segmentation.Skip[this.currentSegmentId]
+               || this.segmentation.GlobalMv[this.currentSegmentId]);
 
     // Reads the block's segment id from the spatial prediction (dav1d's post-skip segment_id branch)
     // and splats it into the segment map.
@@ -1606,7 +1720,9 @@ internal class Av1TileDecoder
         int width4 = bsize.GetWidth4();
         int height4 = bsize.GetHeight4();
 
-        // skip flag, plus the shared cdef-index and non-skip recording.
+        // segment id (pre-skip forms), then the skip flag with the shared cdef-index and non-skip
+        // recording.
+        this.ReadPreSkipSegment(row, col, width4, height4);
         int skip = this.ReadSkipFlag(row, col, width4, height4);
 
         // luma intra mode (key-frame path: coded with the above/left neighbour-mode context).

@@ -25,8 +25,11 @@ internal sealed class Av1ReferenceFrame
     /// intra frames, which save none).</param>
     /// <param name="referenceOrderHints">The order hints of the frame's own seven references, by name
     /// (all zero for intra frames).</param>
-    public Av1ReferenceFrame(int orderHint, Av1Plane luma, Av1Plane? chromaU, Av1Plane? chromaV, Av1FrameCdfSet? cdfs = null, ObuPrimaryReferenceState? headerState = null, Av1TemporalMvs? temporalMvs = null, int[]? referenceOrderHints = null, bool isKeyFrame = false)
+    public Av1ReferenceFrame(int orderHint, Av1Plane luma, Av1Plane? chromaU, Av1Plane? chromaV, Av1FrameCdfSet? cdfs = null, ObuPrimaryReferenceState? headerState = null, Av1TemporalMvs? temporalMvs = null, int[]? referenceOrderHints = null, bool isKeyFrame = false, byte[]? segmentMap = null, int segmentMapColumns = 0, int segmentMapRows = 0)
     {
+        this.SegmentMap = segmentMap;
+        this.SegmentMapColumns = segmentMapColumns;
+        this.SegmentMapRows = segmentMapRows;
         this.IsKeyFrame = isKeyFrame;
         this.OrderHint = orderHint;
         this.Luma = luma;
@@ -65,4 +68,14 @@ internal sealed class Av1ReferenceFrame
 
     /// <summary>Gets the order hints of the frame's own seven references, by name.</summary>
     public int[] ReferenceOrderHints { get; }
+
+    /// <summary>Gets the frame's final segment map (4x4 granularity), or <see langword="null"/>
+    /// when the frame coded no segmentation.</summary>
+    public byte[]? SegmentMap { get; }
+
+    /// <summary>Gets the segment map's column count in 4x4 units.</summary>
+    public int SegmentMapColumns { get; }
+
+    /// <summary>Gets the segment map's row count in 4x4 units.</summary>
+    public int SegmentMapRows { get; }
 }
