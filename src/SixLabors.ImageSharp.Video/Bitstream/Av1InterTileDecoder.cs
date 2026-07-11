@@ -594,7 +594,7 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
                 int wedgeContext = Av1InterModeInfoDecoder.GetWedgeContext(bsizeForWedge);
                 byte[] wedgeMask = plane == 0
                     ? Prediction.Av1WedgeMasks.Luma[wedgeContext][info.WedgeIndex]
-                    : Prediction.Av1WedgeMasks.Chroma420[wedgeContext][info.MaskSign ? 1 : 0][info.WedgeIndex];
+                    : Prediction.Av1WedgeMasks.Chroma(this.subsamplingX + this.subsamplingY)[wedgeContext][info.MaskSign ? 1 : 0][info.WedgeIndex];
                 MaskBlend(destination, dstX, dstY, lead, trail, width, height, wedgeMask, this.sequenceHeader.BitDepth);
             }
 
@@ -909,10 +909,10 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             int wedgeContext = Av1InterModeInfoDecoder.GetWedgeContext(bsize);
             mask = planeIndex == 0
                 ? Prediction.Av1WedgeMasks.Luma[wedgeContext][info.WedgeIndex]
-                : Prediction.Av1WedgeMasks.Chroma420[wedgeContext][0][info.WedgeIndex];
+                : Prediction.Av1WedgeMasks.Chroma(this.subsamplingX + this.subsamplingY)[wedgeContext][0][info.WedgeIndex];
             maskStride = width;
         }
-        else if (Prediction.Av1InterIntraMasks.Get(width4, height4, info.InterIntraMode, planeIndex != 0) is { } faded)
+        else if (Prediction.Av1InterIntraMasks.Get(width4, height4, info.InterIntraMode, planeIndex == 0 ? 0 : this.subsamplingX + this.subsamplingY) is { } faded)
         {
             mask = faded.Mask;
             maskStride = faded.Stride;

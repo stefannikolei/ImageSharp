@@ -23,8 +23,10 @@ internal static class Av1InterIntraMasks
         [(32, 32)] = Build(32, 32, 1),
         [(16, 32)] = Build(16, 32, 1),
         [(16, 16)] = Build(16, 16, 2),
+        [(8, 32)] = Build(8, 32, 1),
         [(8, 16)] = Build(8, 16, 2),
         [(8, 8)] = Build(8, 8, 4),
+        [(4, 16)] = Build(4, 16, 2),
         [(4, 8)] = Build(4, 8, 4),
         [(4, 4)] = Build(4, 4, 8),
     };
@@ -40,6 +42,17 @@ internal static class Av1InterIntraMasks
         [(4, 2)] = (16, 16),
         [(2, 4)] = (8, 16),
         [(2, 2)] = (8, 8),
+    };
+
+    private static readonly Dictionary<(int W4, int H4), (int W, int H)> Chroma422Table = new()
+    {
+        [(8, 8)] = (16, 32),
+        [(8, 4)] = (16, 16),
+        [(4, 8)] = (8, 32),
+        [(4, 4)] = (8, 16),
+        [(4, 2)] = (8, 8),
+        [(2, 4)] = (4, 16),
+        [(2, 2)] = (4, 8),
     };
 
     private static readonly Dictionary<(int W4, int H4), (int W, int H)> Chroma420Table = new()
@@ -59,16 +72,23 @@ internal static class Av1InterIntraMasks
     /// <param name="width4">The block width in luma 4x4 units.</param>
     /// <param name="height4">The block height in luma 4x4 units.</param>
     /// <param name="interIntraMode">The inter-intra mode (0 = DC, 1 = V, 2 = H, 3 = SMOOTH).</param>
-    /// <param name="isChroma420">Whether the 4:2:0 chroma mask is requested.</param>
+    /// <param name="chromaLayoutIndex">The chroma layout index of the requested plane (-1 or 0 for
+    /// luma/4:4:4, 1 for 4:2:2 chroma, 2 for 4:2:0 chroma; the sum of the subsampling flags).</param>
     /// <returns>The mask and its row stride, or <see langword="null"/> for the flat DC blend.</returns>
-    public static (byte[] Mask, int Stride)? Get(int width4, int height4, int interIntraMode, bool isChroma420)
+    public static (byte[] Mask, int Stride)? Get(int width4, int height4, int interIntraMode, int chromaLayoutIndex)
     {
         if (interIntraMode == 0)
         {
             return null;
         }
 
-        (int w, int h) = (isChroma420 ? Chroma420Table : LumaTable)[(width4, height4)];
+        Dictionary<(int W4, int H4), (int W, int H)> table = chromaLayoutIndex switch
+        {
+            2 => Chroma420Table,
+            1 => Chroma422Table,
+            _ => LumaTable,
+        };
+        (int w, int h) = table[(width4, height4)];
         return (NonDc[(w, h)][interIntraMode - 1], w);
     }
 

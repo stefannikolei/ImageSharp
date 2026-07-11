@@ -66,6 +66,21 @@ internal static class Av1WedgeMasks
     /// (w/2)*(h/2) weights.</summary>
     public static byte[][][][] Chroma420 { get; }
 
+    /// <summary>Gets the 4:2:2 chroma wedge masks: [wedge block-size context][sign][wedge index] with
+    /// (w/2)*h weights.</summary>
+    public static byte[][][][] Chroma422 { get; }
+
+    /// <summary>Gets the 4:4:4 chroma wedge masks (the unsubsampled luma masks, identical for both
+    /// mask signs).</summary>
+    public static byte[][][][] Chroma444 { get; }
+
+    /// <summary>Gets the chroma wedge masks for a chroma layout index (0 = 4:4:4, 1 = 4:2:2,
+    /// 2 = 4:2:0, matching dav1d's <c>chr_layout_idx</c>).</summary>
+    /// <param name="chromaLayoutIndex">The layout index (the sum of the subsampling flags).</param>
+    /// <returns>The per-context, per-sign masks.</returns>
+    public static byte[][][][] Chroma(int chromaLayoutIndex)
+        => chromaLayoutIndex == 0 ? Chroma444 : chromaLayoutIndex == 1 ? Chroma422 : Chroma420;
+
     static Av1WedgeMasks()
     {
         // Master templates.
@@ -97,11 +112,14 @@ internal static class Av1WedgeMasks
 
         Luma = new byte[Sizes.Length][][];
         Chroma420 = new byte[Sizes.Length][][][];
+        Chroma422 = new byte[Sizes.Length][][][];
+        Chroma444 = new byte[Sizes.Length][][][];
         for (int s = 0; s < Sizes.Length; s++)
         {
             (int w, int h, (int Direction, int X, int Y)[] codebook, uint signs) = Sizes[s];
             Luma[s] = new byte[16][];
             Chroma420[s] = [new byte[16][], new byte[16][]];
+            Chroma422[s] = [new byte[16][], new byte[16][]];
             for (int n = 0; n < 16; n++)
             {
                 int sign = (int)(signs >> n) & 1;
@@ -109,10 +127,15 @@ internal static class Av1WedgeMasks
                 Luma[s][n] = luma;
 
                 // The mask-sign index selects the chroma subsampling rounding (the codebook sign is
-                // already baked into the luma mask).
-                Chroma420[s][0][n] = SubsampleChroma(luma, 0, w, h);
-                Chroma420[s][1][n] = SubsampleChroma(luma, 1, w, h);
+                // already baked into the luma mask). 4:4:4 chroma needs no rounding and shares the
+                // luma masks for both signs.
+                Chroma420[s][0][n] = SubsampleChroma(luma, 0, w, h, 1);
+                Chroma420[s][1][n] = SubsampleChroma(luma, 1, w, h, 1);
+                Chroma422[s][0][n] = SubsampleChroma(luma, 0, w, h, 0);
+                Chroma422[s][1][n] = SubsampleChroma(luma, 1, w, h, 0);
             }
+
+            Chroma444[s] = [Luma[s], Luma[s]];
         }
     }
 
@@ -173,23 +196,27 @@ internal static class Av1WedgeMasks
         return dst;
     }
 
-    // dav1d init_chroma with ss_ver = 1 (4:2:0): each chroma weight is the sign-rounded average of
-    // the 2x2 luma weights.
-    private static byte[] SubsampleChroma(byte[] luma, int sign, int w, int h)
+    // dav1d init_chroma: each chroma weight is the sign-rounded average of the underlying luma
+    // weights (2x2 for 4:2:0, a horizontal pair for 4:2:2).
+    private static byte[] SubsampleChroma(byte[] luma, int sign, int w, int h, int ssVer)
     {
-        byte[] chroma = new byte[(w >> 1) * (h >> 1)];
+        byte[] chroma = new byte[(w >> 1) * (h >> ssVer)];
         int lumaBase = 0;
         int chromaBase = 0;
-        for (int y = 0; y < h; y += 2)
+        for (int y = 0; y < h; y += 1 + ssVer)
         {
             for (int x = 0; x < w; x += 2)
             {
-                int sum = luma[lumaBase + x] + luma[lumaBase + x + 1] + 1
-                        + luma[lumaBase + w + x] + luma[lumaBase + w + x + 1] + 1;
-                chroma[chromaBase + (x >> 1)] = (byte)((sum - sign) >> 2);
+                int sum = luma[lumaBase + x] + luma[lumaBase + x + 1] + 1;
+                if (ssVer != 0)
+                {
+                    sum += luma[lumaBase + w + x] + luma[lumaBase + w + x + 1] + 1;
+                }
+
+                chroma[chromaBase + (x >> 1)] = (byte)((sum - sign) >> (1 + ssVer));
             }
 
-            lumaBase += w << 1;
+            lumaBase += w << ssVer;
             chromaBase += w >> 1;
         }
 

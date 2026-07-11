@@ -46,13 +46,14 @@ public class Av1UnsupportedFeatureGuardTests
     }
 
     [Fact]
-    public void SequenceHeader_Srgb444_Throws()
+    public void SequenceHeader_Srgb444_Parses()
     {
         // color_description_present = 1 with BT.709 primaries / sRGB transfer / identity matrix
-        // selects 4:4:4 (no subsampling).
+        // selects 4:4:4 (no subsampling), which the decoder supports.
         byte[] payload = [0x18, 0x15, 0x7F, 0xBC, 0x02, 0x02, 0x1A, 0x00, 0x40];
-        NotSupportedException ex = Assert.Throws<NotSupportedException>(() => ObuSequenceHeader.Parse(payload));
-        Assert.Contains("4:2:0", ex.Message);
+        ObuSequenceHeader header = ObuSequenceHeader.Parse(payload);
+        Assert.Equal(0, header.SubsamplingX);
+        Assert.Equal(0, header.SubsamplingY);
     }
 
     [Fact]

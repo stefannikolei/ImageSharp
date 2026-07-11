@@ -8,7 +8,7 @@ namespace SixLabors.ImageSharp.Formats.Av1.Prediction;
 
 /// <summary>
 /// Film-grain synthesis (specification section 7.18.3), a port of dav1d's <c>filmgrain_tmpl.c</c> and
-/// <c>fg_apply_tmpl.c</c> for 4:2:0 layouts: an auto-regressive grain texture is generated from the
+/// <c>fg_apply_tmpl.c</c>, with the chroma dimensions derived from the layout: an auto-regressive grain texture is generated from the
 /// frame's seed, scaled by piecewise-linear intensity LUTs and blended over the displayed output in
 /// 32x32 blocks with optional overlap. Reference frames stay grain-free; only output planes change.
 /// </summary>

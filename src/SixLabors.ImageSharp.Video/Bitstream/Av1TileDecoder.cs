@@ -840,10 +840,12 @@ internal class Av1TileDecoder
 
         byte chromaU = (byte)this.CalcLfLevel(lf.Levels[2], this.currentDeltaLf[multiLf ? 2 : 0], hasSeg ? this.segmentation.DeltaLfU[seg] : 0, reference, modeIndex, isChroma: true);
         byte chromaV = (byte)this.CalcLfLevel(lf.Levels[3], this.currentDeltaLf[multiLf ? 3 : 0], hasSeg ? this.segmentation.DeltaLfV[seg] : 0, reference, modeIndex, isChroma: true);
+        // The clamp uses the mi-grid chroma dimensions (not the superblock-aligned transform grid,
+        // which can be wider than the mi grid): the cells live in the luma-mi-strided level array.
         int chromaCol = col >> this.subsamplingX;
         int chromaRow = row >> this.subsamplingY;
-        int chromaWidth4 = Math.Min((bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX, this.chromaStride4 - chromaCol);
-        int chromaHeight4 = Math.Min((bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY, this.chromaRows4 - chromaRow);
+        int chromaWidth4 = Math.Min((bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX, ((this.miColumns + this.subsamplingX) >> this.subsamplingX) - chromaCol);
+        int chromaHeight4 = Math.Min((bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY, ((this.miRows + this.subsamplingY) >> this.subsamplingY) - chromaRow);
         for (int y = 0; y < chromaHeight4; y++)
         {
             int cell = (((chromaRow + y) * this.miColumns) + chromaCol) * 4;
@@ -1671,9 +1673,11 @@ internal class Av1TileDecoder
                     int cx1 = (initX + 16) >> this.subsamplingX;
                     int cy1 = (initY + 16) >> this.subsamplingY;
 
-                    // The chroma flags use the layout-specific edge-tree bits (4:2:0 here).
-                    bool uvSbHasTr = cx1 < chromaW4 || (initY == 0 && (this.blockIntraEdgeFlags & Av1IntraEdgeFlags.I420TopHasRight) != 0);
-                    bool uvSbHasBl = initX == 0 && (cy1 < chromaH4 || (this.blockIntraEdgeFlags & Av1IntraEdgeFlags.I420LeftHasBottom) != 0);
+                    // The chroma flags use the layout-specific edge-tree bits (dav1d reads
+                    // EDGE_I420_* >> (layout - 1), selecting the I420, I422 or I444 bit).
+                    int layoutShift = 2 - this.subsamplingX - this.subsamplingY;
+                    bool uvSbHasTr = cx1 < chromaW4 || (initY == 0 && (this.blockIntraEdgeFlags & (Av1IntraEdgeFlags.I420TopHasRight >> layoutShift)) != 0);
+                    bool uvSbHasBl = initX == 0 && (cy1 < chromaH4 || (this.blockIntraEdgeFlags & (Av1IntraEdgeFlags.I420LeftHasBottom >> layoutShift)) != 0);
                     this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow4, chromaCol4, bsize, chromaTxSize, uvMode, uvAngleDelta, -1, cflAlphaU, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1, sbHasTopRight: uvSbHasTr, sbHasBottomLeft: uvSbHasBl);
                     this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow4, chromaCol4, bsize, chromaTxSize, uvMode, uvAngleDelta, -1, cflAlphaV, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1, sbHasTopRight: uvSbHasTr, sbHasBottomLeft: uvSbHasBl);
                 }

@@ -263,12 +263,6 @@ internal readonly struct ObuSequenceHeader
             throw new NotSupportedException("Monochrome streams are not supported yet.");
         }
 
-        if (color.SubsamplingX != 1 || color.SubsamplingY != 1)
-        {
-            throw new NotSupportedException("Only 4:2:0 chroma subsampling is supported yet.");
-        }
-
-
         bool filmGrainParamsPresent = reader.ReadBoolean();
 
         return new ObuSequenceHeader
