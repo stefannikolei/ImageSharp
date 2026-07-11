@@ -38,7 +38,9 @@ internal readonly struct Av1InterModeInfoOptions
         Av1TemporalMvContext? temporal = null,
         bool enableMaskedCompound = false,
         bool enableInterIntra = false,
-        bool[]? referenceIsScaled = null)
+        bool[]? referenceIsScaled = null,
+        bool enableJntComp = false,
+        int[]? referencePocDistance = null)
     {
         this.AllowWarpedMotion = allowWarpedMotion;
         this.EnableMaskedCompound = enableMaskedCompound;
@@ -55,6 +57,8 @@ internal readonly struct Av1InterModeInfoOptions
         this.SignBias = signBias;
         this.Temporal = temporal;
         this.ReferenceIsScaled = referenceIsScaled ?? new bool[7];
+        this.EnableJntComp = enableJntComp;
+        this.ReferencePocDistance = referencePocDistance ?? new int[7];
     }
 
     /// <summary>Gets the tile bounds in 4x4 units.</summary>
@@ -103,6 +107,13 @@ internal readonly struct Av1InterModeInfoOptions
     /// the WARP motion mode for blocks predicting from it).</summary>
     public bool[] ReferenceIsScaled { get; }
 
+    /// <summary>Gets a value indicating whether distance-weighted compound prediction is enabled.</summary>
+    public bool EnableJntComp { get; }
+
+    /// <summary>Gets, per zero-based reference, the absolute order-hint distance to the current
+    /// frame (the distance-weighted compound context input).</summary>
+    public int[] ReferencePocDistance { get; }
+
     /// <summary>Returns a copy of these options with the tile bounds replaced (per-tile decoding).</summary>
     /// <param name="bounds">The new tile bounds.</param>
     /// <returns>The re-bounded options.</returns>
@@ -121,5 +132,7 @@ internal readonly struct Av1InterModeInfoOptions
         this.Temporal,
         this.EnableMaskedCompound,
         this.EnableInterIntra,
-        this.ReferenceIsScaled);
+        this.ReferenceIsScaled,
+        this.EnableJntComp,
+        this.ReferencePocDistance);
 }

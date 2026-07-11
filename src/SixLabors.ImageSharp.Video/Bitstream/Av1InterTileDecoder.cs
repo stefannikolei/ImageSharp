@@ -19,8 +19,7 @@ namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
 /// translation, global and local warp, overlapped and inter-intra blocks; compound prediction covers
 /// the average, distance-agnostic masked (segmented and wedge) blends and skip mode. References of a
 /// different resolution than the frame (super-resolution or frame-size changes) are predicted through
-/// the scaled motion-compensation path. Only distance-weighted compound remains guarded behind its
-/// sequence flag.
+/// the scaled motion-compensation path.
 /// </summary>
 internal sealed class Av1InterTileDecoder : Av1TileDecoder
 {
@@ -66,6 +65,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // frame's coded resolution (dav1d's f->svc); unscaled references carry the default.
     private readonly Av1ReferenceScaling[] referenceScaling = new Av1ReferenceScaling[7];
 
+    // Distance-weighted compound weights per ordered reference pair (dav1d f->jnt_weights).
+    private readonly byte[,] jntWeights = new byte[7, 7];
+
     /// <summary>Initializes a new instance of the <see cref="Av1InterTileDecoder"/> class with a single
     /// reference frame used for every reference name (two-frame clips, where all slots hold the key frame).</summary>
     /// <param name="sequenceHeader">The sequence header.</param>
@@ -104,11 +106,6 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     public Av1InterTileDecoder(in ObuSequenceHeader sequenceHeader, in ObuFrameHeader frameHeader, Av1ReferenceFrame?[] references, Av1FrameCdfSet cdfs)
         : base(sequenceHeader, frameHeader, cdfs)
     {
-        if (frameHeader.ReferenceSelect && sequenceHeader.EnableJntComp)
-        {
-            throw new NotSupportedException("Distance-weighted compound prediction is not supported yet.");
-        }
-
         this.interCdf = cdfs.InterMode;
         this.mvCdf = cdfs.MotionVector;
         this.filterCdf = cdfs.Filter;
@@ -141,15 +138,52 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             }
         }
 
-        // Sign bias: whether each reference lies in the future of the current frame.
+        // Sign bias: whether each reference lies in the future of the current frame; the absolute
+        // order-hint distances feed the distance-weighted compound context and weights.
         int[] signBias = new int[7];
+        int[] pocDistance = new int[7];
         int orderHintBits = sequenceHeader.OrderHintBits;
         if (orderHintBits > 0)
         {
             for (int i = 0; i < 7; i++)
             {
                 int refHint = references[i]?.OrderHint ?? 0;
-                signBias[i] = Av1TemporalMvs.GetOrderHintDifference(orderHintBits, refHint, frameHeader.OrderHint) > 0 ? 1 : 0;
+                int diff = Av1TemporalMvs.GetOrderHintDifference(orderHintBits, refHint, frameHeader.OrderHint);
+                signBias[i] = diff > 0 ? 1 : 0;
+                pocDistance[i] = Math.Abs(diff);
+            }
+        }
+
+        // Distance-weighted compound weights (dav1d's jnt_comp weight setup): the clamped reference
+        // distances select one of four weight pairs, oriented by which reference is nearer.
+        if (frameHeader.ReferenceSelect)
+        {
+            ReadOnlySpan<byte> quantDistWeight0 = [2, 2, 2];
+            ReadOnlySpan<byte> quantDistWeight1 = [3, 5, 7];
+            ReadOnlySpan<byte> lookup0 = [9, 11, 12, 13];
+            ReadOnlySpan<byte> lookup1 = [7, 5, 4, 3];
+            for (int i = 0; i < 7; i++)
+            {
+                for (int j = i + 1; j < 7; j++)
+                {
+                    int d1 = Math.Min(pocDistance[i], 31);
+                    int d0 = Math.Min(pocDistance[j], 31);
+                    bool order = d0 <= d1;
+                    int k;
+                    for (k = 0; k < 3; k++)
+                    {
+                        int c0 = order ? quantDistWeight1[k] : quantDistWeight0[k];
+                        int c1 = order ? quantDistWeight0[k] : quantDistWeight1[k];
+                        long d0C0 = (long)d0 * c0;
+                        long d1C1 = (long)d1 * c1;
+                        if ((d0 > d1 && d0C0 < d1C1) || (d0 <= d1 && d0C0 > d1C1))
+                        {
+                            break;
+                        }
+                    }
+
+                    this.jntWeights[i, j] = order ? lookup1[Math.Min(k, 3)] : lookup0[Math.Min(k, 3)];
+                }
             }
         }
 
@@ -168,7 +202,9 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
             Av1TemporalMvContext.Create(sequenceHeader, frameHeader, references),
             sequenceHeader.EnableMaskedCompound,
             sequenceHeader.EnableInterIntraCompound,
-            referenceIsScaled);
+            referenceIsScaled,
+            sequenceHeader.EnableJntComp,
+            pocDistance);
 
         // Whether each reference's global-motion model can be applied as a warp (dav1d
         // gmv_warp_allowed): a non-translation model whose shear parameters are within limits,
@@ -786,9 +822,29 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
 
         int intermediateBits = Prediction.Av1Convolve.IntermediateBits(this.sequenceHeader.BitDepth);
         int prepBias = this.sequenceHeader.BitDepth == 8 ? 0 : 8192;
+        int pixelMax = (1 << this.sequenceHeader.BitDepth) - 1;
+        if (info.CompoundType == 1)
+        {
+            // Distance-weighted average (dav1d w_avg): a 16-scale weight on the first intermediate.
+            int weight = this.jntWeights[info.Reference, info.Reference1];
+            int wShift = intermediateBits + 4;
+            int wRound = (8 << intermediateBits) + (prepBias * 16);
+            for (int y = 0; y < height; y++)
+            {
+                int dstBase = ((dstY + y) * destination.Width) + dstX;
+                int srcBase = y * width;
+                for (int x = 0; x < width; x++)
+                {
+                    destination.Samples[dstBase + x] = (ushort)Math.Clamp(
+                        ((intermediate0[srcBase + x] * weight) + (intermediate1[srcBase + x] * (16 - weight)) + wRound) >> wShift, 0, pixelMax);
+                }
+            }
+
+            return;
+        }
+
         int avgShift = intermediateBits + 1;
         int avgRound = (1 << intermediateBits) + (prepBias * 2);
-        int pixelMax = (1 << this.sequenceHeader.BitDepth) - 1;
         for (int y = 0; y < height; y++)
         {
             int dstBase = ((dstY + y) * destination.Width) + dstX;

@@ -364,19 +364,39 @@ internal static class Av1InterModeInfoDecoder
             decoder, mvCdf, stack, drlIndex, CompoundModeComponents[compoundMode][1], 1, globalMv1, model1, options, ref hasSubpelFilter);
 
         // Compound type: with masked compound enabled a flag selects the masked (wedge/segmented)
-        // blend; distance-weighted compound stays rejected at construction, so the unmasked case is
-        // always the plain average. Skip-mode blocks are always averaged with no coded type.
+        // blend; the unmasked case is the plain average, or with jnt_comp enabled a flag selects
+        // between the distance-weighted and the plain average. Skip-mode blocks are always averaged
+        // with no coded type.
+        const int CompoundWeightedAverage = 1;
         const int CompoundAverage = 2;
         const int CompoundSeg = 3;
         const int CompoundWedge = 4;
         int compoundType = CompoundAverage;
         bool maskSign = false;
         int wedgeIndex = 0;
-        if (!skipMode && options.EnableMaskedCompound)
+        if (!skipMode)
         {
-            int maskContext = Av1ReferenceContext.ComputeMaskCompoundContext(above, left);
-            bool isSegWedge = decoder.ReadSymbol(interCdf.MaskComp[maskContext]) != 0;
-            if (isSegWedge)
+            bool isSegWedge = false;
+            if (options.EnableMaskedCompound)
+            {
+                int maskContext = Av1ReferenceContext.ComputeMaskCompoundContext(above, left);
+                isSegWedge = decoder.ReadSymbol(interCdf.MaskComp[maskContext]) != 0;
+            }
+
+            if (!isSegWedge)
+            {
+                if (options.EnableJntComp)
+                {
+                    // dav1d get_jnt_comp_ctx: equal reference distances plus whether each neighbour
+                    // is an unweighted compound (or single-ALTREF) block.
+                    int offset = options.ReferencePocDistance[reference0] == options.ReferencePocDistance[reference1] ? 1 : 0;
+                    int aboveContext = above.CompoundType >= CompoundAverage || above.Reference0 == 6 ? 1 : 0;
+                    int leftContext = left.CompoundType >= CompoundAverage || left.Reference0 == 6 ? 1 : 0;
+                    int jntContext = (3 * offset) + aboveContext + leftContext;
+                    compoundType = CompoundWeightedAverage + decoder.ReadSymbol(interCdf.JntComp[jntContext]);
+                }
+            }
+            else
             {
                 if ((WedgeAllowedMask & (1 << (int)blockSize)) != 0)
                 {

@@ -160,6 +160,12 @@ internal static class Av1DefaultInterModeCdf
     ];
 
     /// <summary>The masked-vs-unmasked compound CDFs, indexed by the mask context.</summary>
+    /// <summary>dav1d <c>jnt_comp</c>: plain average vs distance-weighted average, by context.</summary>
+    public static readonly ushort[][] JntComp = [
+        [14524, 0, 0], [19903, 0, 0], [25715, 0, 0],
+        [19509, 0, 0], [23434, 0, 0], [28124, 0, 0],
+    ];
+
     public static readonly ushort[][] MaskComp = [
         [6161, 0, 0],
         [9877, 0, 0],

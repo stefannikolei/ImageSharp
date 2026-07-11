@@ -56,6 +56,9 @@ internal sealed class Av1InterModeCdfContext
     /// <summary>Gets the masked-vs-unmasked compound CDFs.</summary>
     public ushort[][] MaskComp { get; private set; } = default!;
 
+    /// <summary>Gets the distance-weighted-average flag CDFs, indexed by context.</summary>
+    public ushort[][] JntComp { get; private set; } = default!;
+
     /// <summary>Gets the wedge-vs-segmented compound CDFs.</summary>
     public ushort[][] WedgeComp { get; private set; } = default!;
 
@@ -89,6 +92,7 @@ internal sealed class Av1InterModeCdfContext
         CompoundUniReference = Clone(Av1DefaultInterModeCdf.CompoundUniReference),
         CompoundInterMode = Clone(Av1DefaultInterModeCdf.CompoundInterMode),
         MaskComp = Clone(Av1DefaultInterModeCdf.MaskComp),
+        JntComp = Clone(Av1DefaultInterModeCdf.JntComp),
         WedgeComp = Clone(Av1DefaultInterModeCdf.WedgeComp),
         WedgeIdx = Clone(Av1DefaultInterModeCdf.WedgeIdx),
         InterIntra = Clone(Av1DefaultInterModeCdf.InterIntra),
@@ -114,6 +118,7 @@ internal sealed class Av1InterModeCdfContext
         CompoundUniReference = Clone(this.CompoundUniReference),
         CompoundInterMode = Clone(this.CompoundInterMode),
         MaskComp = Clone(this.MaskComp),
+        JntComp = Clone(this.JntComp),
         WedgeComp = Clone(this.WedgeComp),
         WedgeIdx = Clone(this.WedgeIdx),
         InterIntra = Clone(this.InterIntra),

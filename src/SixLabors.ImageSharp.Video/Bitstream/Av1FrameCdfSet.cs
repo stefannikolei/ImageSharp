@@ -130,6 +130,7 @@ internal sealed class Av1FrameCdfSet
         Av1CdfTables.ResetCounters(i.CompoundUniReference);
         Av1CdfTables.ResetCounters(i.CompoundInterMode);
         Av1CdfTables.ResetCounters(i.MaskComp);
+        Av1CdfTables.ResetCounters(i.JntComp);
         Av1CdfTables.ResetCounters(i.WedgeComp);
         Av1CdfTables.ResetCounters(i.WedgeIdx);
         Av1CdfTables.ResetCounters(i.InterIntra);
