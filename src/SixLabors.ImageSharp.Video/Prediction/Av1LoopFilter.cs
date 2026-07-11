@@ -25,6 +25,7 @@ internal static class Av1LoopFilter
     /// <param name="wd">The filter width (4, 6, 8 or 16).</param>
     public static void FilterEdge(Span<ushort> dst, int offset, int strideA, int strideB, int e, int i, int h, int wd, int bitDepth = 8)
     {
+
         int bitDepthMin8 = bitDepth - 8;
         int f = 1 << bitDepthMin8;
         int maxValue = (1 << bitDepth) - 1;

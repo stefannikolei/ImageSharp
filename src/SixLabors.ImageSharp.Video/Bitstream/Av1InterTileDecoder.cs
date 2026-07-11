@@ -50,6 +50,8 @@ internal sealed class Av1InterTileDecoder : Av1TileDecoder
     // substitutes the motion-compensated samples instead of an intra prediction.
     private bool currentBlockIsInter;
 
+    private protected override bool CurrentBlockIsInter => this.currentBlockIsInter;
+
     // Per reference: the derived shear parameters of an applicable global-motion warp model, or null
     // when the reference's model is identity/translation or too sheared to warp.
     private readonly short[]?[] globalWarpShear = new short[7][];

@@ -100,6 +100,13 @@ internal class Av1TileDecoder
     // directional-prediction edge-filter strength (dav1d's ANGLE_SMOOTH_EDGE_FLAG / is_sm). Computed per
     // block before reconstruction; the luma flag uses neighbour luma modes, the chroma flag uv modes.
     private bool lumaEdgeSmooth;
+    private protected byte blockIntraEdgeFlags = Av1IntraEdgeFlags.AllTrAndBl;
+
+    /// <summary>Gets a value indicating whether the block currently decoding is inter-coded (the
+    /// inter decoder overrides this; skipped inter blocks deblock no interior transform edges).</summary>
+    private protected virtual bool CurrentBlockIsInter => false;
+    private bool transformHasTopRight = true;
+    private bool transformHasBottomLeft = true;
     private bool chromaEdgeSmooth;
     private protected readonly LevelContext lumaLevels;
     private protected readonly LevelContext chromaULevels;
@@ -421,7 +428,7 @@ internal class Av1TileDecoder
             for (int col = this.tileBounds.ColumnStart; col < this.tileBounds.ColumnEnd; col += superblock4)
             {
                 this.ReadRestorationUnits(row, col);
-                this.DecodePartition(row, col, superblock, topRightAvailable: true);
+                this.DecodePartition(row, col, superblock, this.sequenceHeader.Use128x128Superblock ? Av1IntraEdgeTree.Root128 : Av1IntraEdgeTree.Root64);
             }
         }
     }
@@ -716,7 +723,9 @@ internal class Av1TileDecoder
     }
 
     // Records the transform-size and edge metadata for one transform block, used by the deblocking pass.
-    private void RecordTxEdges(int planeIndex, int txCol, int txRow, int txWidth4, int txHeight4)
+    // A skipped inter block codes no residual, so its interior transform-grid edges are not
+    // deblocked (dav1d mask_edges_inter's !skip gate); only the block's own left/top edges are.
+    private void RecordTxEdges(int planeIndex, int txCol, int txRow, int txWidth4, int txHeight4, bool edgeLeftAllowed = true, bool edgeTopAllowed = true)
     {
         byte lw = (byte)System.Numerics.BitOperations.Log2((uint)txWidth4);
         byte lh = (byte)System.Numerics.BitOperations.Log2((uint)txHeight4);
@@ -730,8 +739,8 @@ internal class Av1TileDecoder
                     int mi = ((txRow + dy) * this.miColumns) + txCol + dx;
                     this.lumaTxLw[mi] = lw;
                     this.lumaTxLh[mi] = lh;
-                    this.lumaEdgeV[mi] = dx == 0;
-                    this.lumaEdgeH[mi] = dy == 0;
+                    this.lumaEdgeV[mi] = dx == 0 && edgeLeftAllowed;
+                    this.lumaEdgeH[mi] = dy == 0 && edgeTopAllowed;
                 }
             }
         }
@@ -744,8 +753,8 @@ internal class Av1TileDecoder
                     int mi = ((txRow + dy) * this.chromaStride4) + txCol + dx;
                     this.chromaTxLw[mi] = lw;
                     this.chromaTxLh[mi] = lh;
-                    this.chromaEdgeV[mi] = dx == 0;
-                    this.chromaEdgeH[mi] = dy == 0;
+                    this.chromaEdgeV[mi] = dx == 0 && edgeLeftAllowed;
+                    this.chromaEdgeH[mi] = dy == 0 && edgeTopAllowed;
                 }
             }
         }
@@ -1120,7 +1129,16 @@ internal class Av1TileDecoder
     // top-right child (and any single "wide" side of a 2-way split on the same edge) inherits the parent's
     // value unchanged. A block gains it unconditionally the moment its right edge sits at a horizontal
     // split boundary (the classic "left half of a vertical split" / "first strip of a 4-way split" case).
-    private void DecodePartition(int row, int col, Av1BlockSize bsize, bool topRightAvailable)
+    // Dispatches each block's intra-edge availability flags from the edge tree (dav1d decode_sb),
+    // then decodes the block; the flags feed both the intra above-right/left-bottom edge extensions
+    // and the motion-vector scan's top-right availability.
+    private void DecodeEdgeBlock(int row, int col, Av1BlockSize bsize, byte edgeFlags)
+    {
+        this.blockIntraEdgeFlags = edgeFlags;
+        this.DecodeBlock(row, col, bsize, (edgeFlags & Av1IntraEdgeFlags.I444TopHasRight) != 0);
+    }
+
+    private void DecodePartition(int row, int col, Av1BlockSize bsize, Av1EdgeNode node)
     {
         if (row >= this.frameHeader.ModeInfoRows || col >= this.frameHeader.ModeInfoColumns)
         {
@@ -1151,7 +1169,7 @@ internal class Av1TileDecoder
         switch (partition)
         {
             case Av1Partition.None:
-                this.DecodeBlock(row, col, bsize, topRightAvailable);
+                this.DecodeEdgeBlock(row, col, bsize, node.O);
                 break;
             case Av1Partition.Split:
                 if (bsize == Av1BlockSize.Block8x8)
@@ -1159,82 +1177,94 @@ internal class Av1TileDecoder
                     // The four 4x4 leaves are decoded directly; dav1d does not recurse to a 4x4 level.
                     // The top-left leaf's interpolation filter is saved and restored before the
                     // bottom-right leaf, whose sub-8x8 chroma prediction needs it (dav1d tl_4x4_filter).
-                    this.DecodeBlock(row, col, sub, topRightAvailable: true);
+                    Av1EdgeTip tip = (Av1EdgeTip)node;
+                    this.DecodeEdgeBlock(row, col, sub, Av1IntraEdgeFlags.AllTrAndBl);
                     (int F0, int F1) topLeftFilter = this.TopLeft4x4Filter;
-                    this.DecodeBlock(row, col + half, sub, topRightAvailable);
-                    this.DecodeBlock(row + half, col, sub, topRightAvailable: true);
+                    this.DecodeEdgeBlock(row, col + half, sub, tip.Split[0]);
+                    this.DecodeEdgeBlock(row + half, col, sub, tip.Split[1]);
                     this.TopLeft4x4Filter = topLeftFilter;
-                    this.DecodeBlock(row + half, col + half, sub, topRightAvailable: false);
+                    this.DecodeEdgeBlock(row + half, col + half, sub, tip.Split[2]);
                 }
                 else
                 {
-                    this.DecodePartition(row, col, sub, topRightAvailable: true);
-                    this.DecodePartition(row, col + half, sub, topRightAvailable);
-                    this.DecodePartition(row + half, col, sub, topRightAvailable: true);
-                    this.DecodePartition(row + half, col + half, sub, topRightAvailable: false);
+                    Av1EdgeBranch branch = (Av1EdgeBranch)node;
+                    this.DecodePartition(row, col, sub, branch.Children[0]);
+                    this.DecodePartition(row, col + half, sub, branch.Children[1]);
+                    this.DecodePartition(row + half, col, sub, branch.Children[2]);
+                    this.DecodePartition(row + half, col + half, sub, branch.Children[3]);
                 }
 
                 break;
             case Av1Partition.Horizontal:
-                this.DecodeBlock(row, col, horz, topRightAvailable);
+                this.DecodeEdgeBlock(row, col, horz, node.H[0]);
                 if (hasRows)
                 {
-                    this.DecodeBlock(row + half, col, horz, topRightAvailable: false);
+                    this.DecodeEdgeBlock(row + half, col, horz, node.H[1]);
                 }
 
                 break;
             case Av1Partition.Vertical:
-                this.DecodeBlock(row, col, vert, topRightAvailable: true);
+                this.DecodeEdgeBlock(row, col, vert, node.V[0]);
                 if (hasCols)
                 {
-                    this.DecodeBlock(row, col + half, vert, topRightAvailable);
+                    this.DecodeEdgeBlock(row, col + half, vert, node.V[1]);
                 }
 
                 break;
-            case Av1Partition.HorizontalA: // split top, wide bottom.
-                this.DecodeBlock(row, col, sub, topRightAvailable: true);
-                this.DecodeBlock(row, col + half, sub, topRightAvailable);
-                this.DecodeBlock(row + half, col, horz, topRightAvailable: false);
+            case Av1Partition.HorizontalA: // split top, wide bottom (dav1d T_TOP_SPLIT).
+                this.DecodeEdgeBlock(row, col, sub, Av1IntraEdgeFlags.AllTrAndBl);
+                this.DecodeEdgeBlock(row, col + half, sub, node.V[1]);
+                this.DecodeEdgeBlock(row + half, col, horz, node.H[1]);
                 break;
-            case Av1Partition.HorizontalB: // wide top, split bottom.
-                this.DecodeBlock(row, col, horz, topRightAvailable);
-                this.DecodeBlock(row + half, col, sub, topRightAvailable: true);
-                this.DecodeBlock(row + half, col + half, sub, topRightAvailable: false);
+            case Av1Partition.HorizontalB: // wide top, split bottom (dav1d T_BOTTOM_SPLIT).
+                this.DecodeEdgeBlock(row, col, horz, node.H[0]);
+                this.DecodeEdgeBlock(row + half, col, sub, node.V[0]);
+                this.DecodeEdgeBlock(row + half, col + half, sub, 0);
                 break;
-            case Av1Partition.VerticalA: // split left, tall right.
-                this.DecodeBlock(row, col, sub, topRightAvailable: true);
-                this.DecodeBlock(row + half, col, sub, topRightAvailable: false);
-                this.DecodeBlock(row, col + half, vert, topRightAvailable);
+            case Av1Partition.VerticalA: // split left, tall right (dav1d T_LEFT_SPLIT).
+                this.DecodeEdgeBlock(row, col, sub, Av1IntraEdgeFlags.AllTrAndBl);
+                this.DecodeEdgeBlock(row + half, col, sub, node.H[1]);
+                this.DecodeEdgeBlock(row, col + half, vert, node.V[1]);
                 break;
-            case Av1Partition.VerticalB: // tall left, split right.
-                this.DecodeBlock(row, col, vert, topRightAvailable: true);
-                this.DecodeBlock(row, col + half, sub, topRightAvailable);
-                this.DecodeBlock(row + half, col + half, sub, topRightAvailable: false);
+            case Av1Partition.VerticalB: // tall left, split right (dav1d T_RIGHT_SPLIT).
+                this.DecodeEdgeBlock(row, col, vert, node.V[0]);
+                this.DecodeEdgeBlock(row, col + half, sub, node.H[0]);
+                this.DecodeEdgeBlock(row + half, col + half, sub, 0);
                 break;
             case Av1Partition.Horizontal4:
+            {
                 Av1BlockSize h4 = Av1BlockSizeExtensions.FromDimensions(side, quarter);
+                Av1EdgeBranch h4Branch = (Av1EdgeBranch)node;
+                ReadOnlySpan<byte> h4Flags = [node.H[0], h4Branch.H4, Av1IntraEdgeFlags.AllLeftHasBottom, node.H[1]];
                 for (int i = 0; i < 4; i++)
                 {
                     int r = row + (i * quarter);
                     if (r < this.frameHeader.ModeInfoRows)
                     {
-                        this.DecodeBlock(r, col, h4, topRightAvailable: i == 0 && topRightAvailable);
+                        this.DecodeEdgeBlock(r, col, h4, h4Flags[i]);
                     }
                 }
 
                 break;
+            }
+
             case Av1Partition.Vertical4:
+            {
                 Av1BlockSize v4 = Av1BlockSizeExtensions.FromDimensions(quarter, side);
+                Av1EdgeBranch v4Branch = (Av1EdgeBranch)node;
+                ReadOnlySpan<byte> v4Flags = [node.V[0], v4Branch.V4, Av1IntraEdgeFlags.AllTopHasRight, node.V[1]];
                 for (int i = 0; i < 4; i++)
                 {
                     int c = col + (i * quarter);
                     if (c < this.frameHeader.ModeInfoColumns)
                     {
-                        this.DecodeBlock(row, c, v4, topRightAvailable: i < 3 || topRightAvailable);
+                        this.DecodeEdgeBlock(row, c, v4, v4Flags[i]);
                     }
                 }
 
                 break;
+            }
+
             default:
                 throw new NotSupportedException($"Partition type {partition} is not supported yet.");
         }
@@ -1475,6 +1505,7 @@ internal class Av1TileDecoder
         int deltaQ = this.ReadDeltaToken(this.modeCdf.DeltaQ, this.frameHeader.DeltaQResolution);
         this.currentQIndex = Math.Clamp(this.currentQIndex + deltaQ, 1, 255);
 
+
         if (this.frameHeader.DeltaLfPresent)
         {
             bool multi = this.frameHeader.DeltaLfMulti;
@@ -1483,6 +1514,7 @@ internal class Av1TileDecoder
             {
                 int deltaLf = this.ReadDeltaToken(this.modeCdf.DeltaLf[i + (multi ? 1 : 0)], this.frameHeader.DeltaLfResolution);
                 this.currentDeltaLf[i] = Math.Clamp(this.currentDeltaLf[i] + deltaLf, -63, 63);
+
             }
         }
     }
@@ -1612,13 +1644,20 @@ internal class Av1TileDecoder
         int chromaCol4 = col >> this.subsamplingX;
         int uvModeForTxtp = uvMode;
         Av1TransformType ChromaTxtp(Av1TransformSize t, int tc, int tr) => Av1ChromaTransformType.FromIntra(t, uvModeForTxtp);
+        int chromaW4 = (width4 + this.subsamplingX) >> this.subsamplingX;
+        int chromaH4 = (height4 + this.subsamplingY) >> this.subsamplingY;
         for (int initY = 0; initY < height4; initY += 16)
         {
             for (int initX = 0; initX < width4; initX += 16)
             {
+                // Chunk-level above-right/left-bottom availability (dav1d sb_has_tr / sb_has_bl):
+                // interior chunk edges are available; the block's outer edges follow the edge tree.
+                bool sbHasTr = initX + 16 < width4 || (initY == 0 && (this.blockIntraEdgeFlags & Av1IntraEdgeFlags.I444TopHasRight) != 0);
+                bool sbHasBl = initX == 0 && (initY + 16 < height4 || (this.blockIntraEdgeFlags & Av1IntraEdgeFlags.I444LeftHasBottom) != 0);
                 this.DecodePlane(
                     this.luma, this.lumaLevels, 0, row, col, bsize, lumaTx, yMode, yAngleDelta, filterIntraMode, 0,
-                    chunkX4: initX, chunkY4: initY, chunkEndX4: initX + 16, chunkEndY4: initY + 16);
+                    chunkX4: initX, chunkY4: initY, chunkEndX4: initX + 16, chunkEndY4: initY + 16,
+                    sbHasTopRight: sbHasTr, sbHasBottomLeft: sbHasBl);
 
                 if (hasChroma)
                 {
@@ -1626,8 +1665,12 @@ internal class Av1TileDecoder
                     int cy0 = initY >> this.subsamplingY;
                     int cx1 = (initX + 16) >> this.subsamplingX;
                     int cy1 = (initY + 16) >> this.subsamplingY;
-                    this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow4, chromaCol4, bsize, chromaTxSize, uvMode, uvAngleDelta, -1, cflAlphaU, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1);
-                    this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow4, chromaCol4, bsize, chromaTxSize, uvMode, uvAngleDelta, -1, cflAlphaV, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1);
+
+                    // The chroma flags use the layout-specific edge-tree bits (4:2:0 here).
+                    bool uvSbHasTr = cx1 < chromaW4 || (initY == 0 && (this.blockIntraEdgeFlags & Av1IntraEdgeFlags.I420TopHasRight) != 0);
+                    bool uvSbHasBl = initX == 0 && (cy1 < chromaH4 || (this.blockIntraEdgeFlags & Av1IntraEdgeFlags.I420LeftHasBottom) != 0);
+                    this.DecodePlane(this.chromaU, this.chromaULevels, 1, chromaRow4, chromaCol4, bsize, chromaTxSize, uvMode, uvAngleDelta, -1, cflAlphaU, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1, sbHasTopRight: uvSbHasTr, sbHasBottomLeft: uvSbHasBl);
+                    this.DecodePlane(this.chromaV, this.chromaVLevels, 2, chromaRow4, chromaCol4, bsize, chromaTxSize, uvMode, uvAngleDelta, -1, cflAlphaV, chromaTransformTypeProvider: ChromaTxtp, chunkX4: cx0, chunkY4: cy0, chunkEndX4: cx1, chunkEndY4: cy1, sbHasTopRight: uvSbHasTr, sbHasBottomLeft: uvSbHasBl);
                 }
             }
         }
@@ -1713,7 +1756,7 @@ internal class Av1TileDecoder
         return tx;
     }
 
-    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, bool skip = false, Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader = null, Func<Av1TransformSize, int, int, Av1TransformType>? chromaTransformTypeProvider = null, int chunkX4 = 0, int chunkY4 = 0, int chunkEndX4 = int.MaxValue, int chunkEndY4 = int.MaxValue)
+    private protected void DecodePlane(Av1Plane plane, LevelContext levels, int planeIndex, int miRow, int miCol, Av1BlockSize bsize, Av1TransformSize tx, int intraMode, int angleDelta, int filterIntraMode, int cflAlpha, bool skip = false, Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader = null, Func<Av1TransformSize, int, int, Av1TransformType>? chromaTransformTypeProvider = null, int chunkX4 = 0, int chunkY4 = 0, int chunkEndX4 = int.MaxValue, int chunkEndY4 = int.MaxValue, bool sbHasTopRight = true, bool sbHasBottomLeft = true)
     {
         int blockWidth4 = planeIndex == 0 ? bsize.GetWidth4() : (bsize.GetWidth4() + this.subsamplingX) >> this.subsamplingX;
         int blockHeight4 = planeIndex == 0 ? bsize.GetHeight4() : (bsize.GetHeight4() + this.subsamplingY) >> this.subsamplingY;
@@ -1727,9 +1770,14 @@ internal class Av1TileDecoder
         {
             for (int dx = chunkX4; dx < endX4; dx += txWidth4)
             {
+                // Per-transform intra edge availability within the chunk (dav1d recon_b_intra).
+                this.transformHasTopRight = !((dy > chunkY4 || !sbHasTopRight) && (dx + txWidth4 >= endX4));
+                this.transformHasBottomLeft = !(dx > chunkX4 || (!sbHasBottomLeft && dy + txHeight4 >= endY4));
+                bool interSkip = skip && this.CurrentBlockIsInter;
                 this.DecodeTransformBlock(
                     plane, levels, planeIndex, miCol + dx, miRow + dy, bsize, tx, blockEqualsTx,
-                    intraMode, angleDelta, filterIntraMode, cflAlpha, skip, interTransformTypeReader, chromaTransformTypeProvider);
+                    intraMode, angleDelta, filterIntraMode, cflAlpha, skip, interTransformTypeReader, chromaTransformTypeProvider,
+                    edgeLeftAllowed: !interSkip || dx == 0, edgeTopAllowed: !interSkip || dy == 0);
             }
         }
     }
@@ -1752,7 +1800,9 @@ internal class Av1TileDecoder
         int cflAlpha,
         bool skip,
         Func<Av1TransformSize, Av1TransformType>? interTransformTypeReader,
-        Func<Av1TransformSize, int, int, Av1TransformType>? chromaTransformTypeProvider = null)
+        Func<Av1TransformSize, int, int, Av1TransformType>? chromaTransformTypeProvider = null,
+        bool edgeLeftAllowed = true,
+        bool edgeTopAllowed = true)
     {
         int txWidth4 = tx.GetWidth() >> 2;
         int txHeight4 = tx.GetHeight() >> 2;
@@ -1763,7 +1813,7 @@ internal class Av1TileDecoder
             return;
         }
 
-        this.RecordTxEdges(planeIndex, txCol, txRow, txWidth4, txHeight4);
+        this.RecordTxEdges(planeIndex, txCol, txRow, txWidth4, txHeight4, edgeLeftAllowed, edgeTopAllowed);
 
         int skipContext = planeIndex == 0
             ? LumaCoefficientSkipContext(levels, txCol, txRow, txWidth4, txHeight4, blockEqualsTx)
@@ -1809,11 +1859,6 @@ internal class Av1TileDecoder
         if (planeIndex == 0)
         {
             this.RecordLumaTransformType(txCol, txRow, txWidth4, txHeight4, txType);
-        }
-
-        if (Environment.GetEnvironmentVariable("IMAGESHARP_AV1_SYM_DBG") == "1")
-        {
-            File.AppendAllText("/tmp/hbd/ours_sym.txt", $"cf-blk[pl={planeIndex},tx={(int)tx},txtp={(int)txType},eob={eob}]: r={this.decoder.Range} @({txCol},{txRow})\n");
         }
 
         this.Reconstruct(plane, x, y, tx, txType, coefficientLevels, eob, intraMode, angleDelta, filterIntraMode, cflAlpha);
@@ -1953,6 +1998,15 @@ internal class Av1TileDecoder
     private int TileLeftPixel(Av1Plane plane)
         => ReferenceEquals(plane, this.luma) ? this.tileBounds.ColumnStart * 4 : (this.tileBounds.ColumnStart * 4) >> this.subsamplingX;
 
+    // One past the last pixel column of the current tile in the given plane (dav1d passes
+    // tiling.col_end >> ss_hor in 4x4 units into prepare_intra_edges).
+    private int TileRightPixel(Av1Plane plane)
+        => ReferenceEquals(plane, this.luma) ? this.tileBounds.ColumnEnd * 4 : (this.tileBounds.ColumnEnd >> this.subsamplingX) * 4;
+
+    // One past the last pixel row of the current tile in the given plane.
+    private int TileBottomPixel(Av1Plane plane)
+        => ReferenceEquals(plane, this.luma) ? this.tileBounds.RowEnd * 4 : (this.tileBounds.RowEnd >> this.subsamplingY) * 4;
+
     // Gathers the extended reference edges (2*size above and left) for directional prediction, applying
     // the dav1d availability fills and frame-edge replication. Only square transforms are handled.
     private void PrepareDirectionalEdges(Av1Plane plane, int x, int y, int width, int height, out ushort[] above, out ushort[] left, out ushort topLeft)
@@ -1962,10 +2016,46 @@ internal class Av1TileDecoder
         int extent = width + height;
         above = new ushort[extent];
         left = new ushort[extent];
+        int tileRight = Math.Min(this.TileRightPixel(plane), plane.Width);
+        int tileBottom = Math.Min(this.TileBottomPixel(plane), plane.Height);
+
 
         if (hasAbove)
         {
-            this.GatherAbove(plane, x, y, extent, above);
+            // The transform-width edge is valid to the tile's right bound; the above-right extension
+            // (one further transform width) additionally needs the edge-tree flag (dav1d
+            // prepare_intra_edges needs_topright).
+            int pxHave = Math.Min(width, tileRight - x);
+            for (int i = 0; i < pxHave; i++)
+            {
+                above[i] = plane[x + i, y - 1];
+            }
+
+            for (int i = pxHave; i < width; i++)
+            {
+                above[i] = above[pxHave - 1];
+            }
+
+            if (this.transformHasTopRight && x + width < tileRight)
+            {
+                int extHave = Math.Min(Math.Min(width, extent - width), tileRight - x - width);
+                for (int i = 0; i < extHave; i++)
+                {
+                    above[width + i] = plane[x + width + i, y - 1];
+                }
+
+                for (int i = width + extHave; i < extent; i++)
+                {
+                    above[i] = above[width + extHave - 1];
+                }
+            }
+            else
+            {
+                for (int i = width; i < extent; i++)
+                {
+                    above[i] = above[width - 1];
+                }
+            }
         }
         else
         {
@@ -1975,7 +2065,37 @@ internal class Av1TileDecoder
 
         if (hasLeft)
         {
-            this.GatherLeft(plane, x, y, extent, left);
+            int pxHave = Math.Min(height, tileBottom - y);
+            for (int i = 0; i < pxHave; i++)
+            {
+                left[i] = plane[x - 1, y + i];
+            }
+
+            for (int i = pxHave; i < height; i++)
+            {
+                left[i] = left[pxHave - 1];
+            }
+
+            if (this.transformHasBottomLeft && y + height < tileBottom)
+            {
+                int extHave = Math.Min(Math.Min(height, extent - height), tileBottom - y - height);
+                for (int i = 0; i < extHave; i++)
+                {
+                    left[height + i] = plane[x - 1, y + height + i];
+                }
+
+                for (int i = height + extHave; i < extent; i++)
+                {
+                    left[i] = left[height + extHave - 1];
+                }
+            }
+            else
+            {
+                for (int i = height; i < extent; i++)
+                {
+                    left[i] = left[height - 1];
+                }
+            }
         }
         else
         {
