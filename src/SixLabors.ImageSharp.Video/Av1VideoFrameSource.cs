@@ -192,7 +192,7 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
                 Av1TileDecoder decoded = Av1DecoderCore.DecodeFrame(payload, this.sequenceHeader, this.referenceStore, out ObuFrameHeader frameHeader);
                 if (frameHeader.ShowFrame)
                 {
-                    outputs.Add(new Av1DisplayFrame(decoded.Luma, decoded.ChromaU, decoded.ChromaV));
+                    outputs.Add(Av1DecoderCore.CreateDisplayFrame(decoded.Luma, decoded.ChromaU, decoded.ChromaV, frameHeader.FilmGrain, this.sequenceHeader.BitDepth));
                 }
             }
             else if (header.Type == ObuType.FrameHeader)
@@ -206,7 +206,7 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
                         throw new NotSupportedException("show_existing_frame of a key frame (forward key frames) is not supported yet.");
                     }
 
-                    outputs.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
+                    outputs.Add(Av1DecoderCore.CreateDisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!, shown.HeaderState?.FilmGrain, this.sequenceHeader.BitDepth));
                 }
                 else
                 {
@@ -224,7 +224,7 @@ internal sealed class Av1VideoFrameSource : IVideoFrameSource
                 {
                     if (pending.Header.ShowFrame)
                     {
-                        outputs.Add(new Av1DisplayFrame(decoded.Luma, decoded.ChromaU, decoded.ChromaV));
+                        outputs.Add(Av1DecoderCore.CreateDisplayFrame(decoded.Luma, decoded.ChromaU, decoded.ChromaV, pending.Header.FilmGrain, this.sequenceHeader.BitDepth));
                     }
 
                     pending = null;

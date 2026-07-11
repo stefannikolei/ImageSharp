@@ -105,6 +105,9 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets the segmentation parameters.</summary>
     public ObuSegmentationParams SegmentationParams { get; init; }
 
+    /// <summary>Gets the film-grain parameters, or <see langword="null"/> when no grain applies.</summary>
+    public ObuFilmGrainParams? FilmGrain { get; init; }
+
     /// <summary>Gets the per-block loop-filter delta resolution (log2).</summary>
     public int DeltaLfResolution { get; init; }
 
@@ -212,10 +215,7 @@ internal readonly struct ObuFrameHeader
         }
 
         bool showFrame = sequenceHeader.ReducedStillPictureHeader || reader.ReadBoolean();
-        if (!showFrame)
-        {
-            reader.ReadBoolean(); // showable_frame
-        }
+        bool showableFrame = showFrame ? frameType != Av1FrameType.Key : reader.ReadBoolean();
 
         bool errorResilientMode;
         if (frameType == Av1FrameType.Switch || (frameType == Av1FrameType.Key && showFrame))
@@ -348,13 +348,15 @@ internal readonly struct ObuFrameHeader
         bool reducedTxSet = reader.ReadBoolean();
 
         // global_motion_params() is empty for intra frames; film grain is gated by the sequence header.
-        if (sequenceHeader.FilmGrainParamsPresent)
+        ObuFilmGrainParams? filmGrain = null;
+        if (sequenceHeader.FilmGrainParamsPresent && (showFrame || showableFrame))
         {
-            throw new NotSupportedException("Film grain parameters are not supported yet.");
+            filmGrain = ObuFilmGrainParams.Parse(ref reader, sequenceHeader, frameType, referenceGrain: null);
         }
 
         return new ObuFrameHeader
         {
+            FilmGrain = filmGrain,
             FrameType = frameType,
             ShowFrame = showFrame,
             DisableCdfUpdate = disableCdfUpdate,
@@ -551,13 +553,25 @@ internal readonly struct ObuFrameHeader
             globalMotion[i] = ReadGlobalMotionParams(ref reader, inherited.GlobalMotion[i], allowHighPrecisionMv);
         }
 
+        ObuFilmGrainParams? filmGrain = null;
         if (sequenceHeader.FilmGrainParamsPresent && (showFrame || showableFrame))
         {
-            throw new NotSupportedException("Film grain parameters are not supported yet.");
+            ObuFilmGrainParams?[]? slotGrain = null;
+            if (slotStates is not null)
+            {
+                slotGrain = new ObuFilmGrainParams?[slotStates.Length];
+                for (int i = 0; i < slotStates.Length; i++)
+                {
+                    slotGrain[i] = slotStates[i]?.FilmGrain;
+                }
+            }
+
+            filmGrain = ObuFilmGrainParams.Parse(ref reader, sequenceHeader, frameType, slotGrain);
         }
 
         return new ObuFrameHeader
         {
+            FilmGrain = filmGrain,
             FrameType = frameType,
             ShowFrame = showFrame,
             DisableCdfUpdate = disableCdfUpdate,

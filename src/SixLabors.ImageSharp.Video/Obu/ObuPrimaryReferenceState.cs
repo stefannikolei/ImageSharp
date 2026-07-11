@@ -14,7 +14,9 @@ namespace SixLabors.ImageSharp.Formats.Av1.Obu;
 /// frame with a primary reference are coded against these).</param>
 /// <param name="Segmentation">The frame's segmentation parameters (a frame that does not update the
 /// feature data inherits this table).</param>
-internal sealed record ObuPrimaryReferenceState(int[] LoopFilterRefDeltas, int[] LoopFilterModeDeltas, Av1WarpedMotionParams[] GlobalMotion, ObuSegmentationParams Segmentation)
+/// <param name="FilmGrain">The frame's film-grain parameters (referenced by a later frame's
+/// <c>film_grain_params_ref_idx</c>), or <see langword="null"/>.</param>
+internal sealed record ObuPrimaryReferenceState(int[] LoopFilterRefDeltas, int[] LoopFilterModeDeltas, Av1WarpedMotionParams[] GlobalMotion, ObuSegmentationParams Segmentation, ObuFilmGrainParams? FilmGrain = null)
 {
     /// <summary>Creates the specification-default state (<c>setup_past_independence</c>).</summary>
     /// <returns>The default state.</returns>

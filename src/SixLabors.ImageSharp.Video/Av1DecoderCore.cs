@@ -323,7 +323,7 @@ internal static class Av1DecoderCore
             tileDecoder.ChromaU,
             tileDecoder.ChromaV,
             frameEndCdfs,
-            new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas, frameHeader.GlobalMotionParams, frameHeader.SegmentationParams),
+            new ObuPrimaryReferenceState(lf.RefDeltas, lf.ModeDeltas, frameHeader.GlobalMotionParams, frameHeader.SegmentationParams, frameHeader.FilmGrain),
             temporalMvs,
             referenceOrderHints,
             frameHeader.FrameType == Av1FrameType.Key);
@@ -360,6 +360,19 @@ internal static class Av1DecoderCore
 
         /// <summary>Gets or sets a value indicating whether every tile of the frame has been collected.</summary>
         public bool IsComplete { get; set; }
+    }
+
+    // Film grain synthesises into displayed output only: the reconstruction (and thus every
+    // reference) stays grain-free, and a re-shown frame applies its own stored parameters.
+    internal static Av1DisplayFrame CreateDisplayFrame(Av1Plane luma, Av1Plane chromaU, Av1Plane chromaV, ObuFilmGrainParams? grain, int bitDepth)
+    {
+        if (grain is null)
+        {
+            return new Av1DisplayFrame(luma, chromaU, chromaV);
+        }
+
+        (Av1Plane grainLuma, Av1Plane grainU, Av1Plane grainV) = Prediction.Av1FilmGrain.Apply(grain, luma, chromaU, chromaV, bitDepth);
+        return new Av1DisplayFrame(grainLuma, grainU, grainV);
     }
 
     // Multi-layer (scalable) streams carry OBUs for enhancement layers; decoding them into the same
@@ -418,7 +431,7 @@ internal static class Av1DecoderCore
                     Av1TileDecoder tileDecoder = DecodeFrame(payload, sequenceHeader, referenceStore, out ObuFrameHeader frameHeader);
                     if (frameHeader.ShowFrame)
                     {
-                        frames.Add(new Av1DisplayFrame(tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV));
+                        frames.Add(CreateDisplayFrame(tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV, frameHeader.FilmGrain, sequenceHeader.BitDepth));
                     }
                 }
                 else if (header.Type == ObuType.FrameHeader && haveSequenceHeader)
@@ -432,7 +445,7 @@ internal static class Av1DecoderCore
                             throw new NotSupportedException("show_existing_frame of a key frame (forward key frames) is not supported yet.");
                         }
 
-                        frames.Add(new Av1DisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!));
+                        frames.Add(CreateDisplayFrame(shown.Luma, shown.ChromaU!, shown.ChromaV!, shown.HeaderState?.FilmGrain, sequenceHeader.BitDepth));
                     }
                     else
                     {
@@ -450,7 +463,7 @@ internal static class Av1DecoderCore
                     {
                         if (pending.Header.ShowFrame)
                         {
-                            frames.Add(new Av1DisplayFrame(tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV));
+                            frames.Add(CreateDisplayFrame(tileDecoder.Luma, tileDecoder.ChromaU, tileDecoder.ChromaV, pending.Header.FilmGrain, sequenceHeader.BitDepth));
                         }
 
                         pending = null;
