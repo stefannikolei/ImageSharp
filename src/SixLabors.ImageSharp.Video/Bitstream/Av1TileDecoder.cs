@@ -277,11 +277,6 @@ internal class Av1TileDecoder
 
         this.tileBounds = new Av1TileBounds(0, miCols, 0, miRows);
 
-        if (frameHeader.UsingQMatrix)
-        {
-            throw new NotSupportedException("Quantizer matrices are not supported yet.");
-        }
-
         if (frameHeader.CodedLossless)
         {
             throw new NotSupportedException("Lossless coding is not supported yet.");
@@ -2296,6 +2291,15 @@ internal class Av1TileDecoder
         {
             int codedHeight = Math.Min(height, 32);
             int planeIndex = ReferenceEquals(plane, this.luma) ? 0 : ReferenceEquals(plane, this.chromaU) ? 1 : 2;
+            // A quantizer matrix weights the dequantizer per coefficient; identity-family transforms
+            // never use one (dav1d gates on txtp < IDTX).
+            ReadOnlySpan<byte> qmWeights = default;
+            if (this.frameHeader.UsingQMatrix && txType < Av1TransformType.Identity)
+            {
+                int qmLevel = planeIndex == 0 ? this.frameHeader.QmY : planeIndex == 1 ? this.frameHeader.QmU : this.frameHeader.QmV;
+                qmWeights = Av1QuantizerMatrices.Get(qmLevel, planeIndex, tx);
+            }
+
             int[] coefficients = new int[width * height];
             for (int rc = 0; rc < levels.Length; rc++)
             {
@@ -2308,7 +2312,7 @@ internal class Av1TileDecoder
                 int colInBlock = rc / codedHeight;
                 int qindex = rc == 0 ? this.blockDcQIndex[planeIndex] : this.blockAcQIndex[planeIndex];
                 coefficients[(rowInBlock * width) + colInBlock] =
-                    Av1QuantizationLookup.Dequantize(levels[rc], rc == 0, qindex, this.sequenceHeader.BitDepth, tx);
+                    Av1QuantizationLookup.Dequantize(levels[rc], rc == 0, qindex, this.sequenceHeader.BitDepth, tx, qmWeights.IsEmpty ? 0 : qmWeights[rc]);
             }
 
             Av1InverseTransform2d.Reconstruct(txType, tx, coefficients, residual, this.sequenceHeader.BitDepth);

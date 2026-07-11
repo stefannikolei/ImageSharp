@@ -99,6 +99,15 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets a value indicating whether a quantizer matrix is used.</summary>
     public bool UsingQMatrix { get; init; }
 
+    /// <summary>Gets the luma quantizer-matrix level (15 codes flat matrices).</summary>
+    public int QmY { get; init; }
+
+    /// <summary>Gets the U-plane quantizer-matrix level.</summary>
+    public int QmU { get; init; }
+
+    /// <summary>Gets the V-plane quantizer-matrix level.</summary>
+    public int QmV { get; init; }
+
     /// <summary>Gets a value indicating whether segmentation is enabled.</summary>
     public bool SegmentationEnabled { get; init; }
 
@@ -397,6 +406,9 @@ internal readonly struct ObuFrameHeader
             DeltaQVDc = q.DeltaQVDc,
             DeltaQVAc = q.DeltaQVAc,
             UsingQMatrix = q.UsingQMatrix,
+            QmY = q.QmY,
+            QmU = q.QmU,
+            QmV = q.QmV,
             SegmentationEnabled = segmentation.Enabled,
             SegmentationParams = segmentation,
             DeltaLfResolution = deltaLfResolution,
@@ -613,6 +625,9 @@ internal readonly struct ObuFrameHeader
             DeltaQVDc = q.DeltaQVDc,
             DeltaQVAc = q.DeltaQVAc,
             UsingQMatrix = q.UsingQMatrix,
+            QmY = q.QmY,
+            QmU = q.QmU,
+            QmV = q.QmV,
             SegmentationEnabled = segmentation.Enabled,
             SegmentationParams = segmentation,
             DeltaLfResolution = deltaLfResolution,
@@ -956,14 +971,14 @@ internal readonly struct ObuFrameHeader
         }
 
         bool usingQMatrix = reader.ReadBoolean();
+        int qmY = 15;
+        int qmU = 15;
+        int qmV = 15;
         if (usingQMatrix)
         {
-            reader.ReadLiteral(4); // qm_y
-            reader.ReadLiteral(4); // qm_u
-            if (sequenceHeader.SeparateUvDeltaQ)
-            {
-                reader.ReadLiteral(4); // qm_v
-            }
+            qmY = (int)reader.ReadLiteral(4);
+            qmU = (int)reader.ReadLiteral(4);
+            qmV = sequenceHeader.SeparateUvDeltaQ ? (int)reader.ReadLiteral(4) : qmU;
         }
 
         return new Quantization
@@ -975,6 +990,9 @@ internal readonly struct ObuFrameHeader
             DeltaQVDc = deltaQVDc,
             DeltaQVAc = deltaQVAc,
             UsingQMatrix = usingQMatrix,
+            QmY = qmY,
+            QmU = qmU,
+            QmV = qmV,
         };
     }
 
@@ -1396,5 +1414,11 @@ internal readonly struct ObuFrameHeader
         public int DeltaQVAc { get; init; }
 
         public bool UsingQMatrix { get; init; }
+
+        public int QmY { get; init; }
+
+        public int QmU { get; init; }
+
+        public int QmV { get; init; }
     }
 }

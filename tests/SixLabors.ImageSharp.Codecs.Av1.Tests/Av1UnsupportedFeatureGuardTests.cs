@@ -81,13 +81,6 @@ public class Av1UnsupportedFeatureGuardTests
     }
 
     [Fact]
-    public void TileDecoder_QuantizerMatrix_Throws()
-    {
-        (ObuSequenceHeader sequence, ObuFrameHeader frame) = ParseHeaders();
-        Assert.Throws<NotSupportedException>(() => new Av1TileDecoder(sequence, frame with { UsingQMatrix = true }));
-    }
-
-    [Fact]
     public void TileDecoder_CodedLossless_Throws()
     {
         (ObuSequenceHeader sequence, ObuFrameHeader frame) = ParseHeaders();

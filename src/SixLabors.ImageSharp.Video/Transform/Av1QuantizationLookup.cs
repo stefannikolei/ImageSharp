@@ -158,9 +158,16 @@ internal static class Av1QuantizationLookup
     /// <param name="bitDepth">The bit depth (8, 10 or 12).</param>
     /// <param name="transformSize">The transform size, which determines the dequant shift.</param>
     /// <returns>The dequantized coefficient, clamped to the coefficient range.</returns>
-    public static int Dequantize(int level, bool isDc, int qindex, int bitDepth, Av1TransformSize transformSize)
+    public static int Dequantize(int level, bool isDc, int qindex, int bitDepth, Av1TransformSize transformSize, int qmWeight = 0)
     {
         int quant = isDc ? GetDcQuant(qindex, bitDepth) : GetAcQuant(qindex, bitDepth);
+
+        // A quantizer-matrix weight scales the dequantizer per coefficient (dav1d's
+        // (dq * qm_tbl[rc] + 16) >> 5); zero means no matrix applies.
+        if (qmWeight > 0)
+        {
+            quant = ((quant * qmWeight) + 16) >> 5;
+        }
 
         // The dequant right shift depends on the transform's area-based size context (dav1d's
         // t_dim->ctx = (lw + lh + 1) >> 1, dq_shift = max(0, ctx - 2)), not its largest dimension; the
