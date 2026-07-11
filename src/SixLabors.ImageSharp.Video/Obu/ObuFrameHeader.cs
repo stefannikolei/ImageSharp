@@ -105,6 +105,16 @@ internal readonly struct ObuFrameHeader
     /// <summary>Gets the segmentation parameters.</summary>
     public ObuSegmentationParams SegmentationParams { get; init; }
 
+    /// <summary>Gets the upscaled (output/reference) frame width; equals <see cref="FrameWidth"/>
+    /// unless super-resolution is used.</summary>
+    public int UpscaledWidth { get; init; }
+
+    /// <summary>Gets the super-resolution denominator (8 when super-resolution is off).</summary>
+    public int SuperresDenominator { get; init; }
+
+    /// <summary>Gets a value indicating whether the frame codes at a reduced super-resolution width.</summary>
+    public bool UseSuperres => this.SuperresDenominator > 8;
+
     /// <summary>Gets the film-grain parameters, or <see langword="null"/> when no grain applies.</summary>
     public ObuFilmGrainParams? FilmGrain { get; init; }
 
@@ -273,14 +283,17 @@ internal readonly struct ObuFrameHeader
             frameHeight = sequenceHeader.MaxFrameHeight;
         }
 
-        // superres_params(): the upscaled width equals the frame width unless super-res is used.
+        // superres_params(): the frame codes at a reduced width and is upscaled for output/reference.
+        int upscaledWidthIntra = frameWidth;
+        int superresDenomIntra = 8;
         if (sequenceHeader.EnableSuperResolution && reader.ReadBoolean())
         {
-            reader.ReadLiteral(3); // coded_denom
+            superresDenomIntra = (int)reader.ReadLiteral(3) + 9;
+            frameWidth = ((upscaledWidthIntra * 8) + (superresDenomIntra / 2)) / superresDenomIntra;
         }
 
         // render_size().
-        int renderWidth = frameWidth;
+        int renderWidth = upscaledWidthIntra;
         int renderHeight = frameHeight;
         if (reader.ReadBoolean())
         {
@@ -365,6 +378,8 @@ internal readonly struct ObuFrameHeader
             AllowIntraBlockCopy = allowIntraBlockCopy,
             FrameWidth = frameWidth,
             FrameHeight = frameHeight,
+            UpscaledWidth = upscaledWidthIntra,
+            SuperresDenominator = superresDenomIntra,
             RenderWidth = renderWidth,
             RenderHeight = renderHeight,
             ModeInfoColumns = modeInfoColumns,
@@ -479,6 +494,13 @@ internal readonly struct ObuFrameHeader
 
         bool useRef = !errorResilientMode && frameSizeOverride;
         FrameSizeResult size = ReadFrameSizeInter(ref reader, sequenceHeader, useRef, frameSizeOverride);
+        if (size.SuperresDenominator > 8)
+        {
+            // Inter frames at a reduced super-resolution width predict from upscaled references,
+            // which requires scaled motion compensation.
+            throw new NotSupportedException("Super-resolution on inter frames is not supported yet.");
+        }
+
 
         bool allowHighPrecisionMv = !forceIntegerMv && reader.ReadBoolean();
         int interpolationFilter = reader.ReadBoolean() ? 4 : (int)reader.ReadLiteral(2);
@@ -579,6 +601,8 @@ internal readonly struct ObuFrameHeader
             AllowScreenContentTools = allowScreenContentTools,
             FrameWidth = size.FrameWidth,
             FrameHeight = size.FrameHeight,
+            UpscaledWidth = size.UpscaledWidth,
+            SuperresDenominator = size.SuperresDenominator,
             RenderWidth = size.RenderWidth,
             RenderHeight = size.RenderHeight,
             ModeInfoColumns = modeInfoColumns,
@@ -710,12 +734,14 @@ internal readonly struct ObuFrameHeader
 
     private readonly struct FrameSizeResult
     {
-        public FrameSizeResult(int frameWidth, int frameHeight, int renderWidth, int renderHeight)
+        public FrameSizeResult(int frameWidth, int frameHeight, int renderWidth, int renderHeight, int upscaledWidth = 0, int superresDenominator = 8)
         {
             this.FrameWidth = frameWidth;
             this.FrameHeight = frameHeight;
             this.RenderWidth = renderWidth;
             this.RenderHeight = renderHeight;
+            this.UpscaledWidth = upscaledWidth == 0 ? frameWidth : upscaledWidth;
+            this.SuperresDenominator = superresDenominator;
         }
 
         public int FrameWidth { get; }
@@ -725,6 +751,10 @@ internal readonly struct ObuFrameHeader
         public int RenderWidth { get; }
 
         public int RenderHeight { get; }
+
+        public int UpscaledWidth { get; }
+
+        public int SuperresDenominator { get; }
     }
 
     // dav1d read_frame_size for inter (the use_ref found-reference path is not yet supported).
@@ -754,13 +784,15 @@ internal readonly struct ObuFrameHeader
             frameHeight = sequenceHeader.MaxFrameHeight;
         }
 
+        int upscaledWidth = frameWidth;
+        int superresDenom = 8;
         if (sequenceHeader.EnableSuperResolution && reader.ReadBoolean())
         {
-            reader.ReadLiteral(3); // coded_denom
-            throw new NotSupportedException("Super-resolution is not supported yet.");
+            superresDenom = (int)reader.ReadLiteral(3) + 9;
+            frameWidth = ((upscaledWidth * 8) + (superresDenom / 2)) / superresDenom;
         }
 
-        int renderWidth = frameWidth;
+        int renderWidth = upscaledWidth;
         int renderHeight = frameHeight;
         if (reader.ReadBoolean())
         {
@@ -768,7 +800,7 @@ internal readonly struct ObuFrameHeader
             renderHeight = (int)reader.ReadLiteral(16) + 1;
         }
 
-        return new FrameSizeResult(frameWidth, frameHeight, renderWidth, renderHeight);
+        return new FrameSizeResult(frameWidth, frameHeight, renderWidth, renderHeight, upscaledWidth, superresDenom);
     }
 
     private static TileInfo ReadTileInfo(ref Av1BitStreamReader reader, in ObuSequenceHeader sequenceHeader, int miCols, int miRows)

@@ -62,7 +62,7 @@ internal class Av1TileDecoder
     // The pre-CDEF (deblocked) and pre-LR (CDEF) plane snapshots, captured by the post-filter pipeline so
     // loop restoration can read stripe-boundary rows from the deblocked image and interior rows from the
     // CDEF image, exactly as dav1d's lr_lpf_line / frame buffer split requires.
-    private readonly ushort[]?[] deblockSnapshot = new ushort[3][];
+    private readonly Av1Plane?[] deblockSnapshot = new Av1Plane?[3];
 
     private const byte LevelContextBaseline = 0x40; // cul_level 0, dc-sign "zero".
 
@@ -75,9 +75,9 @@ internal class Av1TileDecoder
     // frames). Availability at the tile's top/left edges follows these, not the frame edges.
     private protected Av1TileBounds tileBounds;
 
-    private protected readonly Av1Plane luma;
-    private protected readonly Av1Plane chromaU;
-    private protected readonly Av1Plane chromaV;
+    private protected Av1Plane luma;
+    private protected Av1Plane chromaU;
+    private protected Av1Plane chromaV;
 
     private protected readonly int subsamplingX;
     private protected readonly int subsamplingY;
@@ -443,12 +443,37 @@ internal class Av1TileDecoder
                 if (lrParams.Types[p] != 0)
                 {
                     anyRestoration = true;
-                    this.deblockSnapshot[p] = (ushort[])this.PlaneFor(p).Samples.Clone();
+                    this.deblockSnapshot[p] = ClonePlane(this.PlaneFor(p));
                 }
             }
         }
 
         this.ApplyCdef();
+
+        // Super-resolution: upscale the CDEF output (and the pre-CDEF snapshot loop restoration
+        // reads at stripe boundaries) to the output width; loop restoration then runs upscaled.
+        if (this.frameHeader.UseSuperres)
+        {
+            int bitDepth = this.sequenceHeader.BitDepth;
+            this.luma = Av1SuperRes.Upscale(this.luma, this.frameHeader.UpscaledWidth, bitDepth);
+            if (this.sequenceHeader.NumPlanes > 1)
+            {
+                int upscaledChroma = (this.frameHeader.UpscaledWidth + this.subsamplingX) >> this.subsamplingX;
+                this.chromaU = Av1SuperRes.Upscale(this.chromaU, upscaledChroma, bitDepth);
+                this.chromaV = Av1SuperRes.Upscale(this.chromaV, upscaledChroma, bitDepth);
+            }
+
+            for (int pl = 0; pl < 3; pl++)
+            {
+                if (this.deblockSnapshot[pl] is { } snapshot)
+                {
+                    int upscaled = pl == 0
+                        ? this.frameHeader.UpscaledWidth
+                        : (this.frameHeader.UpscaledWidth + this.subsamplingX) >> this.subsamplingX;
+                    this.deblockSnapshot[pl] = Av1SuperRes.Upscale(snapshot, upscaled, bitDepth);
+                }
+            }
+        }
 
         if (anyRestoration)
         {
@@ -479,7 +504,7 @@ internal class Av1TileDecoder
             Av1Plane plane = this.PlaneFor(p);
             ushort[] dst = plane.Samples;
             ushort[] cdef = (ushort[])dst.Clone();
-            ushort[] deblock = this.deblockSnapshot[p]!;
+            ushort[] deblock = this.deblockSnapshot[p]!.Samples;
             int width = plane.CropWidth;
             int height = plane.CropHeight;
             int stride = plane.Width;
@@ -593,9 +618,29 @@ internal class Av1TileDecoder
                 continue;
             }
 
+            if (this.frameHeader.UseSuperres)
+            {
+                // With super-resolution the units live in the upscaled domain: this superblock covers
+                // the units whose upscaled positions project into its coded span (dav1d read_lr).
+                int w = (this.frameHeader.UpscaledWidth + ssHor) >> ssHor;
+                int numUnits = Math.Max(1, (w + halfUnit) >> unitSizeLog2);
+                int d = this.frameHeader.SuperresDenominator;
+                int rnd = (unitSize * 8) - 1;
+                int shift = unitSizeLog2 + 3;
+                int sbStep = this.sequenceHeader.Use128x128Superblock ? 32 : 16;
+                int x0 = (((4 * col * d) >> ssHor) + rnd) >> shift;
+                int x1 = (((4 * (col + sbStep) * d) >> ssHor) + rnd) >> shift;
+                for (int u = x0; u < Math.Min(x1, numUnits); u++)
+                {
+                    this.ReadRestorationInfo(p, lr.Types[p], u << unitSizeLog2, y);
+                }
+
+                continue;
+            }
+
             int x = (col * 4) >> ssHor;
-            int w = (this.frameHeader.FrameWidth + ssHor) >> ssHor;
-            if ((x & mask) != 0 || (x != 0 && x + halfUnit > w))
+            int w2 = (this.frameHeader.FrameWidth + ssHor) >> ssHor;
+            if ((x & mask) != 0 || (x != 0 && x + halfUnit > w2))
             {
                 continue;
             }
@@ -2189,6 +2234,13 @@ internal class Av1TileDecoder
     // to record the type into its per-4x4 map, from which co-located chroma transform types are inferred.
     private protected virtual void RecordLumaTransformType(int txCol, int txRow, int txWidth4, int txHeight4, Av1TransformType txType)
     {
+    }
+
+    private static Av1Plane ClonePlane(Av1Plane source)
+    {
+        Av1Plane plane = new(source.Width, source.Height, source.CropWidth, source.CropHeight);
+        source.Samples.CopyTo(plane.Samples, 0);
+        return plane;
     }
 
     private protected static void Fill(byte[] context, int start, int count, byte value)
