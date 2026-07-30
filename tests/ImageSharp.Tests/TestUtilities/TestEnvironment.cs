@@ -15,14 +15,11 @@ public static partial class TestEnvironment
 
     private const string ActualOutputDirectoryRelativePath = @"tests\Images\ActualOutput";
 
-    private const string ReferenceOutputDirectoryRelativePath =
-        @"tests\Images\External\ReferenceOutput";
+    private const string ReferenceOutputDirectoryRelativePath = @"tests\Images\External\ReferenceOutput";
 
     private const string ToolsDirectoryRelativePath = @"tests\Images\External\tools";
 
-    private static readonly Lazy<string> SolutionDirectoryFullPathLazy = new(
-        GetSolutionDirectoryFullPathImpl
-    );
+    private static readonly Lazy<string> SolutionDirectoryFullPathLazy = new(GetSolutionDirectoryFullPathImpl);
 
     private static readonly Lazy<Version> NetCoreVersionLazy = new(GetNetCoreVersion);
 
@@ -55,9 +52,7 @@ public static partial class TestEnvironment
 
     internal static string SolutionDirectoryFullPath => SolutionDirectoryFullPathLazy.Value;
 
-    private static readonly FileInfo TestAssemblyFile = new(
-        typeof(TestEnvironment).GetTypeInfo().Assembly.Location
-    );
+    private static readonly FileInfo TestAssemblyFile = new(typeof(TestEnvironment).GetTypeInfo().Assembly.Location);
 
     private static string GetSolutionDirectoryFullPathImpl()
     {
@@ -73,15 +68,12 @@ public static partial class TestEnvironment
             {
                 throw new DirectoryNotFoundException(
                     $"Unable to find ImageSharp solution directory from {TestAssemblyFile} because of {ex.GetType().Name}!",
-                    ex
-                );
+                    ex);
             }
 
             if (directory == null)
             {
-                throw new DirectoryNotFoundException(
-                    $"Unable to find ImageSharp solution directory from {TestAssemblyFile}!"
-                );
+                throw new DirectoryNotFoundException($"Unable to find ImageSharp solution directory from {TestAssemblyFile}!");
             }
         }
 
@@ -90,7 +82,7 @@ public static partial class TestEnvironment
 
     private static string GetFullPath(string relativePath) =>
         Path.Combine(SolutionDirectoryFullPath, relativePath)
-            .Replace('\\', Path.DirectorySeparatorChar);
+        .Replace('\\', Path.DirectorySeparatorChar);
 
     /// <summary>
     /// Gets the correct full path to the Input Images directory.
@@ -100,21 +92,17 @@ public static partial class TestEnvironment
     /// <summary>
     /// Gets the correct full path to the Actual Output directory. (To be written to by the test cases.)
     /// </summary>
-    internal static string ActualOutputDirectoryFullPath =>
-        GetFullPath(ActualOutputDirectoryRelativePath);
+    internal static string ActualOutputDirectoryFullPath => GetFullPath(ActualOutputDirectoryRelativePath);
 
     /// <summary>
     /// Gets the correct full path to the Expected Output directory. (To compare the test results to.)
     /// </summary>
-    internal static string ReferenceOutputDirectoryFullPath =>
-        GetFullPath(ReferenceOutputDirectoryRelativePath);
+    internal static string ReferenceOutputDirectoryFullPath => GetFullPath(ReferenceOutputDirectoryRelativePath);
 
     internal static string ToolsDirectoryFullPath => GetFullPath(ToolsDirectoryRelativePath);
 
     internal static string GetReferenceOutputFileName(string actualOutputFileName) =>
-        actualOutputFileName
-            .Replace("ActualOutput", @"External\ReferenceOutput")
-            .Replace('\\', Path.DirectorySeparatorChar);
+        actualOutputFileName.Replace("ActualOutput", @"External\ReferenceOutput").Replace('\\', Path.DirectorySeparatorChar);
 
     internal static bool IsLinux => RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
@@ -122,7 +110,7 @@ public static partial class TestEnvironment
 
     internal static bool IsMono => Type.GetType("Mono.Runtime") != null; // https://stackoverflow.com/a/721194
 
-    public static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    internal static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
     internal static bool Is64BitProcess => IntPtr.Size == 8;
 
@@ -135,7 +123,9 @@ public static partial class TestEnvironment
     /// <summary>
     /// A dummy operation to enforce the execution of the static constructor.
     /// </summary>
-    internal static void EnsureSharedInitializersDone() { }
+    internal static void EnsureSharedInitializersDone()
+    {
+    }
 
     /// <summary>
     /// Creates the image output directory.
@@ -174,10 +164,8 @@ public static partial class TestEnvironment
             return;
         }
 
-        string remoteExecutorConfigPath = Path.Combine(
-            TestAssemblyFile.DirectoryName,
-            "Microsoft.DotNet.RemoteExecutor.exe.config"
-        );
+        string remoteExecutorConfigPath =
+            Path.Combine(TestAssemblyFile.DirectoryName, "Microsoft.DotNet.RemoteExecutor.exe.config");
 
         if (File.Exists(remoteExecutorConfigPath))
         {
@@ -208,15 +196,11 @@ public static partial class TestEnvironment
         string windowsSdksDir = Path.Combine(
             Environment.GetEnvironmentVariable("PROGRAMFILES(x86)"),
             "Microsoft SDKs",
-            "Windows"
-        );
+            "Windows");
 
         FileInfo corFlagsFile = Find(new DirectoryInfo(windowsSdksDir), "CorFlags.exe");
 
-        string remoteExecutorPath = Path.Combine(
-            TestAssemblyFile.DirectoryName,
-            "Microsoft.DotNet.RemoteExecutor.exe"
-        );
+        string remoteExecutorPath = Path.Combine(TestAssemblyFile.DirectoryName, "Microsoft.DotNet.RemoteExecutor.exe");
 
         string remoteExecutorTmpPath = $"{remoteExecutorPath}._tmp";
 
@@ -236,7 +220,7 @@ public static partial class TestEnvironment
             Arguments = args,
             UseShellExecute = false,
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
+            RedirectStandardError = true
         };
 
         using Process proc = Process.Start(si);
@@ -247,8 +231,7 @@ public static partial class TestEnvironment
         if (proc.ExitCode != 0)
         {
             throw new Exception(
-                $@"Failed to run {si.FileName} {si.Arguments}:\n STDOUT: {standardOutput}\n STDERR: {standardError}"
-            );
+                $@"Failed to run {si.FileName} {si.Arguments}:\n STDOUT: {standardOutput}\n STDERR: {standardError}");
         }
 
         File.Delete(remoteExecutorPath);
@@ -282,10 +265,7 @@ public static partial class TestEnvironment
     private static Version GetNetCoreVersion()
     {
         Assembly assembly = typeof(System.Runtime.GCSettings).GetTypeInfo().Assembly;
-        string[] assemblyPath = assembly.Location.Split(
-            ['/', '\\'],
-            StringSplitOptions.RemoveEmptyEntries
-        );
+        string[] assemblyPath = assembly.Location.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
         int netCoreAppIndex = Array.IndexOf(assemblyPath, "Microsoft.NETCore.App");
         if (netCoreAppIndex > 0 && netCoreAppIndex < assemblyPath.Length - 2)
         {

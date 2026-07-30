@@ -44,7 +44,7 @@ public class DitherTests
         = new()
         {
             (IDither)default(ErrorDither),
-            (IDither)default(OrderedDither)
+            default(OrderedDither)
         };
 
     private static readonly ImageComparer ValidatorComparer = ImageComparer.TolerantPercentage(0.05f);

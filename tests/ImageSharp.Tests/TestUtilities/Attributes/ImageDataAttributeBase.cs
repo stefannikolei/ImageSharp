@@ -75,8 +75,16 @@ public abstract class ImageDataAttributeBase : DataAttribute
                     // Call GetData() to unpack the row's values.
                     addedRows = memberItems.Select(x =>
                     {
-                        if (x is ITheoryDataRow row) return row.GetData();
-                        if (x is object[] arr) return arr;
+                        if (x is ITheoryDataRow row)
+                        {
+                            return row.GetData();
+                        }
+
+                        if (x is object[] arr)
+                        {
+                            return arr;
+                        }
+
                         return new[] { x };
                     });
                 }

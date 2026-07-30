@@ -27,13 +27,11 @@ public partial class UniformUnmanagedMemoryPoolTests
 
         public void Register(UnmanagedMemoryHandle handle) => this.handlesToDestroy.Add(handle);
 
-        public void Register(IEnumerable<UnmanagedMemoryHandle> handles) =>
-            this.handlesToDestroy.AddRange(handles);
+        public void Register(IEnumerable<UnmanagedMemoryHandle> handles) => this.handlesToDestroy.AddRange(handles);
 
         public void Register(IntPtr memoryPtr) => this.ptrsToDestroy.Add(memoryPtr);
 
-        public void Register(IEnumerable<IntPtr> memoryPtrs) =>
-            this.ptrsToDestroy.AddRange(memoryPtrs);
+        public void Register(IEnumerable<IntPtr> memoryPtrs) => this.ptrsToDestroy.AddRange(memoryPtrs);
 
         public void Dispose()
         {
@@ -95,11 +93,7 @@ public partial class UniformUnmanagedMemoryPoolTests
         }
     }
 
-    private static void CheckBuffer(
-        int length,
-        UniformUnmanagedMemoryPool pool,
-        UnmanagedMemoryHandle h
-    )
+    private static void CheckBuffer(int length, UniformUnmanagedMemoryPool pool, UnmanagedMemoryHandle h)
     {
         Assert.False(h.IsInvalid);
         Span<byte> span = GetSpan(h, pool.BufferLength);
@@ -110,8 +104,7 @@ public partial class UniformUnmanagedMemoryPoolTests
         Assert.True(span.SequenceEqual(expected));
     }
 
-    private static unsafe Span<byte> GetSpan(UnmanagedMemoryHandle h, int length) =>
-        new(h.Pointer, length);
+    private static unsafe Span<byte> GetSpan(UnmanagedMemoryHandle h, int length) => new(h.Pointer, length);
 
     [Theory]
     [InlineData(1, 1)]
@@ -216,11 +209,7 @@ public partial class UniformUnmanagedMemoryPoolTests
     [InlineData(0, 6, 5)]
     [InlineData(5, 1, 5)]
     [InlineData(4, 7, 10)]
-    public void Rent_MultiBuffer_OverCapacity_ReturnsNull(
-        int initialRent,
-        int attempt,
-        int capacity
-    )
+    public void Rent_MultiBuffer_OverCapacity_ReturnsNull(int initialRent, int attempt, int capacity)
     {
         UniformUnmanagedMemoryPool pool = new(128, capacity);
         using CleanupUtil cleanup = new(pool);
@@ -248,7 +237,7 @@ public partial class UniformUnmanagedMemoryPoolTests
         cleanup.Register(b1);
     }
 
-    public static bool IsNotMacOS => !TestEnvironment.IsMacOS;
+    public static readonly bool IsNotMacOS = !TestEnvironment.IsMacOS;
 
     // TODO: Investigate macOS failures
     [ConditionalTheory(nameof(IsNotMacOS))]
@@ -271,10 +260,7 @@ public partial class UniformUnmanagedMemoryPoolTests
             pool.Release();
 
             // Do some unmanaged allocations to make sure new pool buffers are different:
-            IntPtr[] dummy = Enumerable
-                .Range(0, 100)
-                .Select(_ => Marshal.AllocHGlobal(16))
-                .ToArray();
+            IntPtr[] dummy = Enumerable.Range(0, 100).Select(_ => Marshal.AllocHGlobal(16)).ToArray();
             cleanup.Register(dummy);
 
             if (bool.Parse(multipleInner))
@@ -323,38 +309,34 @@ public partial class UniformUnmanagedMemoryPoolTests
         using CleanupUtil cleanup = new(pool);
         Random rnd = new(0);
 
-        Parallel.For(
-            0,
-            Environment.ProcessorCount,
-            (int i) =>
+        Parallel.For(0, Environment.ProcessorCount, (int i) =>
+        {
+            List<UnmanagedMemoryHandle> allHandles = new();
+            int pauseAt = rnd.Next(100);
+            for (int j = 0; j < 100; j++)
             {
-                List<UnmanagedMemoryHandle> allHandles = new();
-                int pauseAt = rnd.Next(100);
-                for (int j = 0; j < 100; j++)
+                UnmanagedMemoryHandle[] data = pool.Rent(2);
+
+                GetSpan(data[0], pool.BufferLength).Fill((byte)i);
+                GetSpan(data[1], pool.BufferLength).Fill((byte)i);
+                allHandles.Add(data[0]);
+                allHandles.Add(data[1]);
+
+                if (j == pauseAt)
                 {
-                    UnmanagedMemoryHandle[] data = pool.Rent(2);
-
-                    GetSpan(data[0], pool.BufferLength).Fill((byte)i);
-                    GetSpan(data[1], pool.BufferLength).Fill((byte)i);
-                    allHandles.Add(data[0]);
-                    allHandles.Add(data[1]);
-
-                    if (j == pauseAt)
-                    {
-                        Thread.Sleep(15);
-                    }
-                }
-
-                Span<byte> expected = new byte[8];
-                expected.Fill((byte)i);
-
-                foreach (UnmanagedMemoryHandle h in allHandles)
-                {
-                    Assert.True(expected.SequenceEqual(GetSpan(h, pool.BufferLength)));
-                    pool.Return(new[] { h });
+                    Thread.Sleep(15);
                 }
             }
-        );
+
+            Span<byte> expected = new byte[8];
+            expected.Fill((byte)i);
+
+            foreach (UnmanagedMemoryHandle h in allHandles)
+            {
+                Assert.True(expected.SequenceEqual(GetSpan(h, pool.BufferLength)));
+                pool.Return(new[] { h });
+            }
+        });
     }
 
     [Theory]

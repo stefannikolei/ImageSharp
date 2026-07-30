@@ -14,7 +14,9 @@ public partial class UniformUnmanagedMemoryPoolTests
     public class Trim
     {
         [CollectionDefinition(nameof(NonParallelTests), DisableParallelization = true)]
-        public class NonParallelTests { }
+        public class NonParallelTests
+        {
+        }
 
         [Fact]
         public void TrimPeriodElapsed_TrimsHalfOfUnusedArrays()
@@ -22,10 +24,7 @@ public partial class UniformUnmanagedMemoryPoolTests
             RemoteExecutor.Invoke(RunTest).Dispose();
             static void RunTest()
             {
-                UniformUnmanagedMemoryPool.TrimSettings trimSettings = new()
-                {
-                    TrimPeriodMilliseconds = 5_000,
-                };
+                UniformUnmanagedMemoryPool.TrimSettings trimSettings = new() { TrimPeriodMilliseconds = 5_000 };
                 UniformUnmanagedMemoryPool pool = new(128, 256, trimSettings);
 
                 UnmanagedMemoryHandle[] a = pool.Rent(64);
@@ -38,8 +37,7 @@ public partial class UniformUnmanagedMemoryPoolTests
                 // 128 - 32 - 16 = 80
                 Assert.True(
                     UnmanagedMemoryHandle.TotalOutstandingHandles <= 80,
-                    $"UnmanagedMemoryHandle.TotalOutstandingHandles={UnmanagedMemoryHandle.TotalOutstandingHandles} > 80"
-                );
+                    $"UnmanagedMemoryHandle.TotalOutstandingHandles={UnmanagedMemoryHandle.TotalOutstandingHandles} > 80");
                 pool.Return(b);
             }
         }
@@ -48,12 +46,14 @@ public partial class UniformUnmanagedMemoryPoolTests
         // MultiplePoolInstances_TrimPeriodElapsed_AllAreTrimmed,
         // which is strongly timing-sensitive, and might be flaky under high load.
         [CollectionDefinition(nameof(NonParallelCollection), DisableParallelization = true)]
-        public class NonParallelCollection { }
+        public class NonParallelCollection
+        {
+        }
 
         [Collection(nameof(NonParallelCollection))]
         public class NonParallel
         {
-            public static bool IsNotMacOS => !TestEnvironment.IsMacOS;
+            public static readonly bool IsNotMacOS = !TestEnvironment.IsMacOS;
 
             // TODO: Investigate failures on macOS. All handles are released after GC.
             // (It seems to happen more consistently on .NET 6.)
@@ -77,16 +77,10 @@ public partial class UniformUnmanagedMemoryPoolTests
 
                 static void RunTest()
                 {
-                    UniformUnmanagedMemoryPool.TrimSettings trimSettings1 = new()
-                    {
-                        TrimPeriodMilliseconds = 6_000,
-                    };
+                    UniformUnmanagedMemoryPool.TrimSettings trimSettings1 = new() { TrimPeriodMilliseconds = 6_000 };
                     UniformUnmanagedMemoryPool pool1 = new(128, 256, trimSettings1);
                     Thread.Sleep(8_000); // Let some callbacks fire already
-                    UniformUnmanagedMemoryPool.TrimSettings trimSettings2 = new()
-                    {
-                        TrimPeriodMilliseconds = 3_000,
-                    };
+                    UniformUnmanagedMemoryPool.TrimSettings trimSettings2 = new() { TrimPeriodMilliseconds = 3_000 };
                     UniformUnmanagedMemoryPool pool2 = new(128, 256, trimSettings2);
 
                     pool1.Return(pool1.Rent(64));
@@ -102,8 +96,7 @@ public partial class UniformUnmanagedMemoryPoolTests
                     Thread.Sleep(15_000);
                     Assert.True(
                         UnmanagedMemoryHandle.TotalOutstandingHandles <= 64,
-                        $"UnmanagedMemoryHandle.TotalOutstandingHandles={UnmanagedMemoryHandle.TotalOutstandingHandles} > 64"
-                    );
+                        $"UnmanagedMemoryHandle.TotalOutstandingHandles={UnmanagedMemoryHandle.TotalOutstandingHandles} > 64");
                     GC.KeepAlive(pool1);
                     GC.KeepAlive(pool2);
                 }
@@ -111,16 +104,13 @@ public partial class UniformUnmanagedMemoryPoolTests
                 [MethodImpl(MethodImplOptions.NoInlining)]
                 static void LeakPoolInstance()
                 {
-                    UniformUnmanagedMemoryPool.TrimSettings trimSettings = new()
-                    {
-                        TrimPeriodMilliseconds = 4_000,
-                    };
+                    UniformUnmanagedMemoryPool.TrimSettings trimSettings = new() { TrimPeriodMilliseconds = 4_000 };
                     _ = new UniformUnmanagedMemoryPool(128, 256, trimSettings);
                 }
             }
         }
 
-        public static bool Is32BitProcess => !Environment.Is64BitProcess;
+        public static readonly bool Is32BitProcess = !Environment.Is64BitProcess;
         private static readonly List<byte[]> PressureArrays = [];
 
         [Fact]
@@ -139,16 +129,11 @@ public partial class UniformUnmanagedMemoryPoolTests
                 Assert.False(Environment.Is64BitProcess);
                 const int oneMb = 1 << 20;
 
-                UniformUnmanagedMemoryPool.TrimSettings trimSettings = new()
-                {
-                    HighPressureThresholdRate = 0.2f,
-                };
+                UniformUnmanagedMemoryPool.TrimSettings trimSettings = new() { HighPressureThresholdRate = 0.2f };
 
                 GCMemoryInfo memInfo = GC.GetGCMemoryInfo();
                 int highLoadThreshold = (int)(memInfo.HighMemoryLoadThresholdBytes / oneMb);
-                highLoadThreshold = (int)(
-                    trimSettings.HighPressureThresholdRate * highLoadThreshold
-                );
+                highLoadThreshold = (int)(trimSettings.HighPressureThresholdRate * highLoadThreshold);
 
                 UniformUnmanagedMemoryPool pool = new(oneMb, 16, trimSettings);
                 pool.Return(pool.Rent(16));
