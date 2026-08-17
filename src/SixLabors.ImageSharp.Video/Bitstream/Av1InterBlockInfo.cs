@@ -1,0 +1,117 @@
+// Copyright (c) Six Labors.
+// Licensed under the Six Labors Split License.
+
+namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
+
+/// <summary>
+/// The decoded mode information of a single single-reference inter block: the reference frame, the
+/// prediction mode and dynamic-reference-list index, the resolved motion vector, the interpolation
+/// filters and the motion mode.
+/// </summary>
+internal readonly struct Av1InterBlockInfo
+{
+    /// <summary>Initializes a new instance of the <see cref="Av1InterBlockInfo"/> struct.</summary>
+    /// <param name="reference">The zero-based reference frame index.</param>
+    /// <param name="mode">The inter prediction mode.</param>
+    /// <param name="dynamicReferenceIndex">The dynamic-reference-list index.</param>
+    /// <param name="motionVector">The resolved motion vector.</param>
+    /// <param name="filter0">The horizontal interpolation filter.</param>
+    /// <param name="filter1">The vertical interpolation filter.</param>
+    /// <param name="motionMode">The motion mode.</param>
+    /// <param name="warpMatrix">The derived local warp matrix (WARP motion mode with a successful
+    /// derivation), or <see langword="null"/>.</param>
+    /// <param name="warpShear">The derived local warp shear parameters, or <see langword="null"/>.</param>
+    public Av1InterBlockInfo(
+        int reference,
+        Av1InterPredictionMode mode,
+        int dynamicReferenceIndex,
+        Av1MotionVector motionVector,
+        int filter0,
+        int filter1,
+        Av1MotionMode motionMode,
+        int[]? warpMatrix = null,
+        short[]? warpShear = null,
+        int reference1 = -1,
+        Av1MotionVector motionVector1 = default,
+        int compoundMode = -1,
+        int compoundType = 0,
+        bool maskSign = false,
+        int wedgeIndex = 0,
+        int interIntraType = 0,
+        int interIntraMode = 0)
+    {
+        this.WedgeIndex = wedgeIndex;
+        this.InterIntraType = interIntraType;
+        this.InterIntraMode = interIntraMode;
+        this.Reference1 = reference1;
+        this.MotionVector1 = motionVector1;
+        this.CompoundMode = compoundMode;
+        this.CompoundType = compoundType;
+        this.MaskSign = maskSign;
+        this.Reference = reference;
+        this.Mode = mode;
+        this.DynamicReferenceIndex = dynamicReferenceIndex;
+        this.MotionVector = motionVector;
+        this.Filter0 = filter0;
+        this.Filter1 = filter1;
+        this.MotionMode = motionMode;
+        this.WarpMatrix = warpMatrix;
+        this.WarpShear = warpShear;
+    }
+
+    /// <summary>Gets the zero-based reference frame index.</summary>
+    public int Reference { get; }
+
+    /// <summary>Gets the inter prediction mode.</summary>
+    public Av1InterPredictionMode Mode { get; }
+
+    /// <summary>Gets the dynamic-reference-list index.</summary>
+    public int DynamicReferenceIndex { get; }
+
+    /// <summary>Gets the resolved motion vector.</summary>
+    public Av1MotionVector MotionVector { get; }
+
+    /// <summary>Gets the horizontal interpolation filter.</summary>
+    public int Filter0 { get; }
+
+    /// <summary>Gets the vertical interpolation filter.</summary>
+    public int Filter1 { get; }
+
+    /// <summary>Gets the motion mode.</summary>
+    public Av1MotionMode MotionMode { get; }
+
+    /// <summary>Gets the derived local warp matrix, or <see langword="null"/> when the block is not
+    /// warped (or the derivation degenerated and the block falls back to translation).</summary>
+    public int[]? WarpMatrix { get; }
+
+    /// <summary>Gets the derived local warp shear parameters, or <see langword="null"/>.</summary>
+    public short[]? WarpShear { get; }
+
+    /// <summary>Gets the zero-based second reference (-1 for single-reference blocks).</summary>
+    public int Reference1 { get; }
+
+    /// <summary>Gets the second motion vector (compound blocks).</summary>
+    public Av1MotionVector MotionVector1 { get; }
+
+    /// <summary>Gets the compound inter mode (dav1d <c>CompInterPredMode</c>), or -1 for single.</summary>
+    public int CompoundMode { get; }
+
+    /// <summary>Gets the compound blend type (dav1d <c>CompInterType</c>: 2 = average, 3 = seg,
+    /// 4 = wedge), or 0 for single-reference blocks.</summary>
+    public int CompoundType { get; }
+
+    /// <summary>Gets the masked-compound mask sign.</summary>
+    public bool MaskSign { get; }
+
+    /// <summary>Gets the wedge index (wedge-masked compound and wedge inter-intra blocks).</summary>
+    public int WedgeIndex { get; }
+
+    /// <summary>Gets the inter-intra type (0 = none, 1 = blend, 2 = wedge).</summary>
+    public int InterIntraType { get; }
+
+    /// <summary>Gets the inter-intra intra mode (0 = DC, 1 = V, 2 = H, 3 = SMOOTH).</summary>
+    public int InterIntraMode { get; }
+
+    /// <summary>Gets a value indicating whether the block uses compound prediction.</summary>
+    public bool IsCompound => this.Reference1 >= 0;
+}

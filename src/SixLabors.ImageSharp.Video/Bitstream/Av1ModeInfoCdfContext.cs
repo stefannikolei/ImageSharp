@@ -1,0 +1,189 @@
+// Copyright (c) Six Labors.
+// Licensed under the Six Labors Split License.
+
+namespace SixLabors.ImageSharp.Formats.Av1.Bitstream;
+
+/// <summary>
+/// Holds the mutable, adaptive mode-info CDFs for a single tile (partition, skip and intra-mode
+/// syntax), initialized from the quantizer-independent default tables. Each tile keeps its own copy so
+/// adaptation does not leak across tiles.
+/// </summary>
+internal sealed class Av1ModeInfoCdfContext
+{
+    private Av1ModeInfoCdfContext()
+    {
+    }
+
+    /// <summary>Gets the skip flag CDFs, indexed by context.</summary>
+    public ushort[][] Skip { get; private set; } = default!;
+
+    /// <summary>Gets the partition CDFs, indexed by block level then context.</summary>
+    public ushort[][][] Partition { get; private set; } = default!;
+
+    /// <summary>Gets the key-frame luma intra-mode CDFs, indexed by above then left mode context.</summary>
+    public ushort[][][] KeyFrameYMode { get; private set; } = default!;
+
+    /// <summary>Gets the inter-frame luma intra-mode CDFs, indexed by the block-size group.</summary>
+    public ushort[][] YMode { get; private set; } = default!;
+
+    /// <summary>Gets the chroma intra-mode CDFs, indexed by cfl-allowed then luma mode.</summary>
+    public ushort[][][] UvMode { get; private set; } = default!;
+
+    /// <summary>Gets the use_filter_intra CDFs, indexed by square block size.</summary>
+    public ushort[][] UseFilterIntra { get; private set; } = default!;
+
+    /// <summary>Gets the filter_intra mode CDF.</summary>
+    public ushort[] FilterIntraMode { get; private set; } = default!;
+
+    /// <summary>Gets the tx-depth CDFs, indexed by (max transform size - 1) then context.</summary>
+    public ushort[][][] TransformDepth { get; private set; } = default!;
+
+    /// <summary>Gets the intra txtp_intra1 CDFs, indexed by tx-size-min then luma mode.</summary>
+    public ushort[][][] TransformTypeIntra1 { get; private set; } = default!;
+
+    /// <summary>Gets the intra txtp_intra2 CDFs, indexed by tx-size-min then luma mode.</summary>
+    public ushort[][][] TransformTypeIntra2 { get; private set; } = default!;
+
+    /// <summary>Gets the angle-delta CDFs, indexed by directional mode.</summary>
+    public ushort[][] AngleDelta { get; private set; } = default!;
+
+    /// <summary>Gets the CfL joint-sign CDF.</summary>
+    public ushort[] CflSign { get; private set; } = default!;
+
+    /// <summary>Gets the CfL alpha CDFs, indexed by sign context.</summary>
+    public ushort[][] CflAlpha { get; private set; } = default!;
+
+    /// <summary>Gets the loop-restoration Wiener on/off CDF.</summary>
+    public ushort[] RestoreWiener { get; private set; } = default!;
+
+    /// <summary>Gets the loop-restoration self-guided on/off CDF.</summary>
+    public ushort[] RestoreSgrProj { get; private set; } = default!;
+
+    /// <summary>Gets the switchable loop-restoration type CDF.</summary>
+    public ushort[] RestoreSwitchable { get; private set; } = default!;
+
+    /// <summary>Gets the segment-id CDFs, indexed by the spatial prediction context.</summary>
+    public ushort[][] SegId { get; private set; } = default!;
+
+    /// <summary>Gets the temporal segment-prediction flag CDFs, indexed by neighbour context.</summary>
+    public ushort[][] SegPred { get; private set; } = default!;
+
+    /// <summary>Gets the per-superblock quantizer-delta token CDF.</summary>
+    public ushort[] DeltaQ { get; private set; } = default!;
+
+    /// <summary>Gets the per-superblock loop-filter-delta token CDFs.</summary>
+    public ushort[][] DeltaLf { get; private set; } = default!;
+
+    /// <summary>Gets the luma use-palette CDFs, indexed by block-size context then neighbour context.</summary>
+    public ushort[][][] PaletteY { get; private set; } = default!;
+
+    /// <summary>Gets the chroma use-palette CDFs, indexed by the luma-palette context.</summary>
+    public ushort[][] PaletteUv { get; private set; } = default!;
+
+    /// <summary>Gets the palette-size CDFs, indexed by plane then block-size context.</summary>
+    public ushort[][][] PaletteSize { get; private set; } = default!;
+
+    /// <summary>Gets the palette colour-index CDFs, indexed by plane, palette size minus two and
+    /// neighbour-pattern context.</summary>
+    public ushort[][][][] PaletteColorMap { get; private set; } = default!;
+
+    /// <summary>Gets the intra-block-copy flag CDF.</summary>
+    public ushort[] IntraBlockCopy { get; private set; } = default!;
+
+    /// <summary>
+    /// Creates a mode-info CDF context initialized from the default tables.
+    /// </summary>
+    /// <returns>A fresh, mutable mode-info CDF context.</returns>
+    public static Av1ModeInfoCdfContext CreateDefault() => new()
+    {
+        Skip = Clone(Av1DefaultModeInfoCdf.Skip),
+        Partition = Clone(Av1DefaultModeInfoCdf.Partition),
+        KeyFrameYMode = Clone(Av1DefaultModeInfoCdf.KeyFrameYMode),
+        YMode = Clone(Av1DefaultModeInfoCdf.YMode),
+        UvMode = Clone(Av1DefaultModeInfoCdf.UvMode),
+        UseFilterIntra = Clone(Av1DefaultModeInfoCdf.UseFilterIntra),
+        FilterIntraMode = (ushort[])Av1DefaultModeInfoCdf.FilterIntraMode.Clone(),
+        TransformDepth = Clone(Av1DefaultModeInfoCdf.TransformDepth),
+        TransformTypeIntra1 = Clone(Av1DefaultModeInfoCdf.TransformTypeIntra1),
+        TransformTypeIntra2 = Clone(Av1DefaultModeInfoCdf.TransformTypeIntra2),
+        AngleDelta = Clone(Av1DefaultModeInfoCdf.AngleDelta),
+        CflSign = (ushort[])Av1DefaultModeInfoCdf.CflSign.Clone(),
+        CflAlpha = Clone(Av1DefaultModeInfoCdf.CflAlpha),
+        RestoreWiener = (ushort[])Av1DefaultModeInfoCdf.RestoreWiener.Clone(),
+        RestoreSgrProj = (ushort[])Av1DefaultModeInfoCdf.RestoreSgrProj.Clone(),
+        RestoreSwitchable = (ushort[])Av1DefaultModeInfoCdf.RestoreSwitchable.Clone(),
+        SegId = Clone(Av1DefaultModeInfoCdf.SegId),
+        SegPred = Clone(Av1DefaultModeInfoCdf.SegPred),
+        DeltaQ = (ushort[])Av1DefaultModeInfoCdf.DeltaQ.Clone(),
+        DeltaLf = Clone(Av1DefaultModeInfoCdf.DeltaLf),
+        PaletteY = Clone(Av1DefaultModeInfoCdf.PaletteY),
+        PaletteUv = Clone(Av1DefaultModeInfoCdf.PaletteUv),
+        PaletteSize = Clone(Av1DefaultModeInfoCdf.PaletteSize),
+        PaletteColorMap = Clone(Av1DefaultModeInfoCdf.PaletteColorMap),
+        IntraBlockCopy = (ushort[])Av1DefaultModeInfoCdf.IntraBlockCopy.Clone(),
+    };
+
+    /// <summary>Creates a deep copy of this context (used to inherit a frame's adapted state).</summary>
+    /// <returns>An independent copy.</returns>
+    public Av1ModeInfoCdfContext Clone() => new()
+    {
+        Skip = Clone(this.Skip),
+        Partition = Clone(this.Partition),
+        KeyFrameYMode = Clone(this.KeyFrameYMode),
+        YMode = Clone(this.YMode),
+        UvMode = Clone(this.UvMode),
+        UseFilterIntra = Clone(this.UseFilterIntra),
+        FilterIntraMode = (ushort[])this.FilterIntraMode.Clone(),
+        TransformDepth = Clone(this.TransformDepth),
+        TransformTypeIntra1 = Clone(this.TransformTypeIntra1),
+        TransformTypeIntra2 = Clone(this.TransformTypeIntra2),
+        AngleDelta = Clone(this.AngleDelta),
+        CflSign = (ushort[])this.CflSign.Clone(),
+        CflAlpha = Clone(this.CflAlpha),
+        RestoreWiener = (ushort[])this.RestoreWiener.Clone(),
+        RestoreSgrProj = (ushort[])this.RestoreSgrProj.Clone(),
+        RestoreSwitchable = (ushort[])this.RestoreSwitchable.Clone(),
+        SegId = Clone(this.SegId),
+        SegPred = Clone(this.SegPred),
+        DeltaQ = (ushort[])this.DeltaQ.Clone(),
+        DeltaLf = Clone(this.DeltaLf),
+        PaletteY = Clone(this.PaletteY),
+        PaletteUv = Clone(this.PaletteUv),
+        PaletteSize = Clone(this.PaletteSize),
+        PaletteColorMap = Clone(this.PaletteColorMap),
+        IntraBlockCopy = (ushort[])this.IntraBlockCopy.Clone(),
+    };
+
+    private static ushort[][] Clone(ushort[][] group)
+    {
+        ushort[][] result = new ushort[group.Length][];
+        for (int i = 0; i < group.Length; i++)
+        {
+            result[i] = (ushort[])group[i].Clone();
+        }
+
+        return result;
+    }
+
+    private static ushort[][][] Clone(ushort[][][] group)
+    {
+        ushort[][][] result = new ushort[group.Length][][];
+        for (int i = 0; i < group.Length; i++)
+        {
+            result[i] = Clone(group[i]);
+        }
+
+        return result;
+    }
+
+    private static ushort[][][][] Clone(ushort[][][][] group)
+    {
+        ushort[][][][] result = new ushort[group.Length][][][];
+        for (int i = 0; i < group.Length; i++)
+        {
+            result[i] = Clone(group[i]);
+        }
+
+        return result;
+    }
+}
