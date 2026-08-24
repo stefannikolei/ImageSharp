@@ -4,6 +4,7 @@
 
 using System.Buffers;
 using System.Numerics;
+using System.Numerics.Tensors;
 using System.Runtime.InteropServices;
 using SixLabors.ImageSharp.ColorProfiles;
 using SixLabors.ImageSharp.ColorProfiles.Icc;
@@ -42,7 +43,7 @@ internal abstract partial class JpegColorConverterBase
         {
             // The single luminance plane is the ICC source, so it is normalized in place. The temporary
             // buffer is still RGB-sized because the profile conversion expands each Y sample to three lanes.
-            TensorPrimitives_.Multiply(c0, 1F / this.MaximumValue, c0);
+            TensorPrimitives.Multiply(c0, 1F / this.MaximumValue, c0);
 
             Span<Y> source = MemoryMarshal.Cast<float, Y>(c0);
             Span<Rgb> destination = MemoryMarshal.Cast<float, Rgb>(packed);

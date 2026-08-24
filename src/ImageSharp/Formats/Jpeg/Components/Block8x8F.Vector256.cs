@@ -96,7 +96,7 @@ internal partial struct Block8x8F
 
     [MethodImpl(InliningOptions.ShortMethod)]
     private static Vector256<float> NormalizeVector256(Vector256<float> value, Vector256<float> off, Vector256<float> max)
-        => Vector256_.Clamp(value + off, Vector256<float>.Zero, max);
+        => Vector256.Clamp(value + off, Vector256<float>.Zero, max);
 
     private static void MultiplyIntoInt16Vector256(ref Block8x8F a, ref Block8x8F b, ref Block8x8 dest)
     {

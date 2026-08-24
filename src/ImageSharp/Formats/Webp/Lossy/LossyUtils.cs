@@ -77,7 +77,7 @@ internal static class LossyUtils
             Vector256<byte> b01s = Vector256_.UnpackLow(b01.AsByte(), Vector256<byte>.Zero);
 
             // subtract, square and accumulate.
-            Vector256<short> d0 = Vector256_.SubtractSaturate(a01s.AsInt16(), b01s.AsInt16());
+            Vector256<short> d0 = Vector256.SubtractSaturate(a01s.AsInt16(), b01s.AsInt16());
             Vector256<int> e0 = Vector256_.MultiplyAddAdjacent(d0, d0);
 
             return ReduceSumVector256(e0);
@@ -110,8 +110,8 @@ internal static class LossyUtils
             Vector128<byte> b23s = Vector128_.UnpackLow(b23.AsByte(), Vector128<byte>.Zero);
 
             // subtract, square and accumulate.
-            Vector128<short> d0 = Vector128_.SubtractSaturate(a01s.AsInt16(), b01s.AsInt16());
-            Vector128<short> d1 = Vector128_.SubtractSaturate(a23s.AsInt16(), b23s.AsInt16());
+            Vector128<short> d0 = Vector128.SubtractSaturate(a01s.AsInt16(), b01s.AsInt16());
+            Vector128<short> d1 = Vector128.SubtractSaturate(a23s.AsInt16(), b23s.AsInt16());
             Vector128<int> e0 = Vector128_.MultiplyAddAdjacent(d0, d0);
             Vector128<int> e1 = Vector128_.MultiplyAddAdjacent(d1, d1);
             Vector128<int> sum = e0 + e1;
@@ -203,8 +203,8 @@ internal static class LossyUtils
     private static Vector128<int> SubtractAndAccumulateVector128(Vector128<byte> a, Vector128<byte> b)
     {
         // Take abs(a-b) in 8b.
-        Vector128<byte> ab = Vector128_.SubtractSaturate(a, b);
-        Vector128<byte> ba = Vector128_.SubtractSaturate(b, a);
+        Vector128<byte> ab = Vector128.SubtractSaturate(a, b);
+        Vector128<byte> ba = Vector128.SubtractSaturate(b, a);
         Vector128<byte> absAb = ab | ba;
 
         // Zero-extend to 16b.
@@ -222,8 +222,8 @@ internal static class LossyUtils
     private static Vector256<int> SubtractAndAccumulateVector256(Vector256<byte> a, Vector256<byte> b)
     {
         // Take abs(a-b) in 8b.
-        Vector256<byte> ab = Vector256_.SubtractSaturate(a, b);
-        Vector256<byte> ba = Vector256_.SubtractSaturate(b, a);
+        Vector256<byte> ab = Vector256.SubtractSaturate(a, b);
+        Vector256<byte> ba = Vector256.SubtractSaturate(b, a);
         Vector256<byte> absAb = ab | ba;
 
         // Zero-extend to 16b.
@@ -1985,20 +1985,20 @@ internal static class LossyUtils
         q0 ^= signBit;
         q1 ^= signBit;
 
-        Vector128<sbyte> t1 = Vector128_.SubtractSaturate(p1.AsSByte(), q1.AsSByte()); // p1 - q1
+        Vector128<sbyte> t1 = Vector128.SubtractSaturate(p1.AsSByte(), q1.AsSByte()); // p1 - q1
         t1 = (~notHev & t1.AsByte()).AsSByte(); // hev(p1 - q1)
-        Vector128<sbyte> t2 = Vector128_.SubtractSaturate(q0.AsSByte(), p0.AsSByte()); // q0 - p0
-        t1 = Vector128_.AddSaturate(t1, t2); // hev(p1 - q1) + 1 * (q0 - p0)
-        t1 = Vector128_.AddSaturate(t1, t2); // hev(p1 - q1) + 2 * (q0 - p0)
-        t1 = Vector128_.AddSaturate(t1, t2); // hev(p1 - q1) + 3 * (q0 - p0)
+        Vector128<sbyte> t2 = Vector128.SubtractSaturate(q0.AsSByte(), p0.AsSByte()); // q0 - p0
+        t1 = Vector128.AddSaturate(t1, t2); // hev(p1 - q1) + 1 * (q0 - p0)
+        t1 = Vector128.AddSaturate(t1, t2); // hev(p1 - q1) + 2 * (q0 - p0)
+        t1 = Vector128.AddSaturate(t1, t2); // hev(p1 - q1) + 3 * (q0 - p0)
         t1 = (t1.AsByte() & mask).AsSByte(); // mask filter values we don't care about.
 
-        t2 = Vector128_.AddSaturate(t1, Vector128.Create((byte)3).AsSByte());                  // 3 * (q0 - p0) + hev(p1 - q1) + 3
-        Vector128<sbyte> t3 = Vector128_.AddSaturate(t1, Vector128.Create((byte)4).AsSByte()); // 3 * (q0 - p0) + hev(p1 - q1) + 4
+        t2 = Vector128.AddSaturate(t1, Vector128.Create((byte)3).AsSByte());                  // 3 * (q0 - p0) + hev(p1 - q1) + 3
+        Vector128<sbyte> t3 = Vector128.AddSaturate(t1, Vector128.Create((byte)4).AsSByte()); // 3 * (q0 - p0) + hev(p1 - q1) + 4
         t2 = SignedShift8bVector128(t2.AsByte()); // (3 * (q0 - p0) + hev(p1 - q1) + 3) >> 3
         t3 = SignedShift8bVector128(t3.AsByte()); // (3 * (q0 - p0) + hev(p1 - q1) + 4) >> 3
-        p0 = Vector128_.AddSaturate(p0.AsSByte(), t2).AsByte(); // p0 += t2
-        q0 = Vector128_.SubtractSaturate(q0.AsSByte(), t3).AsByte(); // q0 -= t3
+        p0 = Vector128.AddSaturate(p0.AsSByte(), t2).AsByte(); // p0 += t2
+        q0 = Vector128.SubtractSaturate(q0.AsSByte(), t3).AsByte(); // q0 -= t3
         p0 ^= signBit;
         q0 ^= signBit;
 
@@ -2008,8 +2008,8 @@ internal static class LossyUtils
         t3 -= Vector128.Create((sbyte)64);
 
         t3 = (notHev & t3.AsByte()).AsSByte(); // if !hev
-        q1 = Vector128_.SubtractSaturate(q1.AsSByte(), t3).AsByte(); // q1 -= t3
-        p1 = Vector128_.AddSaturate(p1.AsSByte(), t3).AsByte(); // p1 += t3
+        q1 = Vector128.SubtractSaturate(q1.AsSByte(), t3).AsByte(); // q1 -= t3
+        p1 = Vector128.AddSaturate(p1.AsSByte(), t3).AsByte(); // p1 += t3
         p1 = p1.AsByte() ^ signBit;
         q1 = q1.AsByte() ^ signBit;
     }
@@ -2063,13 +2063,13 @@ internal static class LossyUtils
 
     private static void DoSimpleFilterVector128(ref Vector128<byte> p0, ref Vector128<byte> q0, Vector128<byte> fl)
     {
-        Vector128<sbyte> v3 = Vector128_.AddSaturate(fl.AsSByte(), Vector128.Create((byte)3).AsSByte());
-        Vector128<sbyte> v4 = Vector128_.AddSaturate(fl.AsSByte(), Vector128.Create((byte)4).AsSByte());
+        Vector128<sbyte> v3 = Vector128.AddSaturate(fl.AsSByte(), Vector128.Create((byte)3).AsSByte());
+        Vector128<sbyte> v4 = Vector128.AddSaturate(fl.AsSByte(), Vector128.Create((byte)4).AsSByte());
 
         v4 = SignedShift8bVector128(v4.AsByte()).AsSByte(); // v4 >> 3
         v3 = SignedShift8bVector128(v3.AsByte()).AsSByte(); // v3 >> 3
-        q0 = Vector128_.SubtractSaturate(q0.AsSByte(), v4).AsByte(); // q0 -= v4
-        p0 = Vector128_.AddSaturate(p0.AsSByte(), v3).AsByte(); // p0 += v3
+        q0 = Vector128.SubtractSaturate(q0.AsSByte(), v4).AsByte(); // q0 -= v4
+        p0 = Vector128.AddSaturate(p0.AsSByte(), v3).AsByte(); // p0 += v3
     }
 
     private static Vector128<byte> GetNotHevVector128(ref Vector128<byte> p1, ref Vector128<byte> p0, ref Vector128<byte> q0, ref Vector128<byte> q1, int hevThresh)
@@ -2080,7 +2080,7 @@ internal static class LossyUtils
         Vector128<byte> h = Vector128.Create((byte)hevThresh);
         Vector128<byte> tMax = Vector128.Max(t1, t2);
 
-        Vector128<byte> tMaxH = Vector128_.SubtractSaturate(tMax, h);
+        Vector128<byte> tMaxH = Vector128.SubtractSaturate(tMax, h);
 
         // not_hev <= t1 && not_hev <= t2
         return Vector128.Equals(tMaxH, Vector128<byte>.Zero);
@@ -2173,10 +2173,10 @@ internal static class LossyUtils
         Vector128<short> t3 = Vector128.ShiftRightLogical(t2.AsInt16(), 1); // abs(p1 - q1) / 2
 
         Vector128<byte> t4 = AbsVector128(p0, q0); // abs(p0 - q0)
-        Vector128<byte> t5 = Vector128_.AddSaturate(t4, t4); // abs(p0 - q0) * 2
-        Vector128<byte> t6 = Vector128_.AddSaturate(t5.AsByte(), t3.AsByte()); // abs(p0-q0)*2 + abs(p1-q1)/2
+        Vector128<byte> t5 = Vector128.AddSaturate(t4, t4); // abs(p0 - q0) * 2
+        Vector128<byte> t6 = Vector128.AddSaturate(t5.AsByte(), t3.AsByte()); // abs(p0-q0)*2 + abs(p1-q1)/2
 
-        Vector128<byte> t7 = Vector128_.SubtractSaturate(t6, mthresh.AsByte()); // mask <= m_thresh
+        Vector128<byte> t7 = Vector128.SubtractSaturate(t6, mthresh.AsByte()); // mask <= m_thresh
 
         return Vector128.Equals(t7, Vector128<byte>.Zero);
     }
@@ -2290,11 +2290,11 @@ internal static class LossyUtils
     private static Vector128<sbyte> GetBaseDeltaVector128(Vector128<sbyte> p1, Vector128<sbyte> p0, Vector128<sbyte> q0, Vector128<sbyte> q1)
     {
         // Beware of addition order, for saturation!
-        Vector128<sbyte> p1q1 = Vector128_.SubtractSaturate(p1, q1); // p1 - q1
-        Vector128<sbyte> q0p0 = Vector128_.SubtractSaturate(q0, p0); // q0 - p0
-        Vector128<sbyte> s1 = Vector128_.AddSaturate(p1q1, q0p0); // p1 - q1 + 1 * (q0 - p0)
-        Vector128<sbyte> s2 = Vector128_.AddSaturate(q0p0, s1); // p1 - q1 + 2 * (q0 - p0)
-        return Vector128_.AddSaturate(q0p0, s2); // p1 - q1 + 3 * (q0 - p0)
+        Vector128<sbyte> p1q1 = Vector128.SubtractSaturate(p1, q1); // p1 - q1
+        Vector128<sbyte> q0p0 = Vector128.SubtractSaturate(q0, p0); // q0 - p0
+        Vector128<sbyte> s1 = Vector128.AddSaturate(p1q1, q0p0); // p1 - q1 + 1 * (q0 - p0)
+        Vector128<sbyte> s2 = Vector128.AddSaturate(q0p0, s1); // p1 - q1 + 2 * (q0 - p0)
+        return Vector128.AddSaturate(q0p0, s2); // p1 - q1 + 3 * (q0 - p0)
     }
 
     // Shift each byte of "x" by 3 bits while preserving by the sign bit.
@@ -2306,14 +2306,14 @@ internal static class LossyUtils
         Vector128<short> low1 = Vector128.ShiftRightArithmetic(low0.AsInt16(), 3 + 8);
         Vector128<short> high1 = Vector128.ShiftRightArithmetic(high0.AsInt16(), 3 + 8);
 
-        return Vector128_.PackSignedSaturate(low1, high1);
+        return Vector128.NarrowWithSaturation(low1, high1);
     }
 
     [MethodImpl(InliningOptions.ShortMethod)]
     private static void ComplexMaskVector128(Vector128<byte> p1, Vector128<byte> p0, Vector128<byte> q0, Vector128<byte> q1, int thresh, int ithresh, ref Vector128<byte> mask)
     {
         Vector128<byte> it = Vector128.Create((byte)ithresh);
-        Vector128<byte> diff = Vector128_.SubtractSaturate(mask, it);
+        Vector128<byte> diff = Vector128.SubtractSaturate(mask, it);
         Vector128<byte> threshMask = Vector128.Equals(diff, Vector128<byte>.Zero);
         Vector128<byte> filterMask = NeedsFilterVector128(p1, p0, q0, q1, thresh);
 
@@ -2329,9 +2329,9 @@ internal static class LossyUtils
         Vector128<byte> signBit = Vector128.Create((byte)0x80);
         Vector128<short> a1Low = Vector128.ShiftRightArithmetic(a0Low, 7);
         Vector128<short> a1High = Vector128.ShiftRightArithmetic(a0High, 7);
-        Vector128<sbyte> delta = Vector128_.PackSignedSaturate(a1Low, a1High);
-        pi = Vector128_.AddSaturate(pi.AsSByte(), delta).AsByte();
-        qi = Vector128_.SubtractSaturate(qi.AsSByte(), delta).AsByte();
+        Vector128<sbyte> delta = Vector128.NarrowWithSaturation(a1Low, a1High);
+        pi = Vector128.AddSaturate(pi.AsSByte(), delta).AsByte();
+        qi = Vector128.SubtractSaturate(qi.AsSByte(), delta).AsByte();
         pi ^= signBit.AsByte();
         qi ^= signBit.AsByte();
     }
@@ -2354,7 +2354,7 @@ internal static class LossyUtils
     // Compute abs(p - q) = subs(p - q) OR subs(q - p)
     [MethodImpl(InliningOptions.ShortMethod)]
     private static Vector128<byte> AbsVector128(Vector128<byte> p, Vector128<byte> q)
-        => Vector128_.SubtractSaturate(q, p) | Vector128_.SubtractSaturate(p, q);
+        => Vector128.SubtractSaturate(q, p) | Vector128.SubtractSaturate(p, q);
 
     [MethodImpl(InliningOptions.ShortMethod)]
     private static bool Hev(ReadOnlySpan<byte> p, int offset, int step, int thresh)

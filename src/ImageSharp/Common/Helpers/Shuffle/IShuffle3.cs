@@ -34,5 +34,5 @@ internal readonly struct ZYXShuffle3 : IShuffle3
         // Each four-byte group is a temporary XYZW pixel created by the shuffle pipeline.
         // Selecting [2, 1, 0, 3] produces ZYXW, and offsets 4, 8, and 12 repeat that
         // permutation for the next pixels. The pipeline subsequently discards every W byte.
-        => Vector128_.ShuffleNative(source, Vector128.Create((byte)2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15));
+        => Vector128.ShuffleNative(source, Vector128.Create((byte)2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15));
 }

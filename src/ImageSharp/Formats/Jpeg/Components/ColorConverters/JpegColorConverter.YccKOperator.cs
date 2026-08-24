@@ -46,12 +46,12 @@ internal abstract partial class JpegColorConverterBase
             Vector128<float> scaledK = c3 * scale * scale;
 
             // Four lanes reconstruct YCbCr concurrently; each rounded result is inverted and modulated by its K lane.
-            Vector128<float> r = Vector128_.MultiplyAddEstimate(cr, Vector128.Create(YCbCrOperator.RCrMult), y);
-            Vector128<float> g = Vector128_.MultiplyAddEstimate(cr, Vector128.Create(-YCbCrOperator.GCrMult), Vector128_.MultiplyAddEstimate(cb, Vector128.Create(-YCbCrOperator.GCbMult), y));
-            Vector128<float> b = Vector128_.MultiplyAddEstimate(cb, Vector128.Create(YCbCrOperator.BCbMult), y);
-            c0 = (maximumValue - Vector128_.RoundToNearestInteger(r)) * scaledK;
-            c1 = (maximumValue - Vector128_.RoundToNearestInteger(g)) * scaledK;
-            c2 = (maximumValue - Vector128_.RoundToNearestInteger(b)) * scaledK;
+            Vector128<float> r = Vector128.MultiplyAddEstimate(cr, Vector128.Create(YCbCrOperator.RCrMult), y);
+            Vector128<float> g = Vector128.MultiplyAddEstimate(cr, Vector128.Create(-YCbCrOperator.GCrMult), Vector128.MultiplyAddEstimate(cb, Vector128.Create(-YCbCrOperator.GCbMult), y));
+            Vector128<float> b = Vector128.MultiplyAddEstimate(cb, Vector128.Create(YCbCrOperator.BCbMult), y);
+            c0 = (maximumValue - Vector128.Round(r)) * scaledK;
+            c1 = (maximumValue - Vector128.Round(g)) * scaledK;
+            c2 = (maximumValue - Vector128.Round(b)) * scaledK;
         }
 
         /// <inheritdoc/>
@@ -64,12 +64,12 @@ internal abstract partial class JpegColorConverterBase
             Vector256<float> scaledK = c3 * scale * scale;
 
             // Eight lanes retain planar alignment from Y/Cb/Cr/K through normalized RGB.
-            Vector256<float> r = Vector256_.MultiplyAddEstimate(cr, Vector256.Create(YCbCrOperator.RCrMult), y);
-            Vector256<float> g = Vector256_.MultiplyAddEstimate(cr, Vector256.Create(-YCbCrOperator.GCrMult), Vector256_.MultiplyAddEstimate(cb, Vector256.Create(-YCbCrOperator.GCbMult), y));
-            Vector256<float> b = Vector256_.MultiplyAddEstimate(cb, Vector256.Create(YCbCrOperator.BCbMult), y);
-            c0 = (maximumValue - Vector256_.RoundToNearestInteger(r)) * scaledK;
-            c1 = (maximumValue - Vector256_.RoundToNearestInteger(g)) * scaledK;
-            c2 = (maximumValue - Vector256_.RoundToNearestInteger(b)) * scaledK;
+            Vector256<float> r = Vector256.MultiplyAddEstimate(cr, Vector256.Create(YCbCrOperator.RCrMult), y);
+            Vector256<float> g = Vector256.MultiplyAddEstimate(cr, Vector256.Create(-YCbCrOperator.GCrMult), Vector256.MultiplyAddEstimate(cb, Vector256.Create(-YCbCrOperator.GCbMult), y));
+            Vector256<float> b = Vector256.MultiplyAddEstimate(cb, Vector256.Create(YCbCrOperator.BCbMult), y);
+            c0 = (maximumValue - Vector256.Round(r)) * scaledK;
+            c1 = (maximumValue - Vector256.Round(g)) * scaledK;
+            c2 = (maximumValue - Vector256.Round(b)) * scaledK;
         }
 
         /// <inheritdoc/>
@@ -82,12 +82,12 @@ internal abstract partial class JpegColorConverterBase
             Vector512<float> scaledK = c3 * scale * scale;
 
             // Sixteen lanes use the same matrix, rounding, inversion, and K modulation order as scalar code.
-            Vector512<float> r = Vector512_.MultiplyAddEstimate(cr, Vector512.Create(YCbCrOperator.RCrMult), y);
-            Vector512<float> g = Vector512_.MultiplyAddEstimate(cr, Vector512.Create(-YCbCrOperator.GCrMult), Vector512_.MultiplyAddEstimate(cb, Vector512.Create(-YCbCrOperator.GCbMult), y));
-            Vector512<float> b = Vector512_.MultiplyAddEstimate(cb, Vector512.Create(YCbCrOperator.BCbMult), y);
-            c0 = (maximumValue - Vector512_.RoundToNearestInteger(r)) * scaledK;
-            c1 = (maximumValue - Vector512_.RoundToNearestInteger(g)) * scaledK;
-            c2 = (maximumValue - Vector512_.RoundToNearestInteger(b)) * scaledK;
+            Vector512<float> r = Vector512.MultiplyAddEstimate(cr, Vector512.Create(YCbCrOperator.RCrMult), y);
+            Vector512<float> g = Vector512.MultiplyAddEstimate(cr, Vector512.Create(-YCbCrOperator.GCrMult), Vector512.MultiplyAddEstimate(cb, Vector512.Create(-YCbCrOperator.GCbMult), y));
+            Vector512<float> b = Vector512.MultiplyAddEstimate(cb, Vector512.Create(YCbCrOperator.BCbMult), y);
+            c0 = (maximumValue - Vector512.Round(r)) * scaledK;
+            c1 = (maximumValue - Vector512.Round(g)) * scaledK;
+            c2 = (maximumValue - Vector512.Round(b)) * scaledK;
         }
 
         /// <inheritdoc/>

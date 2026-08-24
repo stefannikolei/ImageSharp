@@ -72,7 +72,7 @@ internal partial struct Block8x8F
 
     [MethodImpl(InliningOptions.ShortMethod)]
     private static Vector128<float> NormalizeVector128(Vector128<float> value, Vector128<float> off, Vector128<float> max)
-        => Vector128_.Clamp(value + off, Vector128<float>.Zero, max);
+        => Vector128.Clamp(value + off, Vector128<float>.Zero, max);
 
     private static void MultiplyIntoInt16Vector128(ref Block8x8F a, ref Block8x8F b, ref Block8x8 dest)
     {
@@ -87,7 +87,7 @@ internal partial struct Block8x8F
             Vector128<int> left = Vector128_.ConvertToInt32RoundToEven(Unsafe.Add(ref aBase, i + 0) * Unsafe.Add(ref bBase, i + 0));
             Vector128<int> right = Vector128_.ConvertToInt32RoundToEven(Unsafe.Add(ref aBase, i + 1) * Unsafe.Add(ref bBase, i + 1));
 
-            Unsafe.Add(ref destBase, i / 2) = Vector128_.PackSignedSaturate(left, right);
+            Unsafe.Add(ref destBase, i / 2) = Vector128.NarrowWithSaturation(left, right);
         }
     }
 }

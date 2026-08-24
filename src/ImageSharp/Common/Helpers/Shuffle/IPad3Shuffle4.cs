@@ -47,7 +47,7 @@ internal readonly struct WXYZPad3Shuffle4 : IPad3Shuffle4
 
         // Each four-byte group is an XYZW pixel with opaque W. Selecting [3, 0, 1, 2]
         // produces WXYZ, and offsets 4, 8, and 12 repeat that rotation for the next pixels.
-        => Vector128_.ShuffleNative(source, Vector128.Create((byte)3, 0, 1, 2, 7, 4, 5, 6, 11, 8, 9, 10, 15, 12, 13, 14));
+        => Vector128.ShuffleNative(source, Vector128.Create((byte)3, 0, 1, 2, 7, 4, 5, 6, 11, 8, 9, 10, 15, 12, 13, 14));
 }
 
 /// <summary>
@@ -69,7 +69,7 @@ internal readonly struct WZYXPad3Shuffle4 : IPad3Shuffle4
 
         // Each four-byte group is an XYZW pixel with opaque W. Selecting [3, 2, 1, 0]
         // produces WZYX, and offsets 4, 8, and 12 repeat that reversal for the next pixels.
-        => Vector128_.ShuffleNative(source, Vector128.Create((byte)3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12));
+        => Vector128.ShuffleNative(source, Vector128.Create((byte)3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12));
 }
 
 /// <summary>
@@ -91,5 +91,5 @@ internal readonly struct ZYXWPad3Shuffle4 : IPad3Shuffle4
 
         // Each four-byte group is an XYZW pixel with opaque W. Selecting [2, 1, 0, 3]
         // exchanges X and Z to produce ZYXW, with offsets 4, 8, and 12 covering the next pixels.
-        => Vector128_.ShuffleNative(source, Vector128.Create((byte)2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15));
+        => Vector128.ShuffleNative(source, Vector128.Create((byte)2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15));
 }

@@ -113,7 +113,7 @@ internal static class PngCgbiProcessor
         {
             ref byte blockRef = ref Unsafe.Add(ref scanlineRef, i * Unsafe.SizeOf<Rgba32>());
             Vector512<byte> bgra = Unsafe.ReadUnaligned<Vector512<byte>>(ref blockRef);
-            Vector512<byte> rgba = Vector512_.ShuffleNative(bgra, shuffleMask);
+            Vector512<byte> rgba = Vector512.ShuffleNative(bgra, shuffleMask);
             Vector512<int> packed = rgba.AsInt32();
             Vector512<int> alpha = Vector512.ShiftRightLogical(packed, 24);
 
@@ -254,7 +254,7 @@ internal static class PngCgbiProcessor
         {
             ref byte blockRef = ref Unsafe.Add(ref scanlineRef, i * Unsafe.SizeOf<Rgba32>());
             Vector128<byte> bgra = Unsafe.ReadUnaligned<Vector128<byte>>(ref blockRef);
-            Vector128<byte> rgba = Vector128_.ShuffleNative(bgra, shuffleMask);
+            Vector128<byte> rgba = Vector128.ShuffleNative(bgra, shuffleMask);
             Vector128<int> packed = rgba.AsInt32();
             Vector128<int> alpha = Vector128.ShiftRightLogical(packed, 24);
 

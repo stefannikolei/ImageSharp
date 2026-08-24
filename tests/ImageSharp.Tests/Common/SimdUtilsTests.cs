@@ -151,9 +151,9 @@ public partial class SimdUtilsTests
 
     private static void RunVectorMultiplyAddUsesRuntimeOrderAndFusedContract()
     {
-        Assert.Equal(Vector128.Create(11F), Vector128_.MultiplyAddEstimate(Vector128.Create(2F), Vector128.Create(3F), Vector128.Create(5F)));
-        Assert.Equal(Vector256.Create(11F), Vector256_.MultiplyAddEstimate(Vector256.Create(2F), Vector256.Create(3F), Vector256.Create(5F)));
-        Assert.Equal(Vector512.Create(11F), Vector512_.MultiplyAddEstimate(Vector512.Create(2F), Vector512.Create(3F), Vector512.Create(5F)));
+        Assert.Equal(Vector128.Create(11F), Vector128.MultiplyAddEstimate(Vector128.Create(2F), Vector128.Create(3F), Vector128.Create(5F)));
+        Assert.Equal(Vector256.Create(11F), Vector256.MultiplyAddEstimate(Vector256.Create(2F), Vector256.Create(3F), Vector256.Create(5F)));
+        Assert.Equal(Vector512.Create(11F), Vector512.MultiplyAddEstimate(Vector512.Create(2F), Vector512.Create(3F), Vector512.Create(5F)));
 
         // These associated-alpha components produce an exact midpoint that a separate multiply and add rounds incorrectly.
         float left = (68F / byte.MaxValue) * .625F;
@@ -161,9 +161,9 @@ public partial class SimdUtilsTests
         float addend = ((50F / byte.MaxValue) + (50F / byte.MaxValue)) * left;
         float expected = MathF.FusedMultiplyAdd(left, right, addend);
 
-        Assert.Equal(Vector128.Create(expected), Vector128_.FusedMultiplyAdd(Vector128.Create(left), Vector128.Create(right), Vector128.Create(addend)));
-        Assert.Equal(Vector256.Create(expected), Vector256_.FusedMultiplyAdd(Vector256.Create(left), Vector256.Create(right), Vector256.Create(addend)));
-        Assert.Equal(Vector512.Create(expected), Vector512_.FusedMultiplyAdd(Vector512.Create(left), Vector512.Create(right), Vector512.Create(addend)));
+        Assert.Equal(Vector128.Create(expected), Vector128.FusedMultiplyAdd(Vector128.Create(left), Vector128.Create(right), Vector128.Create(addend)));
+        Assert.Equal(Vector256.Create(expected), Vector256.FusedMultiplyAdd(Vector256.Create(left), Vector256.Create(right), Vector256.Create(addend)));
+        Assert.Equal(Vector512.Create(expected), Vector512.FusedMultiplyAdd(Vector512.Create(left), Vector512.Create(right), Vector512.Create(addend)));
     }
 
     private static void TestImpl_BulkConvertByteToNormalizedFloat(

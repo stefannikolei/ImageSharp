@@ -2,6 +2,7 @@
 // Licensed under the Six Labors Split License.
 
 using System.Buffers;
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using SixLabors.ImageSharp.Common.Helpers;
 using SixLabors.ImageSharp.Memory;
@@ -331,7 +332,7 @@ internal abstract unsafe class Vp8LHistogram
         {
             if (b.IsUsed(0))
             {
-                TensorPrimitives_.Add(this.Literal[..literalSize], b.Literal[..literalSize], output.Literal[..literalSize]);
+                TensorPrimitives.Add(this.Literal[..literalSize], b.Literal[..literalSize], output.Literal[..literalSize]);
             }
             else
             {
@@ -354,7 +355,7 @@ internal abstract unsafe class Vp8LHistogram
         {
             if (b.IsUsed(1))
             {
-                TensorPrimitives_.Add(this.Red[..size], b.Red[..size], output.Red[..size]);
+                TensorPrimitives.Add(this.Red[..size], b.Red[..size], output.Red[..size]);
             }
             else
             {
@@ -377,7 +378,7 @@ internal abstract unsafe class Vp8LHistogram
         {
             if (b.IsUsed(2))
             {
-                TensorPrimitives_.Add(this.Blue[..size], b.Blue[..size], output.Blue[..size]);
+                TensorPrimitives.Add(this.Blue[..size], b.Blue[..size], output.Blue[..size]);
             }
             else
             {
@@ -400,7 +401,7 @@ internal abstract unsafe class Vp8LHistogram
         {
             if (b.IsUsed(3))
             {
-                TensorPrimitives_.Add(this.Alpha[..size], b.Alpha[..size], output.Alpha[..size]);
+                TensorPrimitives.Add(this.Alpha[..size], b.Alpha[..size], output.Alpha[..size]);
             }
             else
             {
@@ -423,7 +424,7 @@ internal abstract unsafe class Vp8LHistogram
         {
             if (b.IsUsed(4))
             {
-                TensorPrimitives_.Add(this.Distance[..size], b.Distance[..size], output.Distance[..size]);
+                TensorPrimitives.Add(this.Distance[..size], b.Distance[..size], output.Distance[..size]);
             }
             else
             {

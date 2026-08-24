@@ -182,15 +182,15 @@ internal static partial class SimdUtils
                 v2 = Vector128_.AlignRight(v2, v1, 8);
                 v1 = Vector128_.AlignRight(v1, v0, 12);
 
-                v0 = TShuffle.Invoke(Vector128_.ShuffleNative(v0, padMask));
-                v1 = TShuffle.Invoke(Vector128_.ShuffleNative(v1, padMask));
-                v2 = TShuffle.Invoke(Vector128_.ShuffleNative(v2, padMask));
-                v3 = TShuffle.Invoke(Vector128_.ShuffleNative(v3, padMask));
+                v0 = TShuffle.Invoke(Vector128.ShuffleNative(v0, padMask));
+                v1 = TShuffle.Invoke(Vector128.ShuffleNative(v1, padMask));
+                v2 = TShuffle.Invoke(Vector128.ShuffleNative(v2, padMask));
+                v3 = TShuffle.Invoke(Vector128.ShuffleNative(v3, padMask));
 
-                v0 = Vector128_.ShuffleNative(v0, sliceEndMask);
-                v1 = Vector128_.ShuffleNative(v1, sliceMask);
-                v2 = Vector128_.ShuffleNative(v2, sliceEndMask);
-                v3 = Vector128_.ShuffleNative(v3, sliceMask);
+                v0 = Vector128.ShuffleNative(v0, sliceEndMask);
+                v1 = Vector128.ShuffleNative(v1, sliceMask);
+                v2 = Vector128.ShuffleNative(v2, sliceEndMask);
+                v3 = Vector128.ShuffleNative(v3, sliceMask);
 
                 Vector128<byte> destination0 = Vector128_.AlignRight(v1, v0, 4);
                 Vector128<byte> destination2 = Vector128_.AlignRight(v3, v2, 12);
@@ -213,9 +213,9 @@ internal static partial class SimdUtils
                 // the following pixels. The pad mask ignores those extra bytes before the operator
                 // runs, and the slice mask packs the four results into the low twelve bytes.
                 Vector128<byte> result = Vector128.LoadUnsafe(ref sourceBase, (nuint)i);
-                result = Vector128_.ShuffleNative(result, padMask);
+                result = Vector128.ShuffleNative(result, padMask);
                 result = TShuffle.Invoke(result);
-                result = Vector128_.ShuffleNative(result, sliceMask);
+                result = Vector128.ShuffleNative(result, sliceMask);
 
                 // Store exactly twelve bytes so an in-place shuffle does not overwrite the next
                 // source triplet captured by the following iteration.
@@ -300,10 +300,10 @@ internal static partial class SimdUtils
                 v1 = Vector128_.AlignRight(v1, v0, 12);
 
                 ref Vector128<byte> destination0 = ref Unsafe.Add(ref destinationVectors, destinationVectorIndex);
-                destination0 = TShuffle.Invoke(Vector128_.ShuffleNative(v0, padMask) | opaqueAlpha);
-                Unsafe.Add(ref destination0, 1) = TShuffle.Invoke(Vector128_.ShuffleNative(v1, padMask) | opaqueAlpha);
-                Unsafe.Add(ref destination0, 2) = TShuffle.Invoke(Vector128_.ShuffleNative(v2, padMask) | opaqueAlpha);
-                Unsafe.Add(ref destination0, 3) = TShuffle.Invoke(Vector128_.ShuffleNative(v3, padMask) | opaqueAlpha);
+                destination0 = TShuffle.Invoke(Vector128.ShuffleNative(v0, padMask) | opaqueAlpha);
+                Unsafe.Add(ref destination0, 1) = TShuffle.Invoke(Vector128.ShuffleNative(v1, padMask) | opaqueAlpha);
+                Unsafe.Add(ref destination0, 2) = TShuffle.Invoke(Vector128.ShuffleNative(v2, padMask) | opaqueAlpha);
+                Unsafe.Add(ref destination0, 3) = TShuffle.Invoke(Vector128.ShuffleNative(v3, padMask) | opaqueAlpha);
             }
 
             sourceOffset = (int)(sourceVectorIndex * (uint)Vector128<byte>.Count);
@@ -381,10 +381,10 @@ internal static partial class SimdUtils
                 Vector128<byte> v2 = TShuffle.Invoke(Unsafe.Add(ref source0, 2));
                 Vector128<byte> v3 = TShuffle.Invoke(Unsafe.Add(ref source0, 3));
 
-                v0 = Vector128_.ShuffleNative(v0, sliceEndMask);
-                v1 = Vector128_.ShuffleNative(v1, sliceMask);
-                v2 = Vector128_.ShuffleNative(v2, sliceEndMask);
-                v3 = Vector128_.ShuffleNative(v3, sliceMask);
+                v0 = Vector128.ShuffleNative(v0, sliceEndMask);
+                v1 = Vector128.ShuffleNative(v1, sliceMask);
+                v2 = Vector128.ShuffleNative(v2, sliceEndMask);
+                v3 = Vector128.ShuffleNative(v3, sliceMask);
 
                 Vector128<byte> destination0 = Vector128_.AlignRight(v1, v0, 4);
                 Vector128<byte> destination2 = Vector128_.AlignRight(v3, v2, 12);
@@ -408,7 +408,7 @@ internal static partial class SimdUtils
                 // One fixed shuffle then compacts four pixels into the low twelve vector bytes.
                 Vector128<byte> result = TShuffle.Invoke(Vector128.LoadUnsafe(ref sourceBase, (nuint)sourceOffset));
 
-                result = Vector128_.ShuffleNative(result, sliceMask);
+                result = Vector128.ShuffleNative(result, sliceMask);
 
                 // The split store writes the exact 12-byte result and remains safe for in-place shrinking.
                 Unsafe.As<byte, Vector64<byte>>(ref Unsafe.Add(ref destinationBase, (nuint)destinationOffset)) = result.GetLower();

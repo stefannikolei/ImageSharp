@@ -542,8 +542,8 @@ internal static unsafe class Vp8Encoding
         Vector128<int> tmp32 = tmp31 + Vector128.Create(937);
         Vector128<int> tmp1 = Vector128.ShiftRightArithmetic(tmp12, 9);
         Vector128<int> tmp3 = Vector128.ShiftRightArithmetic(tmp32, 9);
-        Vector128<short> s03 = Vector128_.PackSignedSaturate(tmp0, tmp2);
-        Vector128<short> s12 = Vector128_.PackSignedSaturate(tmp1, tmp3);
+        Vector128<short> s03 = Vector128.NarrowWithSaturation(tmp0, tmp2);
+        Vector128<short> s12 = Vector128.NarrowWithSaturation(tmp1, tmp3);
         Vector128<short> slo = Vector128_.UnpackLow(s03, s12); // 0 1 0 1 0 1...
         Vector128<short> shi = Vector128_.UnpackHigh(s03, s12); // 2 3 2 3 2 3
         Vector128<int> v23 = Vector128_.UnpackHigh(slo.AsInt32(), shi.AsInt32());
@@ -569,8 +569,8 @@ internal static unsafe class Vp8Encoding
 
         // f1 = ((b3 * 5352 + b2 * 2217 + 12000) >> 16)
         // f3 = ((b3 * 2217 - b2 * 5352 + 51000) >> 16)
-        Vector128<short> f1 = Vector128_.PackSignedSaturate(e1, e1);
-        Vector128<short> f3 = Vector128_.PackSignedSaturate(e3, e3);
+        Vector128<short> f1 = Vector128.NarrowWithSaturation(e1, e1);
+        Vector128<short> f3 = Vector128.NarrowWithSaturation(e3, e3);
 
         // g1 = f1 + (a3 != 0);
         // The compare will return (0xffff, 0) for (==0, !=0). To turn that into the

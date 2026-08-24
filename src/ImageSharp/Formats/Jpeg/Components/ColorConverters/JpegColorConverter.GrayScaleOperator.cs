@@ -86,7 +86,7 @@ internal abstract partial class JpegColorConverterBase
         public static void ConvertFromRgb(Vector128<float> r, Vector128<float> g, Vector128<float> b, Vector128<float> maximumValue, Vector128<float> halfValue, Vector128<float> scale, out Vector128<float> c0, out Vector128<float> c1, out Vector128<float> c2, out Vector128<float> c3)
         {
             // The nested estimate gives each pixel the same multiply-add grouping as the scalar Rec.601 formula.
-            c0 = Vector128_.MultiplyAddEstimate(Vector128.Create(0.299F), r, Vector128_.MultiplyAddEstimate(Vector128.Create(0.587F), g, Vector128.Create(0.114F) * b));
+            c0 = Vector128.MultiplyAddEstimate(Vector128.Create(0.299F), r, Vector128.MultiplyAddEstimate(Vector128.Create(0.587F), g, Vector128.Create(0.114F) * b));
             c1 = default;
             c2 = default;
             c3 = default;
@@ -97,7 +97,7 @@ internal abstract partial class JpegColorConverterBase
         public static void ConvertFromRgb(Vector256<float> r, Vector256<float> g, Vector256<float> b, Vector256<float> maximumValue, Vector256<float> halfValue, Vector256<float> scale, out Vector256<float> c0, out Vector256<float> c1, out Vector256<float> c2, out Vector256<float> c3)
         {
             // YMM lanes evaluate the same Rec.601 equation independently, with no horizontal lane reduction.
-            c0 = Vector256_.MultiplyAddEstimate(Vector256.Create(0.299F), r, Vector256_.MultiplyAddEstimate(Vector256.Create(0.587F), g, Vector256.Create(0.114F) * b));
+            c0 = Vector256.MultiplyAddEstimate(Vector256.Create(0.299F), r, Vector256.MultiplyAddEstimate(Vector256.Create(0.587F), g, Vector256.Create(0.114F) * b));
             c1 = default;
             c2 = default;
             c3 = default;
@@ -108,7 +108,7 @@ internal abstract partial class JpegColorConverterBase
         public static void ConvertFromRgb(Vector512<float> r, Vector512<float> g, Vector512<float> b, Vector512<float> maximumValue, Vector512<float> halfValue, Vector512<float> scale, out Vector512<float> c0, out Vector512<float> c1, out Vector512<float> c2, out Vector512<float> c3)
         {
             // ZMM lanes retain the same arithmetic order as narrower paths so only SIMD width changes.
-            c0 = Vector512_.MultiplyAddEstimate(Vector512.Create(0.299F), r, Vector512_.MultiplyAddEstimate(Vector512.Create(0.587F), g, Vector512.Create(0.114F) * b));
+            c0 = Vector512.MultiplyAddEstimate(Vector512.Create(0.299F), r, Vector512.MultiplyAddEstimate(Vector512.Create(0.587F), g, Vector512.Create(0.114F) * b));
             c1 = default;
             c2 = default;
             c3 = default;

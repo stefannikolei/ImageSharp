@@ -686,12 +686,12 @@ internal static class YuvConversion
         out Vector128<byte> output4,
         out Vector128<byte> output5)
     {
-        output0 = Vector128_.ShuffleNative(input0, shuffle0);
-        output1 = Vector128_.ShuffleNative(input0, shuffle1);
-        output2 = Vector128_.ShuffleNative(input0, shuffle2);
-        output3 = Vector128_.ShuffleNative(input1, shuffle0);
-        output4 = Vector128_.ShuffleNative(input1, shuffle1);
-        output5 = Vector128_.ShuffleNative(input1, shuffle2);
+        output0 = Vector128.ShuffleNative(input0, shuffle0);
+        output1 = Vector128.ShuffleNative(input0, shuffle1);
+        output2 = Vector128.ShuffleNative(input0, shuffle2);
+        output3 = Vector128.ShuffleNative(input1, shuffle0);
+        output4 = Vector128.ShuffleNative(input1, shuffle1);
+        output5 = Vector128.ShuffleNative(input1, shuffle2);
     }
 
     // Convert 32 samples of YUV444 to B/G/R
@@ -726,8 +726,8 @@ internal static class YuvConversion
         Vector128<ushort> g4 = g2 - g3;
 
         Vector128<ushort> b0 = Vector128_.MultiplyHigh(u0.AsUInt16(), Vector128.Create(26, 129, 26, 129, 26, 129, 26, 129, 26, 129, 26, 129, 26, 129, 26, 129).AsUInt16());
-        Vector128<ushort> b1 = Vector128_.AddSaturate(b0, y1);
-        Vector128<ushort> b2 = Vector128_.SubtractSaturate(b1, Vector128.Create((ushort)17685));
+        Vector128<ushort> b1 = Vector128.AddSaturate(b0, y1);
+        Vector128<ushort> b2 = Vector128.SubtractSaturate(b1, Vector128.Create((ushort)17685));
 
         // Use logical shift for B2, which can be larger than 32767.
         r = Vector128.ShiftRightArithmetic(r2.AsInt16(), 6); // range: [-14234, 30815]
