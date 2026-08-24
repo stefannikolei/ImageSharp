@@ -1,4 +1,4 @@
-﻿// Copyright (c) Six Labors.
+// Copyright (c) Six Labors.
 // Licensed under the Six Labors Split License.
 
 using System.Numerics;
@@ -1033,13 +1033,4 @@ internal static class Numerics
     public static nuint Vector512Count<TVector>(int length)
         where TVector : struct
         => (uint)length / (uint)Vector512<TVector>.Count;
-
-    /// <summary>
-    /// Normalizes the values in a given <see cref="Span{T}"/>.
-    /// </summary>
-    /// <param name="span">The sequence of <see cref="float"/> values to normalize.</param>
-    /// <param name="sum">The sum of the values in <paramref name="span"/>.</param>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void Normalize(Span<float> span, float sum)
-        => TensorPrimitives.Divide(span, sum, span);
 }
