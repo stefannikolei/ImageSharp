@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Diagnostics;
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SixLabors.ImageSharp.Memory;
@@ -243,7 +244,7 @@ internal partial class ResizeKernelMap : IDisposable
         // Normalize, best to do it here rather than in the pixel loop later on.
         if (sum > 0)
         {
-            Numerics.Normalize(kernelValues, sum);
+            TensorPrimitives.Divide(kernelValues, sum, kernelValues);
         }
 
         kernel.FillOrCopyAndExpand(kernelValues);

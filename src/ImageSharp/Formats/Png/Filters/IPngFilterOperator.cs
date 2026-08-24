@@ -286,10 +286,10 @@ internal readonly struct PaethFilterOperator : IPngFilterOperator
         //   distanceAbove = |left - upperLeft|
         // Computing both unsigned subtraction directions and OR-ing them obtains
         // each absolute difference without widening the byte lanes.
-        Vector128<byte> aboveMinusUpper = Vector128_.SubtractSaturate(above, upperLeft);
-        Vector128<byte> leftMinusUpper = Vector128_.SubtractSaturate(left, upperLeft);
-        Vector128<byte> distanceLeft = Vector128_.SubtractSaturate(upperLeft, above) | aboveMinusUpper;
-        Vector128<byte> distanceAbove = Vector128_.SubtractSaturate(upperLeft, left) | leftMinusUpper;
+        Vector128<byte> aboveMinusUpper = Vector128.SubtractSaturate(above, upperLeft);
+        Vector128<byte> leftMinusUpper = Vector128.SubtractSaturate(left, upperLeft);
+        Vector128<byte> distanceLeft = Vector128.SubtractSaturate(upperLeft, above) | aboveMinusUpper;
+        Vector128<byte> distanceAbove = Vector128.SubtractSaturate(upperLeft, left) | leftMinusUpper;
 
         return SelectPredictor(left, above, upperLeft, aboveMinusUpper, leftMinusUpper, distanceLeft, distanceAbove);
     }
@@ -307,10 +307,10 @@ internal readonly struct PaethFilterOperator : IPngFilterOperator
         // Apply the same Paeth identities as the 128-bit path to thirty-two lanes.
         // Saturating subtraction in both directions forms the absolute differences
         // without widening, preserving one predictor result per source byte.
-        Vector256<byte> aboveMinusUpper = Vector256_.SubtractSaturate(above, upperLeft);
-        Vector256<byte> leftMinusUpper = Vector256_.SubtractSaturate(left, upperLeft);
-        Vector256<byte> distanceLeft = Vector256_.SubtractSaturate(upperLeft, above) | aboveMinusUpper;
-        Vector256<byte> distanceAbove = Vector256_.SubtractSaturate(upperLeft, left) | leftMinusUpper;
+        Vector256<byte> aboveMinusUpper = Vector256.SubtractSaturate(above, upperLeft);
+        Vector256<byte> leftMinusUpper = Vector256.SubtractSaturate(left, upperLeft);
+        Vector256<byte> distanceLeft = Vector256.SubtractSaturate(upperLeft, above) | aboveMinusUpper;
+        Vector256<byte> distanceAbove = Vector256.SubtractSaturate(upperLeft, left) | leftMinusUpper;
 
         return SelectPredictor(left, above, upperLeft, aboveMinusUpper, leftMinusUpper, distanceLeft, distanceAbove);
     }
@@ -328,10 +328,10 @@ internal readonly struct PaethFilterOperator : IPngFilterOperator
         // Apply the same byte-lane Paeth identities to sixty-four AVX-512BW lanes.
         // No cross-lane operation is required because every component has its own
         // left, above, and upper-left inputs at the matching vector index.
-        Vector512<byte> aboveMinusUpper = Vector512_.SubtractSaturate(above, upperLeft);
-        Vector512<byte> leftMinusUpper = Vector512_.SubtractSaturate(left, upperLeft);
-        Vector512<byte> distanceLeft = Vector512_.SubtractSaturate(upperLeft, above) | aboveMinusUpper;
-        Vector512<byte> distanceAbove = Vector512_.SubtractSaturate(upperLeft, left) | leftMinusUpper;
+        Vector512<byte> aboveMinusUpper = Vector512.SubtractSaturate(above, upperLeft);
+        Vector512<byte> leftMinusUpper = Vector512.SubtractSaturate(left, upperLeft);
+        Vector512<byte> distanceLeft = Vector512.SubtractSaturate(upperLeft, above) | aboveMinusUpper;
+        Vector512<byte> distanceAbove = Vector512.SubtractSaturate(upperLeft, left) | leftMinusUpper;
 
         return SelectPredictor(left, above, upperLeft, aboveMinusUpper, leftMinusUpper, distanceLeft, distanceAbove);
     }
@@ -356,7 +356,7 @@ internal readonly struct PaethFilterOperator : IPngFilterOperator
         // their summed distance and cannot beat either neighbor; the all-bits mask
         // excludes upper-left. On opposite sides, that distance is the absolute
         // difference between distanceLeft and distanceAbove.
-        Vector128<byte> distanceUpper = sameDirection | Vector128_.SubtractSaturate(distanceAbove, distanceLeft) | Vector128_.SubtractSaturate(distanceLeft, distanceAbove);
+        Vector128<byte> distanceUpper = sameDirection | Vector128.SubtractSaturate(distanceAbove, distanceLeft) | Vector128.SubtractSaturate(distanceLeft, distanceAbove);
 
         // Equality selects above before upper-left, implementing PNG's second tie rule.
         Vector128<byte> minimumAboveUpper = Vector128.Min(distanceUpper, distanceAbove);
@@ -384,7 +384,7 @@ internal readonly struct PaethFilterOperator : IPngFilterOperator
 
         // Exclude upper-left when its distance is the non-minimal sum; otherwise
         // compute its distance as the absolute difference of the two known distances.
-        Vector256<byte> distanceUpper = sameDirection | Vector256_.SubtractSaturate(distanceAbove, distanceLeft) | Vector256_.SubtractSaturate(distanceLeft, distanceAbove);
+        Vector256<byte> distanceUpper = sameDirection | Vector256.SubtractSaturate(distanceAbove, distanceLeft) | Vector256.SubtractSaturate(distanceLeft, distanceAbove);
 
         // Select above on equality, then select left on equality to preserve PNG's
         // required left, above, upper-left tie order in every byte lane.
@@ -412,7 +412,7 @@ internal readonly struct PaethFilterOperator : IPngFilterOperator
 
         // Exclude upper-left when its distance is the non-minimal sum; otherwise
         // compute its distance as the absolute difference of the two known distances.
-        Vector512<byte> distanceUpper = sameDirection | Vector512_.SubtractSaturate(distanceAbove, distanceLeft) | Vector512_.SubtractSaturate(distanceLeft, distanceAbove);
+        Vector512<byte> distanceUpper = sameDirection | Vector512.SubtractSaturate(distanceAbove, distanceLeft) | Vector512.SubtractSaturate(distanceLeft, distanceAbove);
 
         // Select above on equality, then select left on equality to preserve PNG's
         // required left, above, upper-left tie order in every byte lane.

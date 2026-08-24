@@ -2,6 +2,7 @@
 // Licensed under the Six Labors Split License.
 
 using System.Diagnostics.CodeAnalysis;
+using System.Numerics.Tensors;
 using SixLabors.ImageSharp.Common.Helpers;
 
 namespace SixLabors.ImageSharp.Processing.Processors.Convolution;
@@ -38,7 +39,7 @@ internal static class ConvolutionProcessorHelpers
         }
 
         // Divide every weight by the accumulated Gaussian sum so the kernel has unit response.
-        TensorPrimitives_.Divide<float>(kernel, sum, kernel);
+        TensorPrimitives.Divide(kernel, sum, kernel);
 
         return kernel;
     }
@@ -67,14 +68,14 @@ internal static class ConvolutionProcessorHelpers
         // Invert the kernel for sharpening.
         int midpointRounded = (int)midpoint;
         float midpointValue = kernel[midpointRounded];
-        TensorPrimitives_.Negate<float>(kernel, kernel);
+        TensorPrimitives.Negate(kernel, kernel);
 
         // The sharpening kernel negates every Gaussian weight except its center. Restore that original
         // center while adding twice the Gaussian sum so the complete kernel retains unit response.
         kernel[midpointRounded] = (2F * sum) - midpointValue;
 
         // Sharpening changes signs but preserves the Gaussian sum, so the same divisor produces unit response.
-        TensorPrimitives_.Divide<float>(kernel, sum, kernel);
+        TensorPrimitives.Divide(kernel, sum, kernel);
 
         return kernel;
     }

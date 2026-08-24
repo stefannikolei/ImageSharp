@@ -149,7 +149,7 @@ internal static class SignedShort4PixelOperations
             {
                 Vector256<float> vectors = Unsafe.As<Vector4, Vector256<float>>(ref Unsafe.Add(ref sourceBase, (uint)index));
                 Vector256<int> integers = ConvertToInt32(vectors, normalized, scaled);
-                Vector128<short> packed = Vector128_.PackSignedSaturate(integers.GetLower(), integers.GetUpper());
+                Vector128<short> packed = Vector128.NarrowWithSaturation(integers.GetLower(), integers.GetUpper());
                 Unsafe.As<short, Vector128<short>>(ref Unsafe.Add(ref destinationBase, (uint)(index * Vector128<float>.Count))) = packed;
             }
         }
@@ -162,7 +162,7 @@ internal static class SignedShort4PixelOperations
             {
                 Vector128<float> vector = Unsafe.As<Vector4, Vector128<float>>(ref Unsafe.Add(ref sourceBase, (uint)index));
                 Vector128<int> integers = ConvertToInt32(vector, normalized, scaled);
-                Vector128<short> packed = Vector128_.PackSignedSaturate(integers, integers);
+                Vector128<short> packed = Vector128.NarrowWithSaturation(integers, integers);
                 Unsafe.WriteUnaligned(ref Unsafe.Add(ref destinationBytes, (uint)(index * sizeof(ulong))), packed.AsUInt64().GetElement(0));
             }
 

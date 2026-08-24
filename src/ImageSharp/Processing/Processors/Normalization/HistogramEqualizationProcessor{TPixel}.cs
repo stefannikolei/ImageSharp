@@ -2,6 +2,7 @@
 // Licensed under the Six Labors Split License.
 
 using System.Numerics;
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SixLabors.ImageSharp.Common.Helpers;
@@ -116,7 +117,7 @@ internal abstract class HistogramEqualizationProcessor<TPixel> : ImageProcessor<
         int addToEachBin = sumOverClip > 0 ? (int)MathF.Floor(sumOverClip / this.luminanceLevelsFloat) : 0;
         if (addToEachBin > 0)
         {
-            TensorPrimitives_.Add(histogram, addToEachBin, histogram);
+            TensorPrimitives.Add(histogram, addToEachBin, histogram);
         }
 
         int residual = sumOverClip - (addToEachBin * this.LuminanceLevels);

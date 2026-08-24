@@ -2,6 +2,7 @@
 // Licensed under the Six Labors Split License.
 
 using System.Numerics;
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -118,7 +119,7 @@ internal class ComponentProcessor : IDisposable
         static void SumVertical(Span<float> target, Span<float> source)
 
             // Exact destination overlap is supported, so each accumulated row remains in target.
-            => TensorPrimitives_.Add(target, source, target);
+            => TensorPrimitives.Add(target, source, target);
 
         static void SumHorizontal(Span<float> target, int factor)
         {
@@ -168,6 +169,6 @@ internal class ComponentProcessor : IDisposable
         static void MultiplyToAverage(Span<float> target, float multiplier)
 
             // Apply the subsampling reciprocal in place after all contributing rows have been summed.
-            => TensorPrimitives_.Multiply(target, multiplier, target);
+            => TensorPrimitives.Multiply(target, multiplier, target);
     }
 }

@@ -1,7 +1,8 @@
-﻿// Copyright (c) Six Labors.
+// Copyright (c) Six Labors.
 // Licensed under the Six Labors Split License.
 
 using System.Numerics;
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -329,7 +330,7 @@ internal static class Numerics
     /// <param name="max">The maximum inclusive value.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Clamp(Span<byte> span, byte min, byte max)
-        => TensorPrimitives_.Clamp(span, min, max, span);
+        => TensorPrimitives.Clamp(span, min, max, span);
 
     /// <summary>
     /// Clamps the span values to the inclusive range of min and max.
@@ -339,7 +340,7 @@ internal static class Numerics
     /// <param name="max">The maximum inclusive value.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Clamp(Span<uint> span, uint min, uint max)
-        => TensorPrimitives_.Clamp(span, min, max, span);
+        => TensorPrimitives.Clamp(span, min, max, span);
 
     /// <summary>
     /// Clamps the span values to the inclusive range of min and max.
@@ -349,7 +350,7 @@ internal static class Numerics
     /// <param name="max">The maximum inclusive value.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Clamp(Span<int> span, int min, int max)
-        => TensorPrimitives_.Clamp(span, min, max, span);
+        => TensorPrimitives.Clamp(span, min, max, span);
 
     /// <summary>
     /// Clamps the span values to the inclusive range of min and max.
@@ -359,7 +360,7 @@ internal static class Numerics
     /// <param name="max">The maximum inclusive value.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Clamp(Span<float> span, float min, float max)
-        => TensorPrimitives_.Clamp(span, min, max, span);
+        => TensorPrimitives.Clamp(span, min, max, span);
 
     /// <summary>
     /// Clamps the span values to the inclusive range of min and max.
@@ -369,7 +370,7 @@ internal static class Numerics
     /// <param name="max">The maximum inclusive value.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Clamp(Span<double> span, double min, double max)
-        => TensorPrimitives_.Clamp(span, min, max, span);
+        => TensorPrimitives.Clamp(span, min, max, span);
 
     /// <summary>
     /// Pre-multiplies the "x", "y", "z" components of a vector by its "w" component leaving the "w" component intact.
@@ -1032,13 +1033,4 @@ internal static class Numerics
     public static nuint Vector512Count<TVector>(int length)
         where TVector : struct
         => (uint)length / (uint)Vector512<TVector>.Count;
-
-    /// <summary>
-    /// Normalizes the values in a given <see cref="Span{T}"/>.
-    /// </summary>
-    /// <param name="span">The sequence of <see cref="float"/> values to normalize.</param>
-    /// <param name="sum">The sum of the values in <paramref name="span"/>.</param>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void Normalize(Span<float> span, float sum)
-        => TensorPrimitives_.Divide(span, sum, span);
 }

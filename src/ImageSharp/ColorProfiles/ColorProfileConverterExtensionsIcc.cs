@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -663,7 +664,7 @@ internal static class ColorProfileConverterExtensionsIcc
         // Vector4 values are contiguous floats, so flattening preserves the component order
         // while allowing one shared tensor traversal to process every channel and SIMD tail.
         Span<float> values = MemoryMarshal.Cast<Vector4, float>(source);
-        TensorPrimitives_.Max(values, 0F, values);
+        TensorPrimitives.Max(values, 0F, values);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -684,7 +685,7 @@ internal static class ColorProfileConverterExtensionsIcc
     {
         // Reinterpreting both spans exposes all four components to one multiplication traversal;
         // the source and destination retain their original Vector4 boundaries after the operation.
-        TensorPrimitives_.Multiply(MemoryMarshal.Cast<Vector4, float>(source), scale, MemoryMarshal.Cast<Vector4, float>(destination));
+        TensorPrimitives.Multiply(MemoryMarshal.Cast<Vector4, float>(source), scale, MemoryMarshal.Cast<Vector4, float>(destination));
     }
 
     private class ConversionParams

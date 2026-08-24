@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -364,7 +365,7 @@ internal class AlphaDecoder : IDisposable
         else
         {
             // Byte addition intentionally wraps modulo 256, matching the WebP alpha predictor.
-            TensorPrimitives_.Add(input[..width], prev[..width], dst[..width]);
+            TensorPrimitives.Add(input[..width], prev[..width], dst[..width]);
         }
     }
 

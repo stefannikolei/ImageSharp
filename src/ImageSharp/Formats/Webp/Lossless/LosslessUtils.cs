@@ -128,7 +128,7 @@ internal static unsafe class LosslessUtils
             {
                 ref uint pos = ref Unsafe.Add(ref MemoryMarshal.GetReference(pixelData), i);
                 Vector128<byte> input = Unsafe.As<uint, Vector128<uint>>(ref pos).AsByte();
-                Vector128<byte> in0g0g = Vector128_.ShuffleNative(input, addGreenToBlueAndRedMask);
+                Vector128<byte> in0g0g = Vector128.ShuffleNative(input, addGreenToBlueAndRedMask);
                 Vector128<byte> output = input + in0g0g;
                 Unsafe.As<uint, Vector128<uint>>(ref pos) = output.AsUInt32();
                 i += 4;
@@ -192,7 +192,7 @@ internal static unsafe class LosslessUtils
             {
                 ref uint pos = ref Unsafe.Add(ref MemoryMarshal.GetReference(pixelData), i);
                 Vector128<byte> input = Unsafe.As<uint, Vector128<uint>>(ref pos).AsByte();
-                Vector128<byte> in0g0g = Vector128_.ShuffleNative(input, subtractGreenFromBlueAndRedMask);
+                Vector128<byte> in0g0g = Vector128.ShuffleNative(input, subtractGreenFromBlueAndRedMask);
                 Vector128<byte> output = input - in0g0g;
                 Unsafe.As<uint, Vector128<uint>>(ref pos) = output.AsUInt32();
                 i += 4;
@@ -387,7 +387,7 @@ internal static unsafe class LosslessUtils
                 Vector128<short> b = Vector128_.ShuffleLow(a.AsInt16(), SimdUtils.Shuffle.MMShuffle2200);
                 Vector128<short> c = Vector128_.ShuffleHigh(b.AsInt16(), SimdUtils.Shuffle.MMShuffle2200);
                 Vector128<short> d = Vector128_.MultiplyHigh(c.AsInt16(), multsrb.AsInt16());
-                Vector128<short> e = Vector128_.ShiftLeftLogical(input.AsInt16(), 8);
+                Vector128<short> e = input.AsInt16() << 8;
                 Vector128<short> f = Vector128_.MultiplyHigh(e.AsInt16(), multsb2.AsInt16());
                 Vector128<int> g = Vector128.ShiftRightLogical(f.AsInt32(), 16);
                 Vector128<byte> h = g.AsByte() + d.AsByte();
@@ -479,7 +479,7 @@ internal static unsafe class LosslessUtils
                 Vector128<short> c = Vector128_.ShuffleHigh(b.AsInt16(), SimdUtils.Shuffle.MMShuffle2200);
                 Vector128<short> d = Vector128_.MultiplyHigh(c.AsInt16(), multsrb.AsInt16());
                 Vector128<byte> e = input.AsByte() + d.AsByte();
-                Vector128<short> f = Vector128_.ShiftLeftLogical(e.AsInt16(), 8);
+                Vector128<short> f = e.AsInt16() << 8;
                 Vector128<short> g = Vector128_.MultiplyHigh(f, multsb2.AsInt16());
                 Vector128<int> h = Vector128.ShiftRightLogical(g.AsInt32(), 8);
                 Vector128<byte> i = h.AsByte() + f.AsByte();
@@ -1442,10 +1442,10 @@ internal static unsafe class LosslessUtils
                 Vector128<byte> a0 = Vector128.CreateScalar(a).AsByte();
                 Vector128<byte> b0 = Vector128.CreateScalar(b).AsByte();
                 Vector128<byte> c0 = Vector128.CreateScalar(c).AsByte();
-                Vector128<byte> ac0 = Vector128_.SubtractSaturate(a0, c0);
-                Vector128<byte> ca0 = Vector128_.SubtractSaturate(c0, a0);
-                Vector128<byte> bc0 = Vector128_.SubtractSaturate(b0, c0);
-                Vector128<byte> cb0 = Vector128_.SubtractSaturate(c0, b0);
+                Vector128<byte> ac0 = Vector128.SubtractSaturate(a0, c0);
+                Vector128<byte> ca0 = Vector128.SubtractSaturate(c0, a0);
+                Vector128<byte> bc0 = Vector128.SubtractSaturate(b0, c0);
+                Vector128<byte> cb0 = Vector128.SubtractSaturate(c0, b0);
                 Vector128<byte> ac = ac0 | ca0;
                 Vector128<byte> bc = bc0 | cb0;
                 Vector128<byte> pa = Vector128_.UnpackLow(ac, Vector128<byte>.Zero); // |a - c|

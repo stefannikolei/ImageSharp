@@ -68,13 +68,13 @@ internal abstract partial class JpegColorConverterBase
             // Lanes are four independent Y/Cb/Cr samples. MultiplyAddEstimate maps to FMA where available:
             // R uses Cr, B uses Cb, and G subtracts both chroma contributions. Rounding occurs in the sample
             // domain before the common normalization scale so all precisions use integer JPEG sample semantics.
-            Vector128<float> r = Vector128_.MultiplyAddEstimate(cr, Vector128.Create(RCrMult), y);
-            Vector128<float> g = Vector128_.MultiplyAddEstimate(cr, Vector128.Create(-GCrMult), Vector128_.MultiplyAddEstimate(cb, Vector128.Create(-GCbMult), y));
-            Vector128<float> b = Vector128_.MultiplyAddEstimate(cb, Vector128.Create(BCbMult), y);
+            Vector128<float> r = Vector128.MultiplyAddEstimate(cr, Vector128.Create(RCrMult), y);
+            Vector128<float> g = Vector128.MultiplyAddEstimate(cr, Vector128.Create(-GCrMult), Vector128.MultiplyAddEstimate(cb, Vector128.Create(-GCbMult), y));
+            Vector128<float> b = Vector128.MultiplyAddEstimate(cb, Vector128.Create(BCbMult), y);
 
-            c0 = Vector128_.RoundToNearestInteger(r) * scale;
-            c1 = Vector128_.RoundToNearestInteger(g) * scale;
-            c2 = Vector128_.RoundToNearestInteger(b) * scale;
+            c0 = Vector128.Round(r) * scale;
+            c1 = Vector128.Round(g) * scale;
+            c2 = Vector128.Round(b) * scale;
         }
 
         /// <inheritdoc/>
@@ -88,13 +88,13 @@ internal abstract partial class JpegColorConverterBase
             // These eight lanes have the same layout and BT.601 arithmetic as the Vector128 overload.
             // Keeping an explicit overload allows the JIT to emit native YMM operations without a width
             // switch or decomposing the vector into smaller values.
-            Vector256<float> r = Vector256_.MultiplyAddEstimate(cr, Vector256.Create(RCrMult), y);
-            Vector256<float> g = Vector256_.MultiplyAddEstimate(cr, Vector256.Create(-GCrMult), Vector256_.MultiplyAddEstimate(cb, Vector256.Create(-GCbMult), y));
-            Vector256<float> b = Vector256_.MultiplyAddEstimate(cb, Vector256.Create(BCbMult), y);
+            Vector256<float> r = Vector256.MultiplyAddEstimate(cr, Vector256.Create(RCrMult), y);
+            Vector256<float> g = Vector256.MultiplyAddEstimate(cr, Vector256.Create(-GCrMult), Vector256.MultiplyAddEstimate(cb, Vector256.Create(-GCbMult), y));
+            Vector256<float> b = Vector256.MultiplyAddEstimate(cb, Vector256.Create(BCbMult), y);
 
-            c0 = Vector256_.RoundToNearestInteger(r) * scale;
-            c1 = Vector256_.RoundToNearestInteger(g) * scale;
-            c2 = Vector256_.RoundToNearestInteger(b) * scale;
+            c0 = Vector256.Round(r) * scale;
+            c1 = Vector256.Round(g) * scale;
+            c2 = Vector256.Round(b) * scale;
         }
 
         /// <inheritdoc/>
@@ -108,13 +108,13 @@ internal abstract partial class JpegColorConverterBase
             // Sixteen independent samples occupy the ZMM lanes. The explicit constants are broadcasts;
             // assembly inspection verifies the JIT hoists them from the loop and retains fused operations.
             // The formula and rounding order remain identical to the narrower overloads.
-            Vector512<float> r = Vector512_.MultiplyAddEstimate(cr, Vector512.Create(RCrMult), y);
-            Vector512<float> g = Vector512_.MultiplyAddEstimate(cr, Vector512.Create(-GCrMult), Vector512_.MultiplyAddEstimate(cb, Vector512.Create(-GCbMult), y));
-            Vector512<float> b = Vector512_.MultiplyAddEstimate(cb, Vector512.Create(BCbMult), y);
+            Vector512<float> r = Vector512.MultiplyAddEstimate(cr, Vector512.Create(RCrMult), y);
+            Vector512<float> g = Vector512.MultiplyAddEstimate(cr, Vector512.Create(-GCrMult), Vector512.MultiplyAddEstimate(cb, Vector512.Create(-GCbMult), y));
+            Vector512<float> b = Vector512.MultiplyAddEstimate(cb, Vector512.Create(BCbMult), y);
 
-            c0 = Vector512_.RoundToNearestInteger(r) * scale;
-            c1 = Vector512_.RoundToNearestInteger(g) * scale;
-            c2 = Vector512_.RoundToNearestInteger(b) * scale;
+            c0 = Vector512.Round(r) * scale;
+            c1 = Vector512.Round(g) * scale;
+            c2 = Vector512.Round(b) * scale;
         }
 
         /// <inheritdoc/>
@@ -137,9 +137,9 @@ internal abstract partial class JpegColorConverterBase
             // Each vector holds four consecutive values from one RGB plane. The nested multiply-add sequence
             // produces four Y lanes, four Cb lanes, and four Cr lanes without transposition. The association
             // exposes two FMA opportunities per output while preserving the scalar formula's term grouping.
-            c0 = Vector128_.MultiplyAddEstimate(Vector128.Create(0.299F), r, Vector128_.MultiplyAddEstimate(Vector128.Create(0.587F), g, Vector128.Create(0.114F) * b));
-            c1 = halfValue + Vector128_.MultiplyAddEstimate(Vector128.Create(-0.168736F), r, Vector128_.MultiplyAddEstimate(Vector128.Create(-0.331264F), g, Vector128.Create(0.5F) * b));
-            c2 = halfValue + Vector128_.MultiplyAddEstimate(Vector128.Create(0.5F), r, Vector128_.MultiplyAddEstimate(Vector128.Create(-0.418688F), g, Vector128.Create(-0.081312F) * b));
+            c0 = Vector128.MultiplyAddEstimate(Vector128.Create(0.299F), r, Vector128.MultiplyAddEstimate(Vector128.Create(0.587F), g, Vector128.Create(0.114F) * b));
+            c1 = halfValue + Vector128.MultiplyAddEstimate(Vector128.Create(-0.168736F), r, Vector128.MultiplyAddEstimate(Vector128.Create(-0.331264F), g, Vector128.Create(0.5F) * b));
+            c2 = halfValue + Vector128.MultiplyAddEstimate(Vector128.Create(0.5F), r, Vector128.MultiplyAddEstimate(Vector128.Create(-0.418688F), g, Vector128.Create(-0.081312F) * b));
             c3 = default;
         }
 
@@ -149,9 +149,9 @@ internal abstract partial class JpegColorConverterBase
         {
             // Eight planar RGB samples use the identical association as Vector128, allowing direct YMM FMA
             // generation while preserving the component-per-vector output layout.
-            c0 = Vector256_.MultiplyAddEstimate(Vector256.Create(0.299F), r, Vector256_.MultiplyAddEstimate(Vector256.Create(0.587F), g, Vector256.Create(0.114F) * b));
-            c1 = halfValue + Vector256_.MultiplyAddEstimate(Vector256.Create(-0.168736F), r, Vector256_.MultiplyAddEstimate(Vector256.Create(-0.331264F), g, Vector256.Create(0.5F) * b));
-            c2 = halfValue + Vector256_.MultiplyAddEstimate(Vector256.Create(0.5F), r, Vector256_.MultiplyAddEstimate(Vector256.Create(-0.418688F), g, Vector256.Create(-0.081312F) * b));
+            c0 = Vector256.MultiplyAddEstimate(Vector256.Create(0.299F), r, Vector256.MultiplyAddEstimate(Vector256.Create(0.587F), g, Vector256.Create(0.114F) * b));
+            c1 = halfValue + Vector256.MultiplyAddEstimate(Vector256.Create(-0.168736F), r, Vector256.MultiplyAddEstimate(Vector256.Create(-0.331264F), g, Vector256.Create(0.5F) * b));
+            c2 = halfValue + Vector256.MultiplyAddEstimate(Vector256.Create(0.5F), r, Vector256.MultiplyAddEstimate(Vector256.Create(-0.418688F), g, Vector256.Create(-0.081312F) * b));
             c3 = default;
         }
 
@@ -161,9 +161,9 @@ internal abstract partial class JpegColorConverterBase
         {
             // Sixteen planar RGB samples use the same nested form. Constants are lane broadcasts and c3 is
             // deliberately zero because the shared traversal removes the unused fourth store for this operator.
-            c0 = Vector512_.MultiplyAddEstimate(Vector512.Create(0.299F), r, Vector512_.MultiplyAddEstimate(Vector512.Create(0.587F), g, Vector512.Create(0.114F) * b));
-            c1 = halfValue + Vector512_.MultiplyAddEstimate(Vector512.Create(-0.168736F), r, Vector512_.MultiplyAddEstimate(Vector512.Create(-0.331264F), g, Vector512.Create(0.5F) * b));
-            c2 = halfValue + Vector512_.MultiplyAddEstimate(Vector512.Create(0.5F), r, Vector512_.MultiplyAddEstimate(Vector512.Create(-0.418688F), g, Vector512.Create(-0.081312F) * b));
+            c0 = Vector512.MultiplyAddEstimate(Vector512.Create(0.299F), r, Vector512.MultiplyAddEstimate(Vector512.Create(0.587F), g, Vector512.Create(0.114F) * b));
+            c1 = halfValue + Vector512.MultiplyAddEstimate(Vector512.Create(-0.168736F), r, Vector512.MultiplyAddEstimate(Vector512.Create(-0.331264F), g, Vector512.Create(0.5F) * b));
+            c2 = halfValue + Vector512.MultiplyAddEstimate(Vector512.Create(0.5F), r, Vector512.MultiplyAddEstimate(Vector512.Create(-0.418688F), g, Vector512.Create(-0.081312F) * b));
             c3 = default;
         }
     }

@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Six Labors Split License.
 
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using SixLabors.ImageSharp.Common.Helpers;
 
@@ -24,7 +25,7 @@ internal static class UpFilter
         DebugGuard.MustBeSameSized<byte>(scanline, previousScanline, nameof(scanline));
 
         // The leading filter byte is metadata; every remaining byte is the modulo-256 sum of Raw(x) and Prior(x).
-        TensorPrimitives_.Add(scanline[1..], previousScanline[1..], scanline[1..]);
+        TensorPrimitives.Add(scanline[1..], previousScanline[1..], scanline[1..]);
     }
 
     /// <summary>

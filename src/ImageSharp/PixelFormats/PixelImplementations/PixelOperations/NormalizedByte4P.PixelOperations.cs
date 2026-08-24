@@ -451,7 +451,7 @@ public partial struct NormalizedByte4P
             source = Vector512.Min(Vector512.Max(source, zero), one);
             Vector512<float> alpha = Vector512_.ShuffleNative(source, 0b_11_11_11_11);
             Vector512<float> nativeAlpha = Vector512.Min(Vector512.Max((alpha * Vector512.Create(2F)) - one, -one), one);
-            Vector512<float> storedAlpha = Vector512_.RoundToNearestInteger(nativeAlpha * Vector512.Create(MaxPos));
+            Vector512<float> storedAlpha = Vector512.Round(nativeAlpha * Vector512.Create(MaxPos));
             storedAlpha += Vector512.Create(MaxPos);
             storedAlpha /= Vector512.Create(ScaledMagnitude);
             Vector512<float> result = source * storedAlpha;
@@ -480,7 +480,7 @@ public partial struct NormalizedByte4P
             source = Vector256.Min(Vector256.Max(source, zero), one);
             Vector256<float> alpha = Vector256_.ShuffleNative(source, 0b_11_11_11_11);
             Vector256<float> nativeAlpha = Vector256.Min(Vector256.Max((alpha * Vector256.Create(2F)) - one, -one), one);
-            Vector256<float> storedAlpha = Vector256_.RoundToNearestInteger(nativeAlpha * Vector256.Create(MaxPos));
+            Vector256<float> storedAlpha = Vector256.Round(nativeAlpha * Vector256.Create(MaxPos));
             storedAlpha += Vector256.Create(MaxPos);
             storedAlpha /= Vector256.Create(ScaledMagnitude);
             Vector256<float> result = source * storedAlpha;
@@ -509,7 +509,7 @@ public partial struct NormalizedByte4P
             source = Vector128.Min(Vector128.Max(source, zero), one);
             Vector128<float> alpha = Vector128_.ShuffleNative(source, 0b_11_11_11_11);
             Vector128<float> nativeAlpha = Vector128.Min(Vector128.Max((alpha * Vector128.Create(2F)) - one, -one), one);
-            Vector128<float> storedAlpha = Vector128_.RoundToNearestInteger(nativeAlpha * Vector128.Create(MaxPos));
+            Vector128<float> storedAlpha = Vector128.Round(nativeAlpha * Vector128.Create(MaxPos));
             storedAlpha += Vector128.Create(MaxPos);
             storedAlpha /= Vector128.Create(ScaledMagnitude);
             Vector128<float> result = source * storedAlpha;
@@ -610,7 +610,7 @@ public partial struct NormalizedByte4P
 
             Vector512<float> alpha = Vector512_.ShuffleNative(source, 0b_11_11_11_11);
             Vector512<float> nativeAlpha = Vector512.Min(Vector512.Max((alpha * Vector512.Create(2F)) - one, -one), one);
-            Vector512<float> storedAlpha = Vector512_.RoundToNearestInteger(nativeAlpha * Vector512.Create(MaxPos));
+            Vector512<float> storedAlpha = Vector512.Round(nativeAlpha * Vector512.Create(MaxPos));
             storedAlpha += Vector512.Create(MaxPos);
             storedAlpha /= Vector512.Create(ScaledMagnitude);
             Vector512<float> result = source * (storedAlpha / alpha);
@@ -640,7 +640,7 @@ public partial struct NormalizedByte4P
 
             Vector256<float> alpha = Vector256_.ShuffleNative(source, 0b_11_11_11_11);
             Vector256<float> nativeAlpha = Vector256.Min(Vector256.Max((alpha * Vector256.Create(2F)) - one, -one), one);
-            Vector256<float> storedAlpha = Vector256_.RoundToNearestInteger(nativeAlpha * Vector256.Create(MaxPos));
+            Vector256<float> storedAlpha = Vector256.Round(nativeAlpha * Vector256.Create(MaxPos));
             storedAlpha += Vector256.Create(MaxPos);
             storedAlpha /= Vector256.Create(ScaledMagnitude);
             Vector256<float> result = source * (storedAlpha / alpha);
@@ -670,7 +670,7 @@ public partial struct NormalizedByte4P
 
             Vector128<float> alpha = Vector128_.ShuffleNative(source, 0b_11_11_11_11);
             Vector128<float> nativeAlpha = Vector128.Min(Vector128.Max((alpha * Vector128.Create(2F)) - one, -one), one);
-            Vector128<float> storedAlpha = Vector128_.RoundToNearestInteger(nativeAlpha * Vector128.Create(MaxPos));
+            Vector128<float> storedAlpha = Vector128.Round(nativeAlpha * Vector128.Create(MaxPos));
             storedAlpha += Vector128.Create(MaxPos);
             storedAlpha /= Vector128.Create(ScaledMagnitude);
             Vector128<float> result = source * (storedAlpha / alpha);
@@ -701,7 +701,7 @@ public partial struct NormalizedByte4P
                     Vector512<float> vector = Unsafe.As<Vector4, Vector512<float>>(ref Unsafe.Add(ref sourceBase, (uint)i));
                     Vector512<int> integers = ConvertToPackedInt32(vector, scaled);
                     Vector256<short> shorts = Vector256_.PackSignedSaturate(integers.GetLower(), integers.GetUpper());
-                    Vector128<sbyte> packed = Vector128_.PackSignedSaturate(shorts.GetLower(), shorts.GetUpper());
+                    Vector128<sbyte> packed = Vector128.NarrowWithSaturation(shorts.GetLower(), shorts.GetUpper());
 
                     if (Avx2.IsSupported)
                     {
@@ -721,8 +721,8 @@ public partial struct NormalizedByte4P
                 {
                     Vector256<float> vector = Unsafe.As<Vector4, Vector256<float>>(ref Unsafe.Add(ref sourceBase, (uint)i));
                     Vector256<int> integers = ConvertToPackedInt32(vector, scaled);
-                    Vector128<short> shorts = Vector128_.PackSignedSaturate(integers.GetLower(), integers.GetUpper());
-                    Vector128<sbyte> packed = Vector128_.PackSignedSaturate(shorts, shorts);
+                    Vector128<short> shorts = Vector128.NarrowWithSaturation(integers.GetLower(), integers.GetUpper());
+                    Vector128<sbyte> packed = Vector128.NarrowWithSaturation(shorts, shorts);
                     Unsafe.As<NormalizedByte4P, ulong>(ref Unsafe.Add(ref destinationBase, (uint)i)) = packed.AsUInt64().GetElement(0);
                 }
             }
@@ -733,8 +733,8 @@ public partial struct NormalizedByte4P
                 {
                     Vector128<float> vector = Unsafe.As<Vector4, Vector128<float>>(ref Unsafe.Add(ref sourceBase, (uint)i));
                     Vector128<int> integers = ConvertToPackedInt32(vector, scaled);
-                    Vector128<short> shorts = Vector128_.PackSignedSaturate(integers, integers);
-                    Vector128<sbyte> packed = Vector128_.PackSignedSaturate(shorts, shorts);
+                    Vector128<short> shorts = Vector128.NarrowWithSaturation(integers, integers);
+                    Vector128<sbyte> packed = Vector128.NarrowWithSaturation(shorts, shorts);
                     Unsafe.Add(ref destinationBase, (uint)i).PackedValue = packed.AsUInt32().GetElement(0);
                 }
 

@@ -48,9 +48,9 @@ internal abstract partial class JpegColorConverterBase
             Vector128<float> k = Vector128<float>.One - (c3 * scale);
 
             // Four lanes apply the non-rounded YCbCr matrix before their lane-aligned K modulation.
-            c0 = Vector128_.MultiplyAddEstimate(cr, Vector128.Create(YCbCrOperator.RCrMult), y) * k;
-            c1 = Vector128_.MultiplyAddEstimate(cr, Vector128.Create(-YCbCrOperator.GCrMult), Vector128_.MultiplyAddEstimate(cb, Vector128.Create(-YCbCrOperator.GCbMult), y)) * k;
-            c2 = Vector128_.MultiplyAddEstimate(cb, Vector128.Create(YCbCrOperator.BCbMult), y) * k;
+            c0 = Vector128.MultiplyAddEstimate(cr, Vector128.Create(YCbCrOperator.RCrMult), y) * k;
+            c1 = Vector128.MultiplyAddEstimate(cr, Vector128.Create(-YCbCrOperator.GCrMult), Vector128.MultiplyAddEstimate(cb, Vector128.Create(-YCbCrOperator.GCbMult), y)) * k;
+            c2 = Vector128.MultiplyAddEstimate(cb, Vector128.Create(YCbCrOperator.BCbMult), y) * k;
         }
 
         /// <inheritdoc/>
@@ -63,9 +63,9 @@ internal abstract partial class JpegColorConverterBase
             Vector256<float> k = Vector256<float>.One - (c3 * scale);
 
             // Eight lanes apply the non-rounded YCbCr matrix before their lane-aligned K modulation.
-            c0 = Vector256_.MultiplyAddEstimate(cr, Vector256.Create(YCbCrOperator.RCrMult), y) * k;
-            c1 = Vector256_.MultiplyAddEstimate(cr, Vector256.Create(-YCbCrOperator.GCrMult), Vector256_.MultiplyAddEstimate(cb, Vector256.Create(-YCbCrOperator.GCbMult), y)) * k;
-            c2 = Vector256_.MultiplyAddEstimate(cb, Vector256.Create(YCbCrOperator.BCbMult), y) * k;
+            c0 = Vector256.MultiplyAddEstimate(cr, Vector256.Create(YCbCrOperator.RCrMult), y) * k;
+            c1 = Vector256.MultiplyAddEstimate(cr, Vector256.Create(-YCbCrOperator.GCrMult), Vector256.MultiplyAddEstimate(cb, Vector256.Create(-YCbCrOperator.GCbMult), y)) * k;
+            c2 = Vector256.MultiplyAddEstimate(cb, Vector256.Create(YCbCrOperator.BCbMult), y) * k;
         }
 
         /// <inheritdoc/>
@@ -78,9 +78,9 @@ internal abstract partial class JpegColorConverterBase
             Vector512<float> k = Vector512<float>.One - (c3 * scale);
 
             // Sixteen lanes apply the non-rounded YCbCr matrix before their lane-aligned K modulation.
-            c0 = Vector512_.MultiplyAddEstimate(cr, Vector512.Create(YCbCrOperator.RCrMult), y) * k;
-            c1 = Vector512_.MultiplyAddEstimate(cr, Vector512.Create(-YCbCrOperator.GCrMult), Vector512_.MultiplyAddEstimate(cb, Vector512.Create(-YCbCrOperator.GCbMult), y)) * k;
-            c2 = Vector512_.MultiplyAddEstimate(cb, Vector512.Create(YCbCrOperator.BCbMult), y) * k;
+            c0 = Vector512.MultiplyAddEstimate(cr, Vector512.Create(YCbCrOperator.RCrMult), y) * k;
+            c1 = Vector512.MultiplyAddEstimate(cr, Vector512.Create(-YCbCrOperator.GCrMult), Vector512.MultiplyAddEstimate(cb, Vector512.Create(-YCbCrOperator.GCbMult), y)) * k;
+            c2 = Vector512.MultiplyAddEstimate(cb, Vector512.Create(YCbCrOperator.BCbMult), y) * k;
         }
 
         /// <inheritdoc/>
@@ -129,9 +129,9 @@ internal abstract partial class JpegColorConverterBase
             r = (r * divisor) & nonBlack;
             g = (g * divisor) & nonBlack;
             b = (b * divisor) & nonBlack;
-            c0 = Vector128_.MultiplyAddEstimate(Vector128.Create(0.299F), r, Vector128_.MultiplyAddEstimate(Vector128.Create(0.587F), g, Vector128.Create(0.114F) * b)) * maximumValue;
-            c1 = halfValue + (Vector128_.MultiplyAddEstimate(Vector128.Create(-0.168736F), r, Vector128_.MultiplyAddEstimate(Vector128.Create(-0.331264F), g, Vector128.Create(0.5F) * b)) * maximumValue);
-            c2 = halfValue + (Vector128_.MultiplyAddEstimate(Vector128.Create(0.5F), r, Vector128_.MultiplyAddEstimate(Vector128.Create(-0.418688F), g, Vector128.Create(-0.081312F) * b)) * maximumValue);
+            c0 = Vector128.MultiplyAddEstimate(Vector128.Create(0.299F), r, Vector128.MultiplyAddEstimate(Vector128.Create(0.587F), g, Vector128.Create(0.114F) * b)) * maximumValue;
+            c1 = halfValue + (Vector128.MultiplyAddEstimate(Vector128.Create(-0.168736F), r, Vector128.MultiplyAddEstimate(Vector128.Create(-0.331264F), g, Vector128.Create(0.5F) * b)) * maximumValue);
+            c2 = halfValue + (Vector128.MultiplyAddEstimate(Vector128.Create(0.5F), r, Vector128.MultiplyAddEstimate(Vector128.Create(-0.418688F), g, Vector128.Create(-0.081312F) * b)) * maximumValue);
             c3 = k * maximumValue;
         }
 
@@ -151,9 +151,9 @@ internal abstract partial class JpegColorConverterBase
             r = (r * divisor) & nonBlack;
             g = (g * divisor) & nonBlack;
             b = (b * divisor) & nonBlack;
-            c0 = Vector256_.MultiplyAddEstimate(Vector256.Create(0.299F), r, Vector256_.MultiplyAddEstimate(Vector256.Create(0.587F), g, Vector256.Create(0.114F) * b)) * maximumValue;
-            c1 = halfValue + (Vector256_.MultiplyAddEstimate(Vector256.Create(-0.168736F), r, Vector256_.MultiplyAddEstimate(Vector256.Create(-0.331264F), g, Vector256.Create(0.5F) * b)) * maximumValue);
-            c2 = halfValue + (Vector256_.MultiplyAddEstimate(Vector256.Create(0.5F), r, Vector256_.MultiplyAddEstimate(Vector256.Create(-0.418688F), g, Vector256.Create(-0.081312F) * b)) * maximumValue);
+            c0 = Vector256.MultiplyAddEstimate(Vector256.Create(0.299F), r, Vector256.MultiplyAddEstimate(Vector256.Create(0.587F), g, Vector256.Create(0.114F) * b)) * maximumValue;
+            c1 = halfValue + (Vector256.MultiplyAddEstimate(Vector256.Create(-0.168736F), r, Vector256.MultiplyAddEstimate(Vector256.Create(-0.331264F), g, Vector256.Create(0.5F) * b)) * maximumValue);
+            c2 = halfValue + (Vector256.MultiplyAddEstimate(Vector256.Create(0.5F), r, Vector256.MultiplyAddEstimate(Vector256.Create(-0.418688F), g, Vector256.Create(-0.081312F) * b)) * maximumValue);
             c3 = k * maximumValue;
         }
 
@@ -173,9 +173,9 @@ internal abstract partial class JpegColorConverterBase
             r = (r * divisor) & nonBlack;
             g = (g * divisor) & nonBlack;
             b = (b * divisor) & nonBlack;
-            c0 = Vector512_.MultiplyAddEstimate(Vector512.Create(0.299F), r, Vector512_.MultiplyAddEstimate(Vector512.Create(0.587F), g, Vector512.Create(0.114F) * b)) * maximumValue;
-            c1 = halfValue + (Vector512_.MultiplyAddEstimate(Vector512.Create(-0.168736F), r, Vector512_.MultiplyAddEstimate(Vector512.Create(-0.331264F), g, Vector512.Create(0.5F) * b)) * maximumValue);
-            c2 = halfValue + (Vector512_.MultiplyAddEstimate(Vector512.Create(0.5F), r, Vector512_.MultiplyAddEstimate(Vector512.Create(-0.418688F), g, Vector512.Create(-0.081312F) * b)) * maximumValue);
+            c0 = Vector512.MultiplyAddEstimate(Vector512.Create(0.299F), r, Vector512.MultiplyAddEstimate(Vector512.Create(0.587F), g, Vector512.Create(0.114F) * b)) * maximumValue;
+            c1 = halfValue + (Vector512.MultiplyAddEstimate(Vector512.Create(-0.168736F), r, Vector512.MultiplyAddEstimate(Vector512.Create(-0.331264F), g, Vector512.Create(0.5F) * b)) * maximumValue);
+            c2 = halfValue + (Vector512.MultiplyAddEstimate(Vector512.Create(0.5F), r, Vector512.MultiplyAddEstimate(Vector512.Create(-0.418688F), g, Vector512.Create(-0.081312F) * b)) * maximumValue);
             c3 = k * maximumValue;
         }
     }

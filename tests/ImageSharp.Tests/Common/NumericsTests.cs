@@ -53,4 +53,5 @@ public class NumericsTests
 
         Assert.True(expected == actual, $"IsOutOfRange({value}, {min}, {max})");
     }
+
 }

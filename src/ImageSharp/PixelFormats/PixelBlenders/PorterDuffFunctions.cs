@@ -586,7 +586,7 @@ internal static partial class PorterDuffFunctions
         Vector4 sourcePremultiplied = Numerics.WithW(source * sourceAlpha, sourceAlpha);
 
         // Use the same fused operation as the wider paths so exact midpoints cannot change across vector widths.
-        Vector4 result = Vector128_.MultiplyAddEstimate((sourcePremultiplied - backdropPremultiplied).AsVector128(), Vector128.Create(coverage), backdropPremultiplied.AsVector128()).AsVector4();
+        Vector4 result = Vector128.MultiplyAddEstimate((sourcePremultiplied - backdropPremultiplied).AsVector128(), Vector128.Create(coverage), backdropPremultiplied.AsVector128()).AsVector4();
 
         Numerics.UnPremultiply(ref result);
         return result;
@@ -606,7 +606,7 @@ internal static partial class PorterDuffFunctions
         Vector256<float> sourceAlpha = Avx.Permute(source, ShuffleAlphaControl);
         Vector256<float> backdropPremultiplied = Avx.Blend(backdrop * backdropAlpha, backdropAlpha, BlendAlphaControl);
         Vector256<float> sourcePremultiplied = Avx.Blend(source * sourceAlpha, sourceAlpha, BlendAlphaControl);
-        Vector256<float> result = Vector256_.MultiplyAddEstimate(sourcePremultiplied - backdropPremultiplied, coverage, backdropPremultiplied);
+        Vector256<float> result = Vector256.MultiplyAddEstimate(sourcePremultiplied - backdropPremultiplied, coverage, backdropPremultiplied);
 
         return Numerics.UnPremultiply(result, Avx.Permute(result, ShuffleAlphaControl));
     }
@@ -626,7 +626,7 @@ internal static partial class PorterDuffFunctions
         Vector512<float> alphaMask = AlphaMask512();
         Vector512<float> backdropPremultiplied = Vector512.ConditionalSelect(alphaMask, backdropAlpha, backdrop * backdropAlpha);
         Vector512<float> sourcePremultiplied = Vector512.ConditionalSelect(alphaMask, sourceAlpha, source * sourceAlpha);
-        Vector512<float> result = Vector512_.MultiplyAddEstimate(sourcePremultiplied - backdropPremultiplied, coverage, backdropPremultiplied);
+        Vector512<float> result = Vector512.MultiplyAddEstimate(sourcePremultiplied - backdropPremultiplied, coverage, backdropPremultiplied);
 
         return Numerics.UnPremultiply(result, Vector512_.ShuffleNative(result, ShuffleAlphaControl));
     }
@@ -836,8 +836,8 @@ internal static partial class PorterDuffFunctions
 
         // calculate final color
         Vector256<float> color = destination * dstW;
-        color = Vector256_.MultiplyAddEstimate(source, srcW, color);
-        color = Vector256_.MultiplyAddEstimate(blend, blendW, color);
+        color = Vector256.MultiplyAddEstimate(source, srcW, color);
+        color = Vector256.MultiplyAddEstimate(blend, blendW, color);
 
         // unpremultiply
         return Numerics.UnPremultiply(color, alpha);
@@ -866,8 +866,8 @@ internal static partial class PorterDuffFunctions
 
         // calculate final color
         Vector512<float> color = destination * dstW;
-        color = Vector512_.MultiplyAddEstimate(source, srcW, color);
-        color = Vector512_.MultiplyAddEstimate(blend, blendW, color);
+        color = Vector512.MultiplyAddEstimate(source, srcW, color);
+        color = Vector512.MultiplyAddEstimate(blend, blendW, color);
 
         // unpremultiply
         return Numerics.UnPremultiply(color, alpha);
@@ -920,7 +920,7 @@ internal static partial class PorterDuffFunctions
         Vector256<float> dstW = alpha - blendW;
 
         // calculate final color
-        Vector256<float> color = Vector256_.MultiplyAddEstimate(destination, dstW, Avx.Multiply(blend, blendW));
+        Vector256<float> color = Vector256.MultiplyAddEstimate(destination, dstW, Avx.Multiply(blend, blendW));
 
         // unpremultiply
         return Numerics.UnPremultiply(color, alpha);
@@ -945,7 +945,7 @@ internal static partial class PorterDuffFunctions
         Vector512<float> dstW = alpha - blendW;
 
         // calculate final color
-        Vector512<float> color = Vector512_.MultiplyAddEstimate(destination, dstW, blend * blendW);
+        Vector512<float> color = Vector512.MultiplyAddEstimate(destination, dstW, blend * blendW);
 
         // unpremultiply
         return Numerics.UnPremultiply(color, alpha);
@@ -1104,8 +1104,8 @@ internal static partial class PorterDuffFunctions
         Vector256<float> dstW = vOne - sW;
 
         // calculate alpha
-        Vector256<float> alpha = Vector256_.MultiplyAddEstimate(sW, srcW, Avx.Multiply(dW, dstW));
-        Vector256<float> color = Vector256_.MultiplyAddEstimate(Avx.Multiply(sW, source), srcW, Avx.Multiply(Avx.Multiply(dW, destination), dstW));
+        Vector256<float> alpha = Vector256.MultiplyAddEstimate(sW, srcW, Avx.Multiply(dW, dstW));
+        Vector256<float> color = Vector256.MultiplyAddEstimate(Avx.Multiply(sW, source), srcW, Avx.Multiply(Avx.Multiply(dW, destination), dstW));
 
         // unpremultiply
         return Numerics.UnPremultiply(color, alpha);
@@ -1129,8 +1129,8 @@ internal static partial class PorterDuffFunctions
         Vector512<float> dstW = vOne - sW;
 
         // calculate alpha
-        Vector512<float> alpha = Vector512_.MultiplyAddEstimate(sW, srcW, dW * dstW);
-        Vector512<float> color = Vector512_.MultiplyAddEstimate(sW * source, srcW, (dW * destination) * dstW);
+        Vector512<float> alpha = Vector512.MultiplyAddEstimate(sW, srcW, dW * dstW);
+        Vector512<float> color = Vector512.MultiplyAddEstimate(sW * source, srcW, (dW * destination) * dstW);
 
         // unpremultiply
         return Numerics.UnPremultiply(color, alpha);

@@ -49,7 +49,7 @@ internal readonly struct YZWXShuffle4Slice3 : IShuffle4Slice3
         // Each four-byte group is an XYZW pixel. Selecting [1, 2, 3, 0] produces
         // YZWX, and offsets 4, 8, and 12 repeat that rotation for the next pixels.
         // The surrounding pipeline subsequently removes every fourth byte.
-        => Vector128_.ShuffleNative(source, Vector128.Create((byte)1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12));
+        => Vector128.ShuffleNative(source, Vector128.Create((byte)1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12));
 }
 
 /// <summary>
@@ -72,7 +72,7 @@ internal readonly struct WZYXShuffle4Slice3 : IShuffle4Slice3
         // Each four-byte group is an XYZW pixel. Selecting [3, 2, 1, 0] produces
         // WZYX, and offsets 4, 8, and 12 repeat that reversal for the next pixels.
         // The surrounding pipeline subsequently removes every fourth byte.
-        => Vector128_.ShuffleNative(source, Vector128.Create((byte)3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12));
+        => Vector128.ShuffleNative(source, Vector128.Create((byte)3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12));
 }
 
 /// <summary>
@@ -95,7 +95,7 @@ internal readonly struct ZYXWShuffle4Slice3 : IShuffle4Slice3
         // Each four-byte group is an XYZW pixel. Selecting [2, 1, 0, 3] produces
         // ZYXW, and offsets 4, 8, and 12 repeat that exchange for the next pixels.
         // The surrounding pipeline subsequently removes every fourth byte.
-        => Vector128_.ShuffleNative(source, Vector128.Create((byte)2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15));
+        => Vector128.ShuffleNative(source, Vector128.Create((byte)2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15));
 }
 
 /// <summary>

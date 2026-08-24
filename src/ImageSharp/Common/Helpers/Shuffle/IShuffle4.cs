@@ -69,7 +69,7 @@ internal readonly struct WXYZShuffle4 : IShuffle4
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<byte> Invoke(Vector128<byte> source)
-        => Vector128_.ShuffleNative(source, CreateLaneMask());
+        => Vector128.ShuffleNative(source, CreateLaneMask());
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -85,7 +85,7 @@ internal readonly struct WXYZShuffle4 : IShuffle4
     public static Vector512<byte> Invoke(Vector512<byte> source)
 
         // Expand the four-pixel lane permutation across all four 128-bit lanes.
-        => Vector512_.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
+        => Vector512.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
 
     /// <summary>
     /// Creates the indices that rotate each XYZW pixel to WXYZ within one 128-bit lane.
@@ -115,7 +115,7 @@ internal readonly struct WZYXShuffle4 : IShuffle4
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<byte> Invoke(Vector128<byte> source)
-        => Vector128_.ShuffleNative(source, CreateLaneMask());
+        => Vector128.ShuffleNative(source, CreateLaneMask());
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -131,7 +131,7 @@ internal readonly struct WZYXShuffle4 : IShuffle4
     public static Vector512<byte> Invoke(Vector512<byte> source)
 
         // Expand the four-pixel lane permutation across all four 128-bit lanes.
-        => Vector512_.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
+        => Vector512.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
 
     /// <summary>
     /// Creates the indices that reverse each XYZW pixel to WZYX within one 128-bit lane.
@@ -161,7 +161,7 @@ internal readonly struct YZWXShuffle4 : IShuffle4
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<byte> Invoke(Vector128<byte> source)
-        => Vector128_.ShuffleNative(source, CreateLaneMask());
+        => Vector128.ShuffleNative(source, CreateLaneMask());
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -177,7 +177,7 @@ internal readonly struct YZWXShuffle4 : IShuffle4
     public static Vector512<byte> Invoke(Vector512<byte> source)
 
         // Expand the four-pixel lane permutation across all four 128-bit lanes.
-        => Vector512_.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
+        => Vector512.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
 
     /// <summary>
     /// Creates the indices that rotate each XYZW pixel to YZWX within one 128-bit lane.
@@ -209,7 +209,7 @@ internal readonly struct ZYXWShuffle4 : IShuffle4
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<byte> Invoke(Vector128<byte> source)
-        => Vector128_.ShuffleNative(source, CreateLaneMask());
+        => Vector128.ShuffleNative(source, CreateLaneMask());
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -225,7 +225,7 @@ internal readonly struct ZYXWShuffle4 : IShuffle4
     public static Vector512<byte> Invoke(Vector512<byte> source)
 
         // Expand the four-pixel lane permutation across all four 128-bit lanes.
-        => Vector512_.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
+        => Vector512.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
 
     /// <summary>
     /// Creates the indices that exchange X and Z in each XYZW pixel within one 128-bit lane.
@@ -257,7 +257,7 @@ internal readonly struct XWZYShuffle4 : IShuffle4
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<byte> Invoke(Vector128<byte> source)
-        => Vector128_.ShuffleNative(source, CreateLaneMask());
+        => Vector128.ShuffleNative(source, CreateLaneMask());
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -273,7 +273,7 @@ internal readonly struct XWZYShuffle4 : IShuffle4
     public static Vector512<byte> Invoke(Vector512<byte> source)
 
         // Expand the four-pixel lane permutation across all four 128-bit lanes.
-        => Vector512_.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
+        => Vector512.ShuffleNative(source, IShuffle4.ExpandLaneMask(CreateLaneMask()));
 
     /// <summary>
     /// Creates the indices that exchange Y and W in each XYZW pixel within one 128-bit lane.
